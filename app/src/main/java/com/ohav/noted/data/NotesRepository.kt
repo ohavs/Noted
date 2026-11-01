@@ -1,10 +1,12 @@
 package com.ohav.noted.data
 
+import androidx.room.withTransaction
 import com.ohav.noted.design.NoteColor
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-class NotesRepository(private val dao: NoteDao) {
+class NotesRepository(private val db: NotedDatabase) {
+    private val dao: NoteDao = db.notes()
     val notes: Flow<List<NoteEntity>> = dao.observeActive()
     val categories: Flow<List<CategoryEntity>> = dao.observeCategories()
 
@@ -49,7 +51,9 @@ class NotesRepository(private val dao: NoteDao) {
     suspend fun reorder(ids: List<String>, current: List<NoteEntity>) {
         val byId = current.associateBy { it.id }
         val slots = ids.mapNotNull { byId[it]?.position }.sorted()
-        ids.zip(slots).forEach { (id, pos) -> if (byId[id]?.position != pos) dao.setPosition(id, pos) }
+        db.withTransaction {
+            ids.zip(slots).forEach { (id, pos) -> if (byId[id]?.position != pos) dao.setPosition(id, pos) }
+        }
     }
 
     /** First launch: a few notes in the prototype's voice so the stack isn't empty. */

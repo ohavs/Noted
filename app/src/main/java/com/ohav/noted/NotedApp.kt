@@ -17,7 +17,7 @@ class NotedApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        notes = NotesRepository(NotedDatabase.create(this).notes())
+        notes = NotesRepository(NotedDatabase.create(this))
         settings = SettingsRepository(this)
         updater = Updater(this)
         scope.launch { notes.seedIfEmpty() }
