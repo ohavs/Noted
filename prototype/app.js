@@ -274,7 +274,7 @@ const linkHTML = b => { let host = b.url; try { host = new URL(b.url).hostname.r
 const checkRowHTML = (b, editable) => `<div class="check-row ${b.done ? 'done' : ''}" data-bid="${b.id}"><button class="chk" tabindex="-1" data-act="check" aria-label="סימון">${CHECK_SVG}</button><div class="check-text${editable ? ' txt' : ''}"${editable ? ' contenteditable="true" data-ph="פריט"' : ''}>${b.html}</div></div>`;
 
 /* ================================================================ cards */
-const STEP = 118, HC = 196, GAP = 14, COMPRESS = 16;
+const STEP = 118, HC = 196, GAP = 14, PEEK = 56, PEEK_N = 3; // PEEK: a title strip stays visible
 const stackEl = $('#stack');
 const homeScroll = $('#home-scroll');
 const cardEls = new Map();
@@ -359,7 +359,7 @@ function layout({ instant = false } = {}) {
     const el = cardEls.get(n.id);
     const h = i === ei ? Math.max(HC, measureFull(el)) : HC;
     tops.push(y); heights.push(h);
-    if (ei >= 0 && i < ei) y += COMPRESS;
+    if (ei >= 0 && i < ei) y += ei - i <= PEEK_N ? PEEK : 0;
     else if (i === ei) y += h + GAP;
     else y += STEP;
   });
@@ -372,6 +372,7 @@ function layout({ instant = false } = {}) {
     el.style.zIndex = i + 1;
     el.dataset.top = tops[i];
     el.dataset.depth = ei >= 0 && i < ei ? ei - i : 0;
+    el.dataset.peeks = i;
     el.classList.toggle('expanded', i === ei);
   });
   lastTops = tops;
@@ -379,28 +380,40 @@ function layout({ instant = false } = {}) {
   if (instant) { stackEl.offsetHeight; stackEl.classList.remove('no-anim'); }
 }
 
-/* cards that scroll past the top pile up behind the next one */
+/* cards that scroll past the top pile up behind the next one, each keeping a title strip (PEEK) visible.
+   t = how many cards have crossed the pile line, fractional — keeps every position continuous while scrolling. */
 function applyPile() {
   const S = homeScroll.scrollTop - stackEl.offsetTop;
-  const pileY = S + 18;
-  for (const el of cardEls.values()) {
-    if (!el.isConnected || el.dataset.top == null) continue;
+  const base = S + 18 + PEEK_N * PEEK;
+  const all = visibleNotes().map(n => cardEls.get(n.id)).filter(el => el && el.isConnected && el.dataset.top != null);
+  // the open (expanded) card always scrolls naturally so its whole content can be read; it slides over the pile
+  const els = all.filter(el => !el.classList.contains('expanded'));
+  const tops = els.map(el => +el.dataset.top);
+  let t = -1;
+  for (let i = 0; i < tops.length && tops[i] <= base; i++) {
+    const next = i + 1 < tops.length ? tops[i + 1] : Infinity;
+    const ai = all.indexOf(els[i]);
+    const gap = Math.min(STEP, (ai + 1 < all.length ? +all[ai + 1].dataset.top : Infinity) - tops[i]);
+    if (next > base) { t = i + Math.min(1, (base - tops[i]) / gap); break; }
+    t = i + 1;
+  }
+  all.forEach(el => {
+    const i = els.indexOf(el);
     let d = +el.dataset.top;
     const depthAbove = +el.dataset.depth || 0;
-    let s = depthAbove ? Math.max(.86, 1 - depthAbove * .035) : 1;
-    let piled = false, op = 1;
-    if (d < pileY) {
-      const over = (pileY - d) / STEP;
-      const k = Math.min(over, 3);
-      d = pileY - k * 6;
-      s = Math.min(s, 1 - k * .035);
-      op = over > 3.5 ? Math.max(0, 1 - (over - 3.5)) : 1;
-      piled = over > 0.02;
+    let s = depthAbove ? Math.max(.88, 1 - depthAbove * .03) : 1;
+    let op = depthAbove > PEEK_N ? 0 : 1, piled = false;
+    const k = i < 0 ? 0 : t - i;
+    if (k > 0) {
+      d = base - Math.min(k, PEEK_N) * PEEK;
+      s = Math.min(s, 1 - Math.min(k, PEEK_N + 1) * .03);
+      op = k > PEEK_N ? Math.max(0, 1 - (k - PEEK_N)) : op;
+      piled = true;
     }
     el.classList.toggle('piled', piled);
     el.style.transform = `translate3d(0, ${d}px, 0) scale(${s})`;
     el.style.opacity = op;
-  }
+  });
 }
 
 function renderStack({ enter = false } = {}) {
@@ -459,8 +472,10 @@ function expand(id) {
     const viewB = homeScroll.scrollTop + homeScroll.clientHeight - 120;
     let target = homeScroll.scrollTop;
     if (bottom > viewB) target += bottom - viewB;
-    target = Math.min(target, stackEl.offsetTop + lastTops[0] - 14 + (+el.dataset.top));
-    if (top < homeScroll.scrollTop + 20) target = top - 70;
+    // leave room above for the title strips of the cards stacked behind it
+    const room = 18 + Math.min(PEEK_N, +el.dataset.peeks || 0) * PEEK;
+    target = Math.min(target, top - room);
+    if (top < homeScroll.scrollTop + room) target = top - room;
     if (Math.abs(target - homeScroll.scrollTop) > 2) homeScroll.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
   }
 }
