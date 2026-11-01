@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light" data-accent="fire" data-font="soft">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-visual">
+<meta name="theme-color" content="#F5F1EA">
+<title>noted — אב-טיפוס</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&family=Frank+Ruhl+Libre:wght@500;700;800;900&family=Fredoka:wght@500;600;700&family=Heebo:wght@400;500;700;800&family=Karantina:wght@400;700&family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/phosphor/regular.css">
+<link rel="stylesheet" href="vendor/phosphor/fill.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="device">
+
+  <!-- ============ HOME ============ -->
+  <section class="screen active" id="scr-home">
+    <div class="scroll" id="home-scroll">
+      <div class="topbar">
+        <button class="avatar press" id="btn-profile" aria-label="פרופיל והגדרות">א</button>
+        <div style="display:flex;gap:2px">
+          <button class="icon-btn press" id="btn-search" aria-label="חיפוש"><i class="ph ph-magnifying-glass"></i></button>
+        </div>
+      </div>
+      <div class="cat-track" id="cat-track"></div>
+      <div class="cat-sub" id="cat-sub"></div>
+      <div class="stack" id="stack"></div>
+    </div>
+    <div class="sel-header" id="sel-header">
+      <button class="icon-btn press" id="sel-close" aria-label="סיום בחירה"><i class="ph ph-x"></i></button>
+      <h4 id="sel-count">נבחרו 0</h4>
+      <button class="icon-btn press" id="sel-all" aria-label="בחר הכל"><i class="ph ph-checks"></i></button>
+    </div>
+    <div class="search-bar" id="search-bar">
+      <div class="search-field"><i class="ph ph-magnifying-glass"></i><input id="search-input" placeholder="חיפוש בכל הפתקים" autocomplete="off"></div>
+      <button class="btn btn-quiet press" id="search-cancel" style="padding:0 6px">ביטול</button>
+    </div>
+  </section>
+
+  <!-- ============ SHARED ============ -->
+  <section class="screen" id="scr-shared">
+    <div class="scroll">
+      <div class="topbar"><span></span></div>
+      <h1 class="page-title">משותף</h1>
+      <div class="empty" style="position:relative;padding-top:60px">
+        <svg viewBox="0 0 168 140" aria-hidden="true">
+          <rect x="18" y="34" width="92" height="84" rx="26" fill="var(--n-sky)" transform="rotate(-8 64 76)"/>
+          <rect x="58" y="22" width="92" height="84" rx="26" fill="var(--n-peach)" transform="rotate(6 104 64)"/>
+          <rect x="76" y="44" width="46" height="7" rx="3.5" fill="var(--note-ink)" opacity=".35" transform="rotate(6 104 64)"/>
+          <rect x="76" y="58" width="30" height="7" rx="3.5" fill="var(--note-ink)" opacity=".2" transform="rotate(6 104 64)"/>
+          <circle cx="44" cy="118" r="16" fill="#E9A87F" stroke="var(--bg)" stroke-width="5"/>
+          <circle cx="68" cy="118" r="16" fill="#B99BE6" stroke="var(--bg)" stroke-width="5"/>
+          <circle cx="92" cy="118" r="16" fill="var(--accent)" stroke="var(--bg)" stroke-width="5"/>
+          <path d="M86 118h12M92 112v12" stroke="var(--accent-ink)" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <h3>עוד לא שיתפת כלום</h3>
+        <p>רשימת קניות משותפת, תיקייה משפחתית — כולם רואים שינויים בזמן אמת.</p>
+        <button class="btn btn-dark press" data-toast="נוצר לינק הזמנה · הועתק"><i class="ph ph-link"></i> הזמנה בלינק</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ AGENDA ============ -->
+  <section class="screen" id="scr-agenda">
+    <div class="scroll">
+      <div class="topbar"><span></span></div>
+      <h1 class="page-title">לוח</h1>
+      <div class="agenda" id="agenda"></div>
+    </div>
+  </section>
+
+  <!-- ============ PLACES ============ -->
+  <section class="screen" id="scr-places">
+    <div class="scroll">
+      <div class="topbar"><span></span></div>
+      <h1 class="page-title">מקומות</h1>
+      <div class="empty" style="position:relative;padding-top:60px">
+        <svg viewBox="0 0 168 140" aria-hidden="true">
+          <path d="M14 40l46-16 48 16 46-16v84l-46 16-48-16-46 16z" fill="var(--n-mint)"/>
+          <path d="M60 24v84M108 40v84" stroke="var(--note-ink)" stroke-opacity=".12" stroke-width="3"/>
+          <path d="M28 92c20-8 30 10 52-2s34-6 50 4" fill="none" stroke="var(--note-ink)" stroke-opacity=".25" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 9"/>
+          <circle cx="98" cy="58" r="30" fill="var(--accent)" opacity=".14"/>
+          <path d="M98 30c-12 0-21 9-21 21 0 16 21 33 21 33s21-17 21-33c0-12-9-21-21-21z" fill="var(--accent)"/>
+          <circle cx="98" cy="51" r="7.5" fill="var(--accent-ink)"/>
+        </svg>
+        <h3>המקומות שלך</h3>
+        <p>שמור בית, עבודה, סופר — ופתקים יקפצו כשתגיע.</p>
+        <button class="btn btn-accent press" data-toast="המיקום נשמר כ״בית״"><i class="ph ph-map-pin"></i> שמור מיקום נוכחי</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ NAV ============ -->
+  <nav id="nav" aria-label="ניווט">
+    <span class="nav-ind" id="nav-ind"></span>
+    <button class="nav-item active" data-tab="home"><span class="ico-wrap"><i class="ph-fill ph-house"></i></span><span class="lbl">בית</span></button>
+    <button class="nav-item" data-tab="shared"><span class="ico-wrap"><i class="ph ph-users-three"></i></span><span class="lbl">משותף</span><span class="badge"></span></button>
+    <button class="nav-item" data-tab="agenda"><span class="ico-wrap"><i class="ph ph-calendar-blank"></i></span><span class="lbl">לוח</span></button>
+    <button class="nav-item" data-tab="places"><span class="ico-wrap"><i class="ph ph-map-pin"></i></span><span class="lbl">מקומות</span></button>
+  </nav>
+  <button id="fab" class="sq" aria-label="פתק חדש"><i class="ph ph-plus" style="font-size:28px"></i></button>
+  <div id="selbar">
+    <button class="press" data-sel="color"><i class="ph ph-palette"></i><span>צבע</span></button>
+    <button class="press" data-sel="move"><i class="ph ph-folder-simple"></i><span>העבר</span></button>
+    <button class="press" data-sel="pin"><i class="ph ph-push-pin"></i><span>נעץ</span></button>
+    <button class="press danger" data-sel="delete"><i class="ph ph-trash"></i><span>מחק</span></button>
+  </div>
+
+  <!-- ============ OVERLAYS ============ -->
+  <div class="scrim" id="scrim"></div>
+  <div id="menu" class="sq">
+    <div class="swatches" id="menu-swatches"></div>
+    <div class="menu-grid" id="menu-grid"></div>
+    <div class="menu-foot"><button id="menu-select"><i class="ph ph-check-circle"></i> בחירת כמה פתקים</button></div>
+  </div>
+
+  <div id="editor">
+    <div class="ed-flood"></div>
+    <div class="ed-top" id="ed-top">
+      <button class="icon-btn press" id="ed-back" aria-label="חזרה"><i class="ph ph-caret-right"></i></button>
+      <button class="icon-btn press" id="ed-undo" aria-label="ביטול פעולה"><i class="ph ph-arrow-u-up-right"></i></button>
+      <button class="icon-btn press" id="ed-redo" aria-label="ביצוע מחדש"><i class="ph ph-arrow-u-up-left"></i></button>
+      <div class="grow"><span class="ed-grab"></span></div>
+      <button class="icon-btn press" id="ed-bell" aria-label="תזכורת"><i class="ph ph-bell"></i></button>
+      <button class="icon-btn press" id="ed-more" aria-label="עוד"><i class="ph ph-dots-three"></i></button>
+    </div>
+    <div class="ed-scroll" id="ed-scroll">
+      <div class="ed-content">
+        <div class="ed-title" id="ed-title" contenteditable="true" data-ph="כותרת"></div>
+        <div class="ed-meta" id="ed-meta"></div>
+        <div id="ed-blocks"></div>
+      </div>
+    </div>
+  </div>
+  <div id="smartbar">
+    <div class="sb-main sq" id="sb-main"></div>
+    <div class="sb-sub sq" id="sb-sub"></div>
+  </div>
+  <div id="bubble"></div>
+
+  <div class="scrim" id="sheet-scrim"></div>
+  <section class="sheet sq" id="sheet-time" aria-label="בחירת זמן">
+    <div class="sheet-grab"><i></i></div>
+    <div class="sheet-body">
+      <div class="sheet-title">מתי להזכיר? <small id="tp-sub"></small></div>
+      <div class="shortcuts" id="tp-shorts"></div>
+      <button class="month-btn" id="tp-month"><span></span><i class="ph ph-caret-down"></i></button>
+      <div class="cal" id="tp-cal" style="height:0;opacity:0"></div>
+      <div class="days" id="tp-days"></div>
+      <div class="clock" id="tp-clock">
+        <div class="digits" id="tp-h"><span></span></div>
+        <div class="colon">:</div>
+        <div class="digits" id="tp-m"><span></span></div>
+      </div>
+      <div class="clock-hint">גוררים את הספרות למעלה או למטה</div>
+      <div class="repeat" id="tp-repeat">
+        <span class="lab"><i class="ph ph-repeat"></i> חזרה</span>
+        <button data-r="none" class="on">ללא</button>
+        <button data-r="day">יומי</button>
+        <button data-r="week">שבועי</button>
+        <button data-r="month">חודשי</button>
+        <span class="uline"></span>
+      </div>
+      <button class="btn btn-accent btn-block cta press sq" id="tp-set"><i class="ph ph-bell"></i> קבע תזכורת · <span class="when" id="tp-when"></span></button>
+    </div>
+  </section>
+
+  <section class="sheet sq" id="sheet-settings" aria-label="הגדרות">
+    <div class="sheet-grab"><i></i></div>
+    <div class="sheet-body" id="settings-body"></div>
+  </section>
+
+  <section class="sheet sq" id="sheet-move" aria-label="העברה לקטגוריה">
+    <div class="sheet-grab"><i></i></div>
+    <div class="sheet-body"><div class="sheet-title">להעביר ל…</div><div id="move-list"></div></div>
+  </section>
+
+  <div class="scrim" id="dlg-scrim" style="z-index:89"></div>
+  <div id="dialog" class="sq" role="dialog" aria-modal="true"></div>
+  <div id="toasts"></div>
+
+  <div id="coach" class="sq">
+    <h4>ככה זה עובד</h4>
+    <ul>
+      <li><i class="ph ph-hand-tap"></i><span><b>לחיצה</b> — הפתק נפרש במקום</span></li>
+      <li><i class="ph ph-arrows-out"></i><span><b>לחיצה שנייה</b> או משיכה למעלה — עורך</span></li>
+      <li><i class="ph ph-hand-grabbing"></i><span><b>לחיצה ארוכה</b> — תפריט, וגרירה מסדרת</span></li>
+      <li><i class="ph ph-arrows-left-right"></i><span><b>החלקה</b> על הכותרת — קטגוריה הבאה</span></li>
+    </ul>
+    <button class="btn btn-accent btn-block press sq" id="coach-ok">הבנתי</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

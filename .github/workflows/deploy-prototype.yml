@@ -1,0 +1,36 @@
+name: Deploy prototype (Firebase Hosting)
+
+on:
+  push:
+    branches: [main, "ccr-*"]
+    paths: ["prototype/**", "firebase.json", ".firebaserc", ".github/workflows/deploy-prototype.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: firebase-hosting
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check token
+        id: tok
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then echo "::warning::Secret FIREBASE_TOKEN is not set yet — skipping deploy"; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Deploy
+        if: steps.tok.outputs.ok == 'true'
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: npx --yes firebase-tools@latest deploy --only hosting --project noted-ce451 --token "$FIREBASE_TOKEN" --non-interactive
+      - name: Smoke test
+        if: steps.tok.outputs.ok == 'true'
+        run: |
+          sleep 5
+          curl -fsS https://noted-ce451.web.app/ | grep -q 'noted' && echo "live ok"
