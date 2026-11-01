@@ -1,0 +1,73 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main, 'ccr-*']
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Signing key
+        id: sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/noted.jks"
+            echo "NOTED_KEYSTORE_FILE=$RUNNER_TEMP/noted.jks" >> "$GITHUB_ENV"
+            echo "NOTED_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::KEYSTORE_BASE64 / KEYSTORE_PASSWORD missing — building debug-signed APK, no release."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        run: ./gradlew --no-daemon assembleRelease -PversionCode=${{ github.run_number }}
+
+      - name: Collect APK
+        id: apk
+        run: |
+          V="0.2.${{ github.run_number }}"
+          cp app/build/outputs/apk/release/app-release.apk "noted-$V.apk"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noted-${{ steps.apk.outputs.version }}
+          path: noted-*.apk
+
+      - name: Release
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.apk.outputs.version }}"
+          git log -1 --pretty=%B | sed '/^Co-Authored-By/d;/^Claude-Session/d' > notes.txt
+          gh release create "v$V" "noted-$V.apk" --title "noted $V" --notes-file notes.txt --target "$GITHUB_SHA"
