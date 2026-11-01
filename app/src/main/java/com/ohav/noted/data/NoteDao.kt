@@ -38,4 +38,31 @@ interface NoteDao {
 
     @Query("UPDATE notes SET pinned = NOT pinned, updatedAt = :at WHERE id = :id")
     suspend fun togglePin(id: String, at: Long)
+
+    @Query("SELECT * FROM notes WHERE id = :id")
+    suspend fun get(id: String): NoteEntity?
+
+    @Query("UPDATE notes SET blocks = :blocks, updatedAt = :at WHERE id = :id")
+    suspend fun setBlocks(id: String, blocks: String, at: Long)
+
+    @Query("UPDATE notes SET pinned = :on, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setPinned(ids: List<String>, on: Boolean, at: Long)
+
+    @Query("UPDATE notes SET favorite = :on, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setFavorite(ids: List<String>, on: Boolean, at: Long)
+
+    @Query("UPDATE notes SET color = :color, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setColor(ids: List<String>, color: String, at: Long)
+
+    @Query("UPDATE notes SET categoryId = :cat, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setCategory(ids: List<String>, cat: String, at: Long)
+
+    @Query("UPDATE notes SET archived = :on, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setArchived(ids: List<String>, on: Boolean, at: Long)
+
+    @Query("UPDATE notes SET trashedAt = :trashedAt, updatedAt = :at WHERE id IN (:ids)")
+    suspend fun setTrashed(ids: List<String>, trashedAt: Long?, at: Long)
+
+    @Query("UPDATE notes SET position = :position WHERE id = :id")
+    suspend fun setPosition(id: String, position: Double)
 }

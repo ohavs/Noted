@@ -23,6 +23,35 @@ class NotesRepository(private val dao: NoteDao) {
     suspend fun restore(id: String) = dao.restore(id, System.currentTimeMillis())
     suspend fun togglePin(id: String) = dao.togglePin(id, System.currentTimeMillis())
 
+    private fun now() = System.currentTimeMillis()
+
+    /** Flips one checklist row; returns the note's (done, total) afterwards. */
+    suspend fun toggleCheck(noteId: String, blockId: String): Pair<Int, Int>? {
+        val n = dao.get(noteId) ?: return null
+        val blocks = Blocks.parse(n.blocks).map { if (it.id == blockId) it.copy(done = !it.done) else it }
+        dao.setBlocks(noteId, Blocks.serialize(blocks), now())
+        val checks = blocks.filter { it.type == BlockType.Check }
+        return checks.count { it.done } to checks.size
+    }
+
+    suspend fun setPinned(ids: List<String>, on: Boolean) = dao.setPinned(ids, on, now())
+    suspend fun setFavorite(ids: List<String>, on: Boolean) = dao.setFavorite(ids, on, now())
+    suspend fun setColor(ids: List<String>, color: NoteColor) = dao.setColor(ids, color.name, now())
+    suspend fun move(ids: List<String>, categoryId: String) = dao.setCategory(ids, categoryId, now())
+    suspend fun archive(ids: List<String>, on: Boolean = true) = dao.setArchived(ids, on, now())
+    suspend fun trash(ids: List<String>) = now().let { dao.setTrashed(ids, it, it) }
+    suspend fun restore(ids: List<String>) = dao.setTrashed(ids, null, now())
+
+    /**
+     * Writes a new relative order for [ids] (already sorted as wanted) by reusing the
+     * positions those notes held, so notes outside the visible list keep their place.
+     */
+    suspend fun reorder(ids: List<String>, current: List<NoteEntity>) {
+        val byId = current.associateBy { it.id }
+        val slots = ids.mapNotNull { byId[it]?.position }.sorted()
+        ids.zip(slots).forEach { (id, pos) -> if (byId[id]?.position != pos) dao.setPosition(id, pos) }
+    }
+
     /** First launch: a few notes in the prototype's voice so the stack isn't empty. */
     suspend fun seedIfEmpty() {
         if (dao.categoryCount() > 0) return

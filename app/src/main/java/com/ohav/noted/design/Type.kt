@@ -61,4 +61,16 @@ class NotedType(val pair: FontPair) {
     val label = body(14.5f, FontWeight.Bold, 1.3f)
     val caption = body(13f, FontWeight.SemiBold, 1.3f)
     val section = body(13f, FontWeight.ExtraBold, 1.3f)
+
+    // home / stack (sizes from the prototype CSS)
+    val cat = display(58f, 1.05f)
+    val cardTitle = display(25f, 1.15f)
+    val emptyTitle = display(26f, 1.15f)
+    val barTitle = display(24f, 1.1f)
+    val snippet = body(16f)
+    val meta = body(14f, FontWeight.SemiBold, 1.3f)
+    val sub = body(15f, FontWeight.Normal, 1.3f)
+    val button = body(17f, FontWeight.Bold, 1.2f)
+    val field = body(17f, FontWeight.Normal, 1.3f)
+    val tiny = body(12f, FontWeight.Bold, 1.2f)
 }

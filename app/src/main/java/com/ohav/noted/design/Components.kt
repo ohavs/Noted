@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -81,6 +82,28 @@ fun IconButton(icon: ImageVector, contentDescription: String, modifier: Modifier
     ) { Icon(icon, contentDescription, Modifier.size(24.dp), tint = tint) }
 }
 
+enum class BtnKind { Accent, Dark, Quiet, Danger }
+
+/** 56dp squircle button — the prototype's `.btn`. */
+@Composable
+fun Btn(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, kind: BtnKind = BtnKind.Accent, onClick: () -> Unit) {
+    val c = Noted.colors
+    val (bg, fg) = when (kind) {
+        BtnKind.Accent -> c.accent to c.accentInk
+        BtnKind.Dark -> c.inverse to c.inverseInk
+        BtnKind.Quiet -> androidx.compose.ui.graphics.Color.Transparent to c.ink2
+        BtnKind.Danger -> c.danger to androidx.compose.ui.graphics.Color.White
+    }
+    Row(
+        modifier.height(56.dp).press(scale = .95f, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 26.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+    ) {
+        if (icon != null) Icon(icon, null, Modifier.size(20.dp), tint = fg)
+        Text(text, style = Noted.type.button, color = fg, maxLines = 1)
+    }
+}
+
 /** Custom toggle — squircle track, thumb rides the touch spring. */
 @Composable
 fun NotedSwitch(checked: Boolean, modifier: Modifier = Modifier) {
@@ -113,7 +136,7 @@ class ToastState {
 
 /** Inverse squircle toast with optional undo + draining timer; flick sideways to dismiss. */
 @Composable
-fun ToastHost(state: ToastState, modifier: Modifier = Modifier) {
+fun ToastHost(state: ToastState, modifier: Modifier = Modifier, lift: Dp = 0.dp) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -122,7 +145,7 @@ fun ToastHost(state: ToastState, modifier: Modifier = Modifier) {
     if (toast != null) shown = toast
     AnimatedVisibility(
         visible = toast != null,
-        modifier = modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = modifier.navigationBarsPadding().padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 18.dp + lift),
         enter = slideInVertically(Motion.touch()) { it } + fadeIn(Motion.glide()) + scaleIn(Motion.touch(), initialScale = .9f),
         exit = slideOutVertically(Motion.glide()) { it / 2 } + fadeOut(Motion.glide()) + scaleOut(Motion.glide(), targetScale = .94f),
     ) {
@@ -177,3 +200,39 @@ fun ToastHost(state: ToastState, modifier: Modifier = Modifier) {
 
 @Composable
 fun VSpace(h: Dp) = Spacer(Modifier.height(h))
+
+// ------------------------------------------------------------------ shadows
+
+/** CSS-style box shadow (blur, y offset, spread) drawn under a squircle; same tokens as the prototype. */
+data class SoftShadow(val color: androidx.compose.ui.graphics.Color, val blur: Dp, val dy: Dp, val spread: Dp)
+
+object Shadows {
+    /** Cards cast upward onto the card behind them in the stack. */
+    fun card(dark: Boolean) = if (dark) SoftShadow(androidx.compose.ui.graphics.Color(0xCC000000), 28.dp, (-10).dp, (-16).dp)
+    else SoftShadow(androidx.compose.ui.graphics.Color(0x61281E0A), 28.dp, (-10).dp, (-18).dp)
+
+    fun float(dark: Boolean) = if (dark) SoftShadow(androidx.compose.ui.graphics.Color(0xCC000000), 50.dp, 18.dp, (-12).dp)
+    else SoftShadow(androidx.compose.ui.graphics.Color(0x731E1405), 50.dp, 18.dp, (-18).dp)
+}
+
+fun Modifier.softShadow(shadow: SoftShadow, radius: Dp, fill: androidx.compose.ui.graphics.Color): Modifier = drawBehind {
+    val sp = shadow.spread.toPx()
+    val w = size.width + 2 * sp
+    val h = size.height + 2 * sp
+    if (w <= 0f || h <= 0f) return@drawBehind
+    val outline = Squircle(radius).createOutline(androidx.compose.ui.geometry.Size(w, h), layoutDirection, this)
+    val paint = androidx.compose.ui.graphics.Paint()
+    paint.asFrameworkPaint().apply {
+        isAntiAlias = true
+        color = android.graphics.Color.argb(255, (fill.red * 255).toInt(), (fill.green * 255).toInt(), (fill.blue * 255).toInt())
+        setShadowLayer(shadow.blur.toPx() / 2f, 0f, shadow.dy.toPx(), android.graphics.Color.argb(
+            (shadow.color.alpha * 255).toInt(), (shadow.color.red * 255).toInt(), (shadow.color.green * 255).toInt(), (shadow.color.blue * 255).toInt(),
+        ))
+    }
+    drawIntoCanvas { canvas ->
+        canvas.save()
+        canvas.translate(-sp, -sp)
+        canvas.drawOutline(outline, paint)
+        canvas.restore()
+    }
+}
