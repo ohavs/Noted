@@ -97,6 +97,32 @@ function tracker() {
   };
 }
 
+/* pull a scrolled-to-top area down to dismiss its container (native scroll otherwise) */
+function pullToDismiss(scroller, { skip, begin, move, end }) {
+  let st = null;
+  scroller.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || (skip && skip(e.target))) { st = null; return; }
+    const t = e.touches[0];
+    st = { x: t.clientX, y: t.clientY, armed: false, top: scroller.scrollTop <= 0, tr: tracker() };
+  }, { passive: true });
+  scroller.addEventListener('touchmove', e => {
+    if (!st) return;
+    const t = e.touches[0], dy = t.clientY - st.y, dx = t.clientX - st.x;
+    if (!st.armed) {
+      if (!st.top || scroller.scrollTop > 0 || dy < -4 || Math.abs(dx) > Math.abs(dy)) { if (Math.abs(dy) > 4 || Math.abs(dx) > 4) st = null; return; }
+      if (dy < 8) return;
+      const sel = getSelection(); if (sel && !sel.isCollapsed) { st = null; return; }
+      st.armed = true; st.y0 = t.clientY; begin();
+    }
+    e.preventDefault();
+    st.tr.add(t.clientY);
+    move(t.clientY - st.y0);
+  }, { passive: false });
+  const fin = () => { if (st && st.armed) end(st.tr.vel()); st = null; };
+  scroller.addEventListener('touchend', fin);
+  scroller.addEventListener('touchcancel', fin);
+}
+
 /* ================================================================ haptics */
 function haptic(kind = 'light') {
   if (!settings.haptics || !navigator.vibrate) return;
@@ -948,8 +974,21 @@ function makeSheet(name, { onBeforeClose } = {}) {
     if (v > 700 || s.spring.v < .6) await closeSheet(name, { vel: -v / h });
     else s.spring.to(1, MOTION.glide, -v / h);
   };
+  const body = $('.sheet-body', el);
+  if (body) {
+    let p0 = 1;
+    pullToDismiss(body, {
+      skip: t => t.closest('.days,.shortcuts,.clock,.cal,input'),
+      begin: () => { p0 = s.spring.v; s.spring.stop(); },
+      move: dy => s.spring.set(Math.min(1, p0 - dy / el.offsetHeight)),
+      end: async v => {
+        if (v > 700 || s.spring.v < .6) await closeSheet(name, { vel: -v / el.offsetHeight });
+        else s.spring.to(1, MOTION.glide, -v / el.offsetHeight);
+      },
+    });
+  }
   $('.sheet-grab', el).addEventListener('pointerdown', down);
-  $('.sheet-title', el) && $('.sheet-title', el).addEventListener('pointerdown', down);
+  el.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.target.closest('.sheet-title')) down(e); });
   el.addEventListener('pointermove', move);
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
@@ -1473,6 +1512,17 @@ $('#ed-back').addEventListener('click', () => closeEditor());
   top.addEventListener('pointercancel', up);
 })();
 
+pullToDismiss(edScroll, {
+  skip: t => t.closest('.draw-pad,.blk-handle,.voice'),
+  begin: () => { hideSmartbar(); hideBubble(); hideBlkMenu(); if (document.activeElement) document.activeElement.blur(); ed.spring.stop(); },
+  move: dy => ed.spring.set(clamp(1 - dy / (device.clientHeight * .75), 0, 1)),
+  end: v => {
+    const vv = v / (device.clientHeight * .75);
+    if (vv > .9 || ed.p < .7) closeEditor({ vel: -vv });
+    else ed.spring.to(1, MOTION.glide, -vv).then(d => d && afterOpen());
+  },
+});
+
 /* pull an expanded card up into the editor */
 let pull = null;
 function pullMove(dy, e) {
@@ -1585,7 +1635,8 @@ edBlocks.addEventListener('keydown', e => {
       sel.removeAllRanges(); sel.addRange(rr);
       blk.remove();
       markDirty();
-    } else if (prev && !txt.textContent) { blk.remove(); markDirty(); }
+    } else if (prev && prev.classList.contains('armed')) { prev.classList.remove('armed'); deleteBlock(prev); }
+    else if (prev) { prev.classList.add('armed'); haptic('tick'); const off = () => { prev.classList.remove('armed'); txt.removeEventListener('input', off); }; txt.addEventListener('input', off); setTimeout(off, 2500); }
     return;
   }
   if (e.key === 'Tab') {
@@ -1755,14 +1806,18 @@ function markDirtyKeep() { /* drawing data lives on the model, not the DOM */ co
     e.preventDefault();
     const blk = h.closest('.blk');
     const items = $$('.blk', edBlocks);
-    d = { blk, items, from: items.indexOf(blk), to: items.indexOf(blk), y: e.clientY, tops: items.map(x => x.offsetTop), hs: items.map(x => x.offsetHeight) };
+    d = { h, blk, items, started: false, from: items.indexOf(blk), to: items.indexOf(blk), y: e.clientY, tops: items.map(x => x.offsetTop), hs: items.map(x => x.offsetHeight) };
     h.setPointerCapture(e.pointerId);
-    blk.classList.add('dragging');
-    haptic('medium');
   });
   edBlocks.addEventListener('pointermove', e => {
     if (!d) return;
     const dy = e.clientY - d.y;
+    if (!d.started) {
+      if (Math.abs(dy) < 6) return;
+      d.started = true; hideBlkMenu();
+      d.blk.classList.add('dragging');
+      haptic('medium');
+    }
     d.blk.style.transform = `translateY(${dy}px)`;
     const center = d.tops[d.from] + dy + d.hs[d.from] / 2;
     let to = 0;
@@ -1780,6 +1835,7 @@ function markDirtyKeep() { /* drawing data lives on the model, not the DOM */ co
   });
   const up = () => {
     if (!d) return;
+    if (!d.started) { const { blk, h } = d; d = null; openBlkMenu(blk, h); return; }
     const { blk, items, from, to, hs } = d; d = null;
     let off = 0;
     if (to > from) for (let i = from + 1; i <= to; i++) off += hs[i];
@@ -1873,6 +1929,77 @@ function refreshContext() {
   else if (focusedBlk && ['check', 'bullet', 'num'].includes(typeOf(focusedBlk))) showSmartbar('list');
   else showSmartbar('insert');
 }
+
+/* ---------------- block menu (tap the handle) */
+const blkMenu = $('#blk-menu');
+let blkMenuFor = null;
+function openBlkMenu(blk, h) {
+  if (blkMenuFor === blk && blkMenu.classList.contains('show')) { hideBlkMenu(); return; }
+  hideBubble();
+  blkMenuFor = blk;
+  edBlocks.querySelectorAll('.blk.menu-on').forEach(x => x.classList.remove('menu-on'));
+  blk.classList.add('menu-on');
+  const idx = $$('.blk', edBlocks).indexOf(blk), n = $$('.blk', edBlocks).length;
+  $('[data-bm="up"]', blkMenu).disabled = idx <= 0;
+  $('[data-bm="down"]', blkMenu).disabled = idx >= n - 1;
+  const dr = device.getBoundingClientRect(), hr = h.getBoundingClientRect();
+  blkMenu.style.top = '0px'; blkMenu.classList.add('measure');
+  const mh = blkMenu.offsetHeight; blkMenu.classList.remove('measure');
+  let top = hr.bottom - dr.top + 6;
+  if (top + mh > dr.height - 90) top = hr.top - dr.top - mh - 6;
+  blkMenu.style.top = Math.max(60, top) + 'px';
+  blkMenu.style.insetInlineStart = Math.max(12, dr.right - hr.right) + 'px';
+  blkMenu.classList.add('show');
+  haptic('light');
+}
+function hideBlkMenu() {
+  blkMenu.classList.remove('show');
+  if (blkMenuFor) blkMenuFor.classList.remove('menu-on');
+  blkMenuFor = null;
+}
+document.addEventListener('pointerdown', e => { if (blkMenuFor && !e.target.closest('#blk-menu,.blk-handle')) hideBlkMenu(); }, true);
+edScroll.addEventListener('scroll', () => blkMenuFor && hideBlkMenu(), { passive: true });
+function deleteBlock(blk) {
+  commitNow();
+  const before = ed.hist[ed.hi];
+  const prev = blk.previousElementSibling, next = blk.nextElementSibling;
+  haptic('medium');
+  blk.style.overflow = 'hidden';
+  const hgt = blk.offsetHeight;
+  blk.animate([{ opacity: 1, height: hgt + 'px', transform: 'none' }, { opacity: 0, height: '0px', transform: 'scale(.96)' }],
+    { duration: EASE.glide.dur * .9, easing: EASE.glide.easing }).onfinish = () => {
+    blk.remove();
+    if (!edBlocks.querySelector('.blk')) { ed.blocks = [{ id: bid(), type: 'p', html: '' }]; renderBlocks(); }
+    commitNow();
+    const t = (prev && $('.txt', prev)) || (next && $('.txt', next));
+    if (t && !coarse) caret(t, true);
+    toast('הבלוק נמחק', { icon: 'ph-trash', action: 'ביטול', onAction: () => { restore(before); commitNow(); haptic('light'); } });
+  };
+}
+blkMenu.addEventListener('click', e => {
+  const b = e.target.closest('[data-bm]'); if (!b || !blkMenuFor) return;
+  const blk = blkMenuFor; const act = b.dataset.bm;
+  hideBlkMenu();
+  if (act === 'delete') { deleteBlock(blk); return; }
+  readDOM();
+  const i = ed.blocks.findIndex(x => x.id === blk.dataset.id); if (i < 0) return;
+  if (act === 'dup') {
+    const copy = JSON.parse(JSON.stringify(ed.blocks[i])); copy.id = bid();
+    ed.blocks.splice(i + 1, 0, copy);
+  } else {
+    const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= ed.blocks.length) return;
+    [ed.blocks[i], ed.blocks[j]] = [ed.blocks[j], ed.blocks[i]];
+  }
+  const firstTops = new Map($$('.blk', edBlocks).map(x => [x.dataset.id, x.getBoundingClientRect().top]));
+  renderBlocks();
+  $$('.blk', edBlocks).forEach(x => {
+    const t0 = firstTops.get(x.dataset.id);
+    const dy = t0 == null ? 0 : t0 - x.getBoundingClientRect().top;
+    if (t0 == null) x.animate([{ opacity: 0, transform: 'scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: EASE.glide.dur, easing: EASE.glide.easing });
+    else if (dy) x.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: EASE.glide.dur, easing: EASE.glide.easing });
+  });
+  commitNow(); haptic('light');
+});
 
 /* ---------------- selection bubble */
 const bubble = $('#bubble');
@@ -2090,11 +2217,11 @@ function renderSettings() {
 }
 $('#btn-profile').addEventListener('click', () => { renderSettings(); openSheet('settings'); });
 $('#settings-body').addEventListener('click', async e => {
-  const t = e.target.closest('[data-theme]');
+  const t = e.target.closest('.theme-opt');
   if (t) { setTheme(t.dataset.theme, e.clientX, e.clientY); $$('.theme-opt').forEach(x => x.classList.toggle('on', x === t)); haptic('light'); return; }
-  const a = e.target.closest('[data-accent]');
+  const a = e.target.closest('.accent-opt');
   if (a) { saveSetting('accent', a.dataset.accent); applyTheme(); $$('.accent-opt').forEach(x => x.classList.toggle('on', x === a)); haptic('light'); return; }
-  const f = e.target.closest('[data-font]');
+  const f = e.target.closest('.font-opt');
   if (f) { saveSetting('font', f.dataset.font); applyTheme(); $$('.font-opt').forEach(x => x.classList.toggle('on', x === f)); haptic('light'); requestAnimationFrame(() => layout({ instant: true })); return; }
   if (e.target.closest('#set-haptics')) { saveSetting('haptics', !settings.haptics); $('#set-haptics .switch').classList.toggle('on', settings.haptics); haptic('medium'); return; }
   const s = e.target.closest('[data-slow]');

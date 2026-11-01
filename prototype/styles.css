@@ -542,6 +542,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   transition: opacity var(--dur-fast) linear;
 }
 .ed-content:hover .blk-handle, .blk.focused .blk-handle { opacity: .55; }
+@media (pointer: coarse) { .blk-handle { opacity: .4; } }
 .blk-body { flex: 1; min-width: 0; padding: 4px 6px; transition: transform var(--dur-touch) var(--ease-touch), box-shadow var(--dur-fast) linear; }
 .blk-p .txt { font-size: 18px; min-height: 1.45em; }
 .blk-h1 .txt { font-family: var(--font-display); font-weight: var(--display-weight); font-size: calc(28px * var(--display-scale)); line-height: 1.2; padding-top: 8px; }
@@ -690,6 +691,24 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #bubble.show button:nth-child(2) { transition-delay: 25ms; }
 #bubble.show button:nth-child(3) { transition-delay: 50ms; }
 #bubble.show button:nth-child(4) { transition-delay: 75ms; }
+
+/* block menu — opened by tapping a block's handle */
+#blk-menu {
+  position: absolute; z-index: 77; display: flex; gap: 2px; padding: 6px;
+  background: var(--inverse); color: var(--inverse-ink); border-radius: 22px;
+  box-shadow: var(--shadow-float); transform-origin: 90% 0;
+  opacity: 0; transform: scale(.88) translateY(-6px); pointer-events: none;
+  transition: transform var(--dur-touch) var(--ease-touch), opacity var(--dur-fast) linear;
+}
+#blk-menu.measure { visibility: hidden; transition: none; }
+#blk-menu.show { opacity: 1; transform: none; pointer-events: auto; }
+#blk-menu button { width: 64px; padding: 9px 0 7px; border-radius: 16px; display: grid; justify-items: center; gap: 3px; font-size: 12px; font-weight: 700; color: var(--inverse-ink-2); }
+#blk-menu button .ph { font-size: 21px; color: var(--inverse-ink); }
+#blk-menu button:active { background: var(--inverse-2); }
+#blk-menu button:disabled { opacity: .32; }
+#blk-menu .danger, #blk-menu .danger .ph { color: #FF8B7A; }
+.blk.menu-on .blk-handle { opacity: 1 !important; color: var(--accent); }
+.blk.menu-on .blk-body, .blk.armed .blk-body { background: color-mix(in oklab, var(--accent) 12%, transparent); border-radius: var(--r-sm); box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 55%, transparent); }
 
 /* ------------------------------------------------------------------ sheets */
 .sheet {
