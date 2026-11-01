@@ -40,6 +40,12 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/noted.jks"
+            # Same key for every release, or in-app updates won't install.
+            EXPECTED="3A:8A:46:7A:9C:0A:22:76:45:2F:A5:DD:F7:88:7F:D7:1E:4F:A1:85:D6:F3:75:58:A2:98:D2:EA:0D:13:FA:A2"
+            ACTUAL=$(keytool -list -v -keystore "$RUNNER_TEMP/noted.jks" -alias noted -storepass "$KEYSTORE_PASSWORD" | sed -n 's/^\s*SHA256: //p')
+            if [ "$ACTUAL" != "$EXPECTED" ]; then
+              echo "::error::Keystore SHA-256 mismatch: $ACTUAL"; exit 1
+            fi
             echo "NOTED_KEYSTORE_FILE=$RUNNER_TEMP/noted.jks" >> "$GITHUB_ENV"
             echo "NOTED_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
             echo "signed=true" >> "$GITHUB_OUTPUT"
