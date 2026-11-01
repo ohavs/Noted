@@ -1,6 +1,15 @@
 package com.ohav.noted.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.ohav.noted.design.LocalOverlays
+import com.ohav.noted.design.SheetRow
+import kotlin.math.roundToInt
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -110,6 +119,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val c = Noted.colors
     val haptics = Noted.haptics
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
     val scope = rememberCoroutineScope()
     val notesOrNull by app.notes.notes.collectAsStateWithLifecycle(initialValue = null)
     val dbCats by app.notes.categories.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -126,7 +136,11 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val scroll = rememberScrollState()
     val catIndex = cats.indexOfFirst { it.id == cat }.coerceAtLeast(0)
 
-    val visible = remember(notes, shownCat, searching, query) {
+    val overlays = LocalOverlays.current
+    val lift = remember { LiftState() }
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    val baseVisible = remember(notes, shownCat, searching, query) {
         when {
             searching -> query.trim().let { q ->
                 if (q.isEmpty()) emptyList()
@@ -136,11 +150,197 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             else -> notes.filter { it.categoryId == shownCat }
         }
     }
+    val visible = lift.order?.let { ord ->
+        val pos = ord.withIndex().associate { it.value to it.index }
+        baseVisible.sortedBy { pos[it.id] ?: Int.MAX_VALUE }
+    } ?: baseVisible
+    // drop the local order once the database reflects it
+    LaunchedEffect(baseVisible) {
+        val o = lift.order ?: return@LaunchedEffect
+        if (!lift.dragging && !lift.settling && baseVisible.map { it.id } == o) lift.order = null
+    }
     val blocksOf = remember(notes) { notes.associate { it.id to Blocks.parse(it.blocks) } }
     if (expanded != null && visible.none { it.id == expanded }) expanded = null
 
     fun goCat(i: Int) {
         cat = cats[i.coerceIn(0, cats.lastIndex)].id
+    }
+
+    fun startSelecting(first: String?) {
+        selecting = true
+        expanded = null
+        selected = setOfNotNull(first)
+        chrome.navHidden = true
+        haptics.medium()
+    }
+
+    fun stopSelecting() {
+        selecting = false
+        selected = emptySet()
+        chrome.navHidden = false
+    }
+
+    fun startLift(n: NoteEntity) {
+        if (selecting || searching || lift.id != null) return
+        val rect = lift.coords[n.id]?.takeIf { it.isAttached }?.boundsInRoot() ?: return
+        lift.begin(n.id, rect)
+        scope.launch {
+            lift.settle.snapTo(0f)
+            lift.height.snapTo(rect.height)
+            lift.pop.animateTo(1f, Motion.touch())
+        }
+    }
+
+    fun settleLift(after: (() -> Unit)? = null) {
+        if (lift.id == null || lift.settling) { after?.invoke(); return }
+        val order = if (lift.dragging) lift.order else null
+        lift.menu = false
+        lift.dragging = false
+        lift.settling = true
+        scope.launch {
+            if (order != null) launch { app.notes.reorder(order, notes) }
+            launch { lift.pop.animateTo(0f, Motion.glide()) }
+            lift.settle.animateTo(1f, Motion.glide())
+            lift.clear()
+            haptics.light()
+            delay(1200)
+            if (lift.id == null) lift.order = null
+        }
+        after?.invoke()
+    }
+
+    fun openMove(ids: List<String>) {
+        overlays.sheet.show(if (ids.size > 1) "להעביר ${ids.size} פתקים ל…" else "להעביר ל…") {
+            dbCats.forEach { k ->
+                SheetRow(catIcon(k.id), k.name, end = "${notes.count { it.categoryId == k.id }}") {
+                    scope.launch { app.notes.move(ids, k.id) }
+                    overlays.sheet.close()
+                    if (selecting) stopSelecting()
+                    toasts.show(if (ids.size > 1) "${ids.size} פתקים עברו ל״${k.name}״" else "עבר ל״${k.name}״", Ph.FolderSimple)
+                }
+            }
+            SheetRow(Ph.Plus, "קטגוריה חדשה", last = true) { toasts.show("קטגוריות חדשות — בהמשך הדרך", Ph.FolderSimple) }
+        }
+    }
+
+    fun openColor(ids: List<String>) {
+        overlays.sheet.show("צבע לכל הנבחרים") {
+            ColorGrid { col ->
+                scope.launch { app.notes.setColor(ids, col) }
+                haptics.light()
+                overlays.sheet.close()
+                stopSelecting()
+            }
+        }
+    }
+
+    fun confirmDelete(ids: List<String>) {
+        scope.launch {
+            val one = ids.singleOrNull()?.let { id -> notes.firstOrNull { it.id == id } }
+            val ok = overlays.dialog.confirm(
+                title = if (one != null) "להעביר לסל המחזור?" else "להעביר ${ids.size} פתקים לסל?",
+                text = "אפשר לשחזר אותם מסל המחזור.",
+                icon = Ph.Trash, danger = true,
+                note = one?.let { it.title.ifBlank { "ללא כותרת" } to c.note(NoteColor.of(it.color)) },
+                confirm = "העבר לסל", cancel = "השאר",
+            )
+            if (!ok) return@launch
+            if (selecting) stopSelecting()
+            app.notes.trash(ids)
+            toasts.show(if (ids.size > 1) "${ids.size} פתקים הועברו לסל" else "הפתק הועבר לסל המחזור", Ph.Trash, action = "ביטול", millis = 5000) {
+                scope.launch { app.notes.restore(ids) }
+            }
+        }
+    }
+
+    fun archive(ids: List<String>) {
+        scope.launch { app.notes.archive(ids) }
+        toasts.show(if (ids.size > 1) "${ids.size} פתקים הועברו לארכיון" else "הועבר לארכיון", Ph.Archive, action = "ביטול", millis = 5000) {
+            scope.launch { app.notes.archive(ids, false) }
+        }
+    }
+
+    fun onMenu(a: String) {
+        val n = lift.id?.let { id -> notes.firstOrNull { it.id == id } } ?: return
+        val ids = listOf(n.id)
+        when (a) {
+            "pin" -> settleLift {
+                scope.launch { app.notes.setPinned(ids, !n.pinned) }
+                toasts.show(if (!n.pinned) "ננעץ בראש הערימה" else "השחרור בוצע", Ph.PushPinFill)
+            }
+            "fav" -> settleLift {
+                scope.launch { app.notes.setFavorite(ids, !n.favorite) }
+                toasts.show(if (!n.favorite) "נוסף למועדפים" else "הוסר מהמועדפים", Ph.StarFill)
+            }
+            "move" -> settleLift { openMove(ids) }
+            "archive" -> settleLift { archive(ids) }
+            "delete" -> settleLift { confirmDelete(ids) }
+            "select" -> settleLift { startSelecting(n.id) }
+            "remind" -> settleLift { toasts.show("תזכורות מגיעות בשלב 6", Ph.Bell) }
+            "share" -> settleLift { toasts.show("שיתוף מגיע עם החשבון והסנכרון", Ph.ShareNetwork) }
+            "lock" -> settleLift { toasts.show("נעילת פתקים מגיעה בהמשך", Ph.Lock) }
+        }
+    }
+
+    fun onSelAction(a: String) {
+        val ids = selected.toList()
+        if (ids.isEmpty()) { toasts.show("קודם בוחרים פתקים", Ph.HandTap); return }
+        when (a) {
+            "color" -> openColor(ids)
+            "move" -> openMove(ids)
+            "delete" -> confirmDelete(ids)
+            "pin" -> {
+                val all = ids.all { id -> notes.firstOrNull { it.id == id }?.pinned == true }
+                scope.launch { app.notes.setPinned(ids, !all) }
+                stopSelecting()
+                toasts.show(if (all) "השחרור בוצע" else "${ids.size} נעוצים למעלה", Ph.PushPinFill)
+            }
+        }
+    }
+
+    // the lifted card + menu live in the app-wide overlay, above the nav
+    val liftNote = lift.id?.let { id -> notes.firstOrNull { it.id == id } }
+    val liftUi = rememberUpdatedState(
+        LiftUi(
+            note = liftNote,
+            blocks = liftNote?.let { blocksOf[it.id] }.orEmpty(),
+            onAction = ::onMenu,
+            onColor = { col ->
+                haptics.tick()
+                liftNote?.let { scope.launch { app.notes.setColor(listOf(it.id), col) } }
+            },
+            onDismiss = { settleLift() },
+        ),
+    )
+    DisposableEffect(overlays) {
+        overlays.layer = { LiftLayer(lift, liftUi.value) }
+        onDispose {
+            overlays.layer = null
+            overlays.blur = 0f
+            chrome.navHidden = false
+        }
+    }
+    LaunchedEffect(lift) {
+        snapshotFlow { if (lift.menu || (lift.settling && !lift.dragged)) lift.pop.value.coerceIn(0f, 1f) else 0f }
+            .collect { overlays.blur = it }
+    }
+    // while dragging near an edge, scroll the stack under the finger
+    LaunchedEffect(lift.dragging) {
+        if (!lift.dragging) return@LaunchedEffect
+        with(density) {
+            val screenH = configuration.screenHeightDp.dp.toPx()
+            val speed = 8.dp.toPx() / 2.5f
+            while (lift.dragging) {
+                withFrameNanos { }
+                val y = lift.from.top + lift.touchY + lift.dy
+                val v = when {
+                    y > screenH - 110.dp.toPx() -> speed
+                    y < 90.dp.toPx() -> -speed
+                    else -> 0f
+                }
+                if (v != 0f) lift.startTop += scroll.scrollBy(v)
+            }
+        }
     }
 
     // category change: old cards slide away, then the new set rises in, staggered
@@ -203,8 +403,13 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         stack.enterArmed = true
         stack.enterGen++
     }
-    BackHandler(enabled = searching || expanded != null) {
-        if (expanded != null) expanded = null else closeSearch()
+    BackHandler(enabled = searching || expanded != null || selecting || lift.id != null) {
+        when {
+            lift.id != null -> settleLift()
+            selecting -> stopSelecting()
+            expanded != null -> expanded = null
+            else -> closeSearch()
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -249,8 +454,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     modifier = Modifier
                         .fillMaxWidth()
                         .pointerInput(Unit) { detectTapGestures { expanded = null } }
-                        .pointerInput(searching, catIndex, cats.size) {
-                            if (searching) return@pointerInput
+                        .pointerInput(searching, selecting, catIndex, cats.size) {
+                            if (searching || selecting) return@pointerInput
                             val max = 90.dp.toPx()
                             var total = 0f
                             detectHorizontalDragGestures(
@@ -270,18 +475,24 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                             }
                         },
                 ) { n, _ ->
+                    Box(
+                        Modifier
+                            .graphicsLayer { alpha = if (lift.id == n.id) 0f else 1f }
+                            .onGloballyPositioned { lift.coords[n.id] = it },
+                    ) {
                     NoteCard(
                         n = n,
                         blocks = blocksOf[n.id].orEmpty(),
                         expanded = n.id == expanded,
                         onFullHeight = { h -> if (stack.fullHeights[n.id] != h) stack.fullHeights[n.id] = h },
-                        onClick = { if (expanded == n.id) toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil) else expanded = n.id },
-                        onLongClick = {
-                            scope.launch { app.notes.trash(listOf(n.id)) }
-                            toasts.show("הפתק הועבר לסל המחזור", Ph.Trash, action = "ביטול", millis = 5000) {
-                                scope.launch { app.notes.restore(listOf(n.id)) }
+                        onClick = {
+                            when {
+                                selecting -> { selected = if (n.id in selected) selected - n.id else selected + n.id; haptics.tick() }
+                                expanded == n.id -> toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil)
+                                else -> expanded = n.id
                             }
                         },
+                        onLongClick = { startLift(n) },
                         onToggleCheck = { blockId ->
                             scope.launch {
                                 val r = app.notes.toggleCheck(n.id, blockId) ?: return@launch
@@ -289,7 +500,15 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                             }
                         },
                         onOpenEditor = { toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil) },
+                        selecting = selecting,
+                        selected = n.id in selected,
+                        lift = LiftGestures(
+                            onStart = { lift.touchY = it.y },
+                            onDrag = { d -> liftDrag(lift, n.id, d, visible, density, scope, haptics) { expanded = null } },
+                            onEnd = { if (lift.id == n.id && lift.dragging) settleLift() },
+                        ),
                     )
+                    }
                 }
                 if (notesOrNull != null && visible.isEmpty() && stack.exit.value == 0f) {
                     val q = query.trim()
@@ -316,10 +535,10 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 .padding(end = 30.dp, bottom = 18.dp + 90.dp)
                 .graphicsLayer {
                     translationY = low * 92.dp.toPx()
-                    alpha = if (searching) 0f else 1f
+                    alpha = if (searching || selecting) 0f else 1f
                 }
                 .size(66.dp)
-                .press(enabled = !searching, scale = .9f) {
+                .press(enabled = !searching && !selecting, scale = .9f) {
                     scope.launch {
                         newNote(app, cat, notes.size)
                         scroll.animateScrollTo(0, Motion.glide())
@@ -330,6 +549,79 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 .background(c.accent),
             contentAlignment = Alignment.Center,
         ) { Icon(Ph.Plus, "פתק חדש", Modifier.size(28.dp), tint = c.accentInk) }
+
+        val selVis by animateFloatAsState(if (selecting) 1f else 0f, Motion.glide(), label = "sel")
+        if (selVis > .001f) {
+            SelectionHeader(
+                selected.size, selVis,
+                onClose = ::stopSelecting,
+                onAll = { selected = visible.mapTo(HashSet()) { it.id }; haptics.light() },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+            SelectionBar(selVis, Modifier.align(Alignment.BottomCenter), onAction = ::onSelAction)
+        }
+    }
+}
+
+/** One step of a lifted card's drag: after a few dp it becomes a reorder; slots follow the finger. */
+private fun liftDrag(
+    lift: LiftState, id: String, d: Float, visible: List<NoteEntity>,
+    density: androidx.compose.ui.unit.Density, scope: kotlinx.coroutines.CoroutineScope,
+    haptics: com.ohav.noted.design.Haptics, collapse: () -> Unit,
+) {
+    if (lift.id != id || lift.settling) return
+    lift.dy += d
+    val step = with(density) { StackDims.Step.toPx() }
+    if (!lift.dragging && abs(lift.dy) > with(density) { 10.dp.toPx() }) {
+        lift.dragging = true
+        lift.dragged = true
+        lift.menu = false
+        collapse()
+        val ids = visible.map { it.id }
+        lift.order = ids
+        lift.idx = ids.indexOf(id).coerceAtLeast(0)
+        lift.startTop = lift.idx * step
+        lift.dyAtDrag = lift.dy
+        val hc = with(density) { StackDims.Card.toPx() }
+        scope.launch { lift.height.animateTo(hc, Motion.glide()) }
+    }
+    if (!lift.dragging) return
+    val ord = lift.order ?: return
+    val pos = lift.startTop + lift.dy - lift.dyAtDrag
+    val to = (pos / step).roundToInt().coerceIn(0, ord.lastIndex)
+    if (to != lift.idx && lift.idx in ord.indices) {
+        lift.order = ord.toMutableList().apply { removeAt(lift.idx); add(to, id) }
+        lift.idx = to
+        haptics.tick()
+    }
+}
+
+private fun catIcon(id: String) = when (id) {
+    "home" -> Ph.House
+    "work" -> Ph.Briefcase
+    "me" -> Ph.Heart
+    "trips" -> Ph.MapTrifold
+    "ideas" -> Ph.Lightbulb
+    else -> Ph.FolderSimple
+}
+
+/** 4-up grid of note colours (sheet content). */
+@Composable
+private fun ColorGrid(onPick: (NoteColor) -> Unit) {
+    val c = Noted.colors
+    NoteColor.entries.chunked(4).forEach { row ->
+        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            row.forEach { col ->
+                Column(
+                    Modifier.weight(1f).press(scale = .92f) { onPick(col) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(1.2f).clip(Shapes.md).background(c.note(col)))
+                    Text(col.label, style = Noted.type.caption, color = c.ink2)
+                }
+            }
+        }
     }
 }
 

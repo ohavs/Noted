@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -79,6 +80,9 @@ import java.time.temporal.ChronoUnit
 import kotlin.math.hypot
 import kotlin.math.min
 
+/** Long-press-then-drag hooks (reordering a lifted card). */
+class LiftGestures(val onStart: (Offset) -> Unit, val onDrag: (Float) -> Unit, val onEnd: () -> Unit)
+
 private val TEXTY = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 
 fun snippetOf(blocks: List<Block>): String = blocks.firstOrNull { it.type in TEXTY && it.text.isNotBlank() }?.text.orEmpty()
@@ -121,6 +125,9 @@ fun NoteCard(
     onLongClick: () -> Unit,
     onToggleCheck: (String) -> Unit,
     onOpenEditor: () -> Unit,
+    selecting: Boolean = false,
+    selected: Boolean = false,
+    lift: LiftGestures? = null,
 ) {
     val c = Noted.colors
     val t = Noted.type
@@ -131,11 +138,23 @@ fun NoteCard(
     val s by animateFloatAsState(if (pressed) .975f else 1f, Motion.touch(), label = "press")
     val open by animateFloatAsState(if (expanded) 1f else 0f, Motion.glide(), label = "open")
     val progress = remember(blocks) { progressOf(blocks) }
+    val liftNow by androidx.compose.runtime.rememberUpdatedState(lift)
+    val sel by animateFloatAsState(if (selecting) 1f else 0f, Motion.touch(), label = "selecting")
+    val picked by animateFloatAsState(if (selected) 1f else 0f, Motion.touch(), label = "selected")
 
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { scaleX = s; scaleY = s }
+            .graphicsLayer { val k = s * (1f - .04f * picked); scaleX = k; scaleY = k }
+            .then(
+                if (lift == null) Modifier else Modifier.pointerInput(n.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { liftNow?.onStart?.invoke(it) },
+                        onDragEnd = { liftNow?.onEnd?.invoke() },
+                        onDragCancel = { liftNow?.onEnd?.invoke() },
+                    ) { ch, d -> ch.consume(); liftNow?.onDrag?.invoke(d.y) }
+                },
+            )
             .softShadow(Shadows.card(c.isDark), 30.dp, note)
             .clip(Shapes.card)
             .background(note)
@@ -158,12 +177,12 @@ fun NoteCard(
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                 )
                 if (n.pinned || n.favorite) {
-                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.padding(top = 6.dp).graphicsLayer { alpha = 1f - sel }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (n.pinned) Icon(Ph.PushPinFill, "נעוץ", Modifier.size(16.dp), tint = c.noteInk2)
                         if (n.favorite) Icon(Ph.StarFill, "מועדף", Modifier.size(16.dp), tint = c.noteInk2)
                     }
                 }
-                if (progress != null) ProgressRing(progress.first, progress.second, Modifier.offset(y = (-4).dp))
+                if (progress != null) ProgressRing(progress.first, progress.second, Modifier.offset(y = (-4).dp).graphicsLayer { alpha = 1f - sel })
             }
             Box(Modifier.padding(top = 6.dp)) {
                 if (open < .99f) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open })
@@ -171,6 +190,19 @@ fun NoteCard(
                     FullContent(n, blocks, onToggleCheck, onOpenEditor, Modifier.graphicsLayer { alpha = open })
                 }
             }
+        }
+        if (sel > .01f) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 20.dp, end = 20.dp)
+                    .size(28.dp)
+                    .graphicsLayer { val k = .4f + .6f * sel; scaleX = k; scaleY = k; alpha = sel.coerceIn(0f, 1f) }
+                    .clip(CircleShape)
+                    .background(c.noteInk.copy(alpha = picked.coerceIn(0f, 1f)))
+                    .drawBehind { drawCircle(c.noteInk, size.minDimension / 2 - 1.25.dp.toPx(), style = Stroke(2.5.dp.toPx())) },
+                contentAlignment = Alignment.Center,
+            ) { if (selected) Icon(Ph.Check, null, Modifier.size(15.dp), tint = note) }
         }
     }
 }

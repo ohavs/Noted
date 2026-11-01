@@ -1,5 +1,6 @@
 package com.ohav.noted.ui
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -30,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -40,6 +42,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -47,6 +51,10 @@ import androidx.compose.ui.unit.dp
 import com.ohav.noted.NotedApp
 import com.ohav.noted.design.Btn
 import com.ohav.noted.design.BtnKind
+import com.ohav.noted.design.DialogHost
+import com.ohav.noted.design.LocalOverlays
+import com.ohav.noted.design.Overlays
+import com.ohav.noted.design.SheetHost
 import com.ohav.noted.design.Motion
 import com.ohav.noted.design.Noted
 import com.ohav.noted.design.Ph
@@ -85,10 +93,16 @@ enum class Tab(val label: String, val icon: ImageVector, val iconOn: ImageVector
 fun NotedRoot(app: NotedApp) {
     var screen by rememberSaveable { mutableStateOf("main") }
     val toasts = remember { ToastState() }
+    val overlays = remember { Overlays() }
     BackHandler(enabled = screen != "main") { screen = "main" }
 
+    CompositionLocalProvider(LocalOverlays provides overlays) {
     Box(Modifier.fillMaxSize().background(Noted.colors.bg)) {
         AnimatedContent(
+            modifier = Modifier.graphicsLayer {
+                val b = overlays.blur
+                renderEffect = if (Build.VERSION.SDK_INT >= 31 && b > .01f) BlurEffect(b * 10.dp.toPx(), b * 10.dp.toPx(), TileMode.Clamp) else null
+            },
             targetState = screen,
             transitionSpec = {
                 // RTL: going deeper enters from the left (end side), back returns from the right.
@@ -103,7 +117,11 @@ fun NotedRoot(app: NotedApp) {
                 else -> MainScreen(app, toasts, onSettings = { screen = "settings" })
             }
         }
+        overlays.layer?.invoke()
+        SheetHost(overlays.sheet)
+        DialogHost(overlays.dialog)
         ToastHost(toasts, Modifier.align(Alignment.BottomCenter), lift = if (screen == "main") 90.dp else 0.dp)
+    }
     }
 }
 
