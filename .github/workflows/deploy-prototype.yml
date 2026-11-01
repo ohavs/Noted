@@ -32,5 +32,8 @@ jobs:
       - name: Smoke test
         if: steps.tok.outputs.ok == 'true'
         run: |
-          sleep 5
-          curl -fsS https://noted-ce451.web.app/ | grep -q 'noted' && echo "live ok"
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS https://noted-ce451.web.app/ | grep -q 'noted'; then echo "live ok"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::site not reachable after deploy"; exit 1

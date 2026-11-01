@@ -11,14 +11,15 @@
 - אנדרואיד בלבד, Kotlin + Compose, `com.ohav.noted`. Firebase (Google sign-in, Blaze + התראת תקציב $1). Google Maps.
 - תנועה: שני קפיצים מרכזיים בלבד — `touch` (k=520, c=25, ζ≈0.55) ו-`glide` (k=230, c=30, ζ≈1). באב-הטיפוס ה-easing של CSS נגזר מהם (`linear()`); אותם ערכים יעברו ל-Compose `spring()`.
 - אייקונים: Phosphor (regular + fill לפעיל). Squircle אמיתי דרך `corner-shape` איפה שנתמך.
+- Region (שלב 2+): הכי קרוב לישראל ובחינם ככל האפשר — Firestore ב-`me-west1` (תל אביב) אם מכסת החינם חלה שם, Storage בדלי החינמי (`us-central1`/`us-east1`/`us-west1`, חובה למכסת החינם), Functions — לבדוק מכסת חינם ב-`me-west1` מול `europe-west1`. לאמת לפני יצירה (בחירת region בלתי הפיכה).
 - בועת הסימון מוצגת **מתחת** לטקסט במכשירי מגע (תפריט המערכת של הדפדפן תופס את המקום שמעל; באפליקציה האמיתית נחליף אותו).
 
 ## פעולות ידניות של הבעלים
-- 2026-11-01: נשלחה בקשה לסוד `FIREBASE_TOKEN`.
+- 2026-11-01: `FIREBASE_TOKEN` נוסף ✅.
 - בתחילת שלב 2 (Kotlin): הודעה מרוכזת — keystore, `google-services.json`, Google sign-in, מפתח Maps (תלויים ב-SHA-1 שנייצר).
 
 ## סודות שהוגדרו (שמות בלבד)
-- `FIREBASE_TOKEN` (ממתין). מתוכננים: `GOOGLE_SERVICES_JSON`, `MAPS_API_KEY`, `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
+- `FIREBASE_TOKEN` ✅. מתוכננים: `GOOGLE_SERVICES_JSON`, `MAPS_API_KEY`, `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
 
 ## פתוח באב-טיפוס (לא חוסם)
 - גרירה של פתק על שם קטגוריה להעברה — לא מומש (יש העברה דרך התפריט).
