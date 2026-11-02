@@ -42,6 +42,9 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun get(id: String): NoteEntity?
 
+    @Query("UPDATE notes SET title = :title, blocks = :blocks, updatedAt = :at WHERE id = :id")
+    suspend fun setContent(id: String, title: String, blocks: String, at: Long)
+
     @Query("UPDATE notes SET blocks = :blocks, updatedAt = :at WHERE id = :id")
     suspend fun setBlocks(id: String, blocks: String, at: Long)
 

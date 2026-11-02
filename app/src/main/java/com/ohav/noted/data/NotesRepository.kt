@@ -27,6 +27,11 @@ class NotesRepository(private val db: NotedDatabase) {
 
     private fun now() = System.currentTimeMillis()
 
+    suspend fun get(id: String): NoteEntity? = dao.get(id)
+
+    /** Editor autosave: title + blocks in one write. */
+    suspend fun save(id: String, title: String, blocks: List<Block>) = dao.setContent(id, title, Blocks.serialize(blocks), now())
+
     /** Flips one checklist row; returns the note's (done, total) afterwards. */
     suspend fun toggleCheck(noteId: String, blockId: String): Pair<Int, Int>? {
         val n = dao.get(noteId) ?: return null

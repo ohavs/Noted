@@ -428,9 +428,15 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         }
     }
 
+    var fabRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     // new note: opens right away where you can see it. An untouched new note blocks the next one —
     // tapping + again just brings that one back into focus.
     var focusNew by remember { mutableStateOf<String?>(null) }
+    fun cardRect(id: String) = lift.coords[id]?.takeIf { it.isAttached }?.boundsInRoot()?.takeIf { it.width > 1f && it.height > 1f }
+    fun openEditor(n: NoteEntity, fresh: Boolean = false) {
+        if (selecting || lift.id != null) return
+        chrome.editor.open(n, cardRect(n.id) ?: fabRect.takeIf { fresh || it.width > 0f }, fresh)
+    }
     fun addNote() {
         val draft = notes.firstOrNull { it.isBlankDraft(blocksOf[it.id].orEmpty()) }
         if (draft != null) {
@@ -438,12 +444,19 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             focusNew = draft.id
             haptics.light()
             toasts.show("הפתק החדש עוד מחכה לך", Ph.NotePencil)
+            chrome.editor.open(draft, cardRect(draft.id) ?: fabRect, fresh = true)
             return
         }
         scope.launch {
-            focusNew = newNote(app, cat, notes.size).id
+            val n = newNote(app, cat, notes.size)
+            focusNew = n.id
             haptics.confirm()
+            chrome.editor.open(n, fabRect, fresh = true)
         }
+    }
+    DisposableEffect(chrome.editor) {
+        chrome.editor.cardRect = { id -> cardRect(id) }
+        onDispose { chrome.editor.cardRect = null }
     }
     // once the new note shows up in the stack (and any category change has settled), open it
     LaunchedEffect(focusNew, visible, shownCat == cat) {
@@ -544,7 +557,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 ) { n, _, clipped ->
                     Box(
                         Modifier
-                            .graphicsLayer { alpha = if (lift.id == n.id) 0f else 1f }
+                            .graphicsLayer { alpha = if (lift.id == n.id || chrome.editor.openId == n.id) 0f else 1f }
                             .onGloballyPositioned { lift.coords[n.id] = it },
                     ) {
                     NoteCard(
@@ -555,7 +568,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         onClick = {
                             when {
                                 selecting -> { selected = if (n.id in selected) selected - n.id else selected + n.id; haptics.tick() }
-                                expanded == n.id -> toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil)
+                                expanded == n.id -> openEditor(n)
                                 else -> expanded = n.id
                             }
                         },
@@ -566,7 +579,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                                 if (r.first == r.second && r.second > 0) toasts.show("כל הרשימה סומנה. יפה!", Ph.CheckCircleFill)
                             }
                         },
-                        onOpenEditor = { toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil) },
+                        onOpenEditor = { openEditor(n) },
                         selecting = selecting,
                         selected = n.id in selected,
                         clipped = clipped,
@@ -606,6 +619,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     alpha = if (searching || selecting) 0f else 1f
                 }
                 .size(66.dp)
+                .onGloballyPositioned { fabRect = it.boundsInRoot() }
                 .press(enabled = !searching && !selecting, scale = .9f) { addNote() }
                 .softShadow(fabShadow, 24.dp, c.accent)
                 .clip(Squircle(24.dp))
@@ -694,7 +708,7 @@ private const val NEW_TITLE = "פתק חדש"
 
 private suspend fun newNote(app: NotedApp, cat: String, count: Int): NoteEntity {
     val colors = listOf(NoteColor.Butter, NoteColor.Peach, NoteColor.Rose, NoteColor.Lilac, NoteColor.Sky, NoteColor.Mint, NoteColor.Sage, NoteColor.Sand)
-    return app.notes.create(if (cat == "all") "home" else cat, colors[(count * 3) % colors.size], title = NEW_TITLE)
+    return app.notes.create(if (cat == "all") "home" else cat, colors[(count * 3) % colors.size])
 }
 
 /** A note created with + and never written in. */

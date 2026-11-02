@@ -69,6 +69,8 @@ import com.ohav.noted.design.press
 import com.ohav.noted.design.softShadow
 import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
+import com.ohav.noted.ui.editor.EditorHost
+import com.ohav.noted.ui.editor.EditorNav
 import com.ohav.noted.ui.home.HomeScreen
 import com.ohav.noted.ui.settings.SettingsScreen
 
@@ -83,6 +85,9 @@ class Chrome {
 
     /** Bumped when the active Home tab is tapped again → scroll to top. */
     var scrollTopTick by mutableIntStateOf(0)
+
+    /** The note editor, opened as a container transform over everything. */
+    val editor = EditorNav()
 }
 
 enum class Tab(val label: String, val icon: ImageVector, val iconOn: ImageVector) {
@@ -186,6 +191,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, onSettings: () -> Unit
                 if (picked == Tab.Shared) sharedSeen = true
             }
         }
+        EditorHost(app, chrome.editor, toasts)
     }
 }
 
