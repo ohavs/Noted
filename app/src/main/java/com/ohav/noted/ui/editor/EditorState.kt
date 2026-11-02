@@ -10,6 +10,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.BlockType
+import com.ohav.noted.data.LinkInfo
+import com.ohav.noted.data.LinkPreview
 import com.ohav.noted.data.MediaExtra
 import com.ohav.noted.data.Pic
 import com.ohav.noted.data.Span
@@ -182,6 +184,19 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
             if (start >= 0) pending.forEach { st -> spans = Rich.normalize(spans + Span(start, end, st)) }
         }
         if (newText.contains('\n')) { split(b, newText, spans); changed(); return }
+        if (oldText.isEmpty() && b.type == BlockType.P && newText.length > 8) {
+            LinkPreview.normalize(newText)?.takeIf { newText.contains('.') && (newText.startsWith("http") || newText.startsWith("www.")) }?.let { url ->
+                b.setText("")
+                b.spans = emptyList()
+                b.type = BlockType.Link
+                b.extra = MediaExtra.ofLink(LinkInfo(url, site = LinkPreview.host(url)))
+                val n = EdBlock.new()
+                blocks.add(indexOf(b.id) + 1, n)
+                pendingFocus = n.id to 0
+                changed()
+                return
+            }
+        }
         b.spans = spans
         b.value = v.copy(selection = clampSel(v.selection, v.text.length))
         markdown(b)
@@ -334,6 +349,23 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         record(true)
         b.spans = Rich.setInk(b.spans, s.min, s.max, prefix, ink?.name)
         changed()
+    }
+
+    /** Link over the selection (null removes it). */
+    fun setLink(url: String?) {
+        val b = current ?: return
+        val s = b.sel
+        if (s.collapsed) return
+        record(true)
+        b.spans = Rich.setInk(b.spans, s.min, s.max, Rich.LINK, url)
+        changed()
+    }
+
+    /** Address of the link under the cursor / selection, if any. */
+    fun linkAt(): String? {
+        val b = current ?: return null
+        val s = b.sel
+        return b.spans.firstOrNull { it.style.startsWith(Rich.LINK) && it.start <= s.min && it.end >= max(s.max, s.min + 1) }?.style?.drop(Rich.LINK.length)
     }
 
     fun clearStyles() {

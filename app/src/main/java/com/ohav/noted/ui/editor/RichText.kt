@@ -35,6 +35,7 @@ object Rich {
     const val ITALIC = "i"
     const val UNDER = "u"
     const val STRIKE = "s"
+    const val LINK = "a:"
 
     private fun styleOf(tag: String, dark: Boolean): SpanStyle? = when {
         tag == BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
@@ -43,12 +44,19 @@ object Rich {
         tag == STRIKE -> SpanStyle(textDecoration = TextDecoration.LineThrough)
         tag.startsWith("c:") -> Ink.of(tag.drop(2))?.let { SpanStyle(color = it.ink(dark)) }
         tag.startsWith("h:") -> Ink.of(tag.drop(2))?.let { SpanStyle(background = it.mark(dark)) }
+        tag.startsWith(LINK) -> SpanStyle(color = Ink.Blue.ink(dark), textDecoration = TextDecoration.Underline)
         else -> null
     }
 
-    fun annotate(text: String, spans: List<Span>, dark: Boolean, offset: Int = 0): AnnotatedString = buildAnnotatedString {
+    /** [links] = make "a:" runs tappable (cards; the editor opens them from the bar instead). */
+    fun annotate(text: String, spans: List<Span>, dark: Boolean, offset: Int = 0, links: Boolean = false): AnnotatedString = buildAnnotatedString {
         append(text)
         val len = text.length
+        if (links) spans.filter { it.style.startsWith(LINK) }.forEach { s ->
+            val a = (s.start + offset).coerceIn(0, len)
+            val b = (s.end + offset).coerceIn(0, len)
+            if (a < b) addLink(androidx.compose.ui.text.LinkAnnotation.Url(s.style.drop(LINK.length)), a, b)
+        }
         // underline + strike on the same range need one combined decoration
         spans.forEach { s ->
             val a = (s.start + offset).coerceIn(0, len)

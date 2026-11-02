@@ -47,6 +47,11 @@ import com.ohav.noted.design.SheetRow
 import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.ToastState
 import com.ohav.noted.ui.media.ImageViewer
+import com.ohav.noted.ui.media.LinkCard
+import com.ohav.noted.ui.media.LinkField
+import com.ohav.noted.data.LinkInfo
+import com.ohav.noted.data.LinkPreview
+import androidx.compose.runtime.LaunchedEffect
 import com.ohav.noted.ui.media.PicGrid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -199,6 +204,32 @@ fun MediaHost.imageSheet(overlays: com.ohav.noted.design.Overlays) {
     }
 }
 
+/** Sheet asking for an address: a new link card under the focused line. */
+fun MediaHost.linkSheet(overlays: com.ohav.noted.design.Overlays, clip: String?) {
+    val at = state.focused
+    overlays.sheet.show("קישור") {
+        LinkField(clip.orEmpty(), "הוספת קישור") { url ->
+            overlays.sheet.close()
+            state.insertMedia(BlockType.Link, MediaExtra.ofLink(LinkInfo(url, site = LinkPreview.host(url))), at)
+            haptics.confirm()
+        }
+    }
+}
+
+/** Sheet asking for an address for the selected text. */
+fun EditorState.inlineLinkSheet(overlays: com.ohav.noted.design.Overlays) {
+    val b = current ?: return
+    val sel = b.value.selection
+    overlays.sheet.show("קישור לטקסט") {
+        LinkField(linkAt().orEmpty(), "קישור") { url ->
+            overlays.sheet.close()
+            b.value = b.value.copy(selection = sel)
+            focused = b.id
+            setLink(url)
+        }
+    }
+}
+
 /** A media block inside the editor. [armed] = marked by a backspace, the next one removes it. */
 @Composable
 fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
@@ -214,6 +245,13 @@ fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
         when (b.type) {
             BlockType.Images -> PicGrid(MediaExtra.pics(b.extra), onClick = { i -> host?.viewer = b.id to i })
             BlockType.Voice -> MediaExtra.voice(b.extra)?.let { VoiceTile(it) }
+            BlockType.Link -> MediaExtra.link(b.extra)?.let { l ->
+                val ctx = LocalContext.current
+                LaunchedEffect(l.url, l.loaded) {
+                    if (!l.loaded) state.patchExtra(b.id, MediaExtra.ofLink(LinkPreview.fetch(ctx.applicationContext, l.url)))
+                }
+                LinkCard(l)
+            }
             else -> Unit
         }
     }

@@ -274,7 +274,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
     val c = Noted.colors
     val t = Noted.type
     // rich text is built once per block content, not on every pass
-    val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark) } }
+    val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark, links = true) } }
     Column(modifier.fillMaxWidth()) {
         var num = 0
         blocks.forEach { b ->

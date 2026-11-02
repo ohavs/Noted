@@ -900,6 +900,7 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
     val screenWDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     var w by remember { mutableStateOf(0) }
     val inBlock = state.current != null
+    val overlays = LocalOverlays.current
     val items = buildList<Act> {
         if (inBlock) {
             add(Act(Ph.TextB, "מודגש") { state.style(Rich.BOLD); haptics.tick() })
@@ -907,6 +908,7 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
                 val on = state.current?.let { Rich.inkOf(it.spans, it.sel.min, it.sel.max, "h:") } != null
                 state.ink("h:", if (on) null else Ink.Orange); haptics.tick()
             })
+            if (state.current?.sel?.collapsed == false) add(Act(Ph.Link, "קישור") { bubble.hide(); state.inlineLinkSheet(overlays) })
             add(Act(Ph.ListBullets, "לרשימה") { state.setType(BlockType.Bullet); bubble.hide(); haptics.tick() })
         }
         bubble.onCopy?.let { f -> add(Act(Ph.Copy, "העתקה") { f(); bubble.hide() }) }
@@ -971,6 +973,8 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
     val c = Noted.colors
     val media = LocalMedia.current
     val overlays = LocalOverlays.current
+    val clipboard = LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val haptics = Noted.haptics
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -1052,6 +1056,10 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.TextHOne, "כותרת", sub == SubBar.Heading) { sub = if (sub == SubBar.Heading) SubBar.None else SubBar.Heading }
                         BarBtn(Ph.Minus, "קו מפריד") { state.insert(BlockType.Divider) }
                         BarBtn(Ph.Image, "תמונה") { media?.imageSheet(overlays) }
+                        BarBtn(Ph.Link, "קישור") {
+                            val clip = runCatching { clipboard.getText()?.text }.getOrNull()?.let(com.ohav.noted.data.LinkPreview::normalize)
+                            media?.linkSheet(overlays, clip)
+                        }
                         BarBtn(Ph.Microphone, "הקלטה") { media?.record(); keyboard?.hide(); focusManager.clearFocus() }
                         BarBtn(Ph.ScribbleLoop, "ציור") { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) }
                     }
@@ -1062,6 +1070,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.TextStrikethrough, "קו חוצה", state.isOn(Rich.STRIKE)) { state.style(Rich.STRIKE) }
                         BarBtn(Ph.Palette, "צבע טקסט", sub == SubBar.Color) { sub = if (sub == SubBar.Color) SubBar.None else SubBar.Color }
                         BarBtn(Ph.Highlighter, "מרקר", sub == SubBar.Mark) { sub = if (sub == SubBar.Mark) SubBar.None else SubBar.Mark }
+                        BarBtn(Ph.Link, "קישור", state.linkAt() != null) { state.inlineLinkSheet(overlays) }
                         BarBtn(Ph.X, "ניקוי עיצוב") { state.clearStyles() }
                     }
                     BarMode.List -> {
@@ -1073,6 +1082,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }
                     }
                     BarMode.Text -> {
+                        state.linkAt()?.let { url -> BarBtn(Ph.ArrowSquareOut, "פתיחת הקישור") { com.ohav.noted.ui.media.openUrl(ctx, url) } }
                         BarBtn(Ph.TextHOne, "כותרת", sub == SubBar.Heading || b?.type in setOf(BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote)) {
                             sub = if (sub == SubBar.Heading) SubBar.None else SubBar.Heading
                         }
