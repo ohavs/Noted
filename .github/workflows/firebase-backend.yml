@@ -1,0 +1,38 @@
+name: Firebase backend (Firestore + Storage rules)
+
+on:
+  push:
+    branches: [main, 'ccr-*']
+    paths: ['firestore.rules', 'firestore.indexes.json', 'storage.rules', 'firebase.json', '.github/workflows/firebase-backend.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: firebase-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Firestore database
+        run: |
+          fb() { npx --yes firebase-tools@15 "$@" --project noted-ce451 --non-interactive; }
+          if fb firestore:databases:list --json | jq -e '.result[]? | select((.name // "") | endswith("/databases/(default)"))' >/dev/null; then
+            echo "(default) database exists"
+          else
+            # Tel Aviv; the free quota covers the (default) database in any location.
+            fb firestore:databases:create "(default)" --location me-west1 --delete-protection ENABLED
+          fi
+      - name: Firestore rules
+        run: npx --yes firebase-tools@15 deploy --only firestore --project noted-ce451 --non-interactive
+      - name: Storage rules
+        run: |
+          if ! npx --yes firebase-tools@15 deploy --only storage --project noted-ce451 --non-interactive; then
+            echo "::warning::Storage not set up yet (needs Blaze + 'Get started' in the console) — media sync stays off."
+          fi

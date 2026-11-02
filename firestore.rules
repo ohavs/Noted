@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function me() { return request.auth != null ? request.auth.uid : null; }
+
+    // Per-user data: profile, categories.
+    match /users/{uid} {
+      allow read, write: if me() == uid;
+      match /{rest=**} {
+        allow read, write: if me() == uid;
+      }
+    }
+
+    // A note lives at the top level so sharing (8b) only edits its member list.
+    match /notes/{id} {
+      allow read: if me() != null && me() in resource.data.memberIds;
+      allow create: if me() != null
+        && request.resource.data.owner == me()
+        && request.resource.data.memberIds == [me()];
+      allow update: if me() != null && me() in resource.data.memberIds
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.memberIds == resource.data.memberIds;
+      allow delete: if me() != null && resource.data.owner == me();
+    }
+  }
+}

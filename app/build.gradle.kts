@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// CI writes app/google-services.json from the Firebase project (see .github/workflows/android.yml).
+// Without it the app builds and runs local-only; sign-in says it isn't available.
+if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google-services")
+
 // CI passes -PversionCode=<run number>; versionName = "<major>.<minor>.<code>" so the release tag sorts with it.
 val vCode = (findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
 val vName = "0.2.$vCode"
@@ -76,4 +80,11 @@ dependencies {
     implementation(libs.mlkit.docscanner)
     implementation(libs.play.location)
     implementation(libs.coroutines.play)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
+    implementation(libs.credentials)
+    implementation(libs.credentials.play)
+    implementation(libs.googleid)
 }
