@@ -432,6 +432,16 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         if (b.extra != extra) { b.extra = extra; changed() }
     }
 
+    /** A paragraph with [text] right under block [id] (e.g. a recording's transcript). */
+    fun addTextAfter(id: String, text: String) {
+        val i = indexOf(id).takeIf { it >= 0 } ?: return
+        record(true)
+        val n = EdBlock.new(BlockType.P, text)
+        blocks.add(i + 1, n)
+        pendingFocus = n.id to text.length
+        changed()
+    }
+
     fun removePic(id: String, index: Int) {
         val b = blocks.firstOrNull { it.id == id } ?: return
         val pics = MediaExtra.pics(b.extra)

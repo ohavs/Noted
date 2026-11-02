@@ -1,6 +1,14 @@
 package com.ohav.noted.ui.editor
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.content.ContextCompat
+import com.ohav.noted.ui.media.Recorder
+import com.ohav.noted.ui.media.VoicePlayer
+import com.ohav.noted.ui.media.VoiceTile
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
@@ -72,12 +80,47 @@ class MediaHost(
     internal var launchGallery: () -> Unit = {}
     internal var launchCamera: () -> Unit = {}
     internal var launchScan: () -> Unit = {}
+    internal var askMic: () -> Unit = {}
+
+    val recorder = Recorder(ctx)
+    var recording by mutableStateOf(false)
+        private set
 
     private fun mark() { anchor = state.focused }
 
     fun gallery() { mark(); launchGallery() }
     fun camera() { mark(); launchCamera() }
     fun scan() { mark(); launchScan() }
+
+    /** Start recording under the focused line (asks for the microphone the first time). */
+    fun record() {
+        mark()
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) begin() else askMic()
+    }
+
+    internal fun begin() {
+        VoicePlayer.stop()
+        if (recorder.start()) { recording = true; haptics.medium() }
+        else toasts.show("המיקרופון לא זמין כרגע", Ph.WarningCircle)
+    }
+
+    fun finishRecording() {
+        if (!recording) return
+        val at = anchor
+        scope.launch {
+            val v = recorder.stop()
+            recording = false
+            if (v == null) toasts.show("ההקלטה קצרה מדי", Ph.Waveform)
+            else { state.insertMedia(BlockType.Voice, MediaExtra.ofVoice(v), at); haptics.confirm() }
+        }
+    }
+
+    fun cancelRecording() {
+        if (!recording) return
+        recorder.cancel()
+        recording = false
+        haptics.light()
+    }
 
     internal fun addUris(uris: List<Uri>, doc: Boolean) {
         if (uris.isEmpty()) return
@@ -105,6 +148,12 @@ fun rememberMediaHost(state: EditorState, toasts: ToastState): MediaHost {
         val u = shot
         if (ok && u != null) host.addUris(listOf(u), doc = false)
     }
+    val mic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) host.begin() else toasts.show("בלי הרשאת מיקרופון אי אפשר להקליט", Ph.Microphone)
+    }
+    host.askMic = { mic.launch(Manifest.permission.RECORD_AUDIO) }
+    DisposableEffect(host) { onDispose { host.recorder.release(); VoicePlayer.stop() } }
+    BackHandler(enabled = host.recording) { host.finishRecording() }
     val scanner = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) {
             val pages = GmsDocumentScanningResult.fromActivityResultIntent(r.data)?.pages?.map { it.imageUri }.orEmpty()
@@ -164,6 +213,7 @@ fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
     Box(Modifier.fillMaxWidth().padding(vertical = 6.dp).then(ring).padding(if (armed) 4.dp else 0.dp)) {
         when (b.type) {
             BlockType.Images -> PicGrid(MediaExtra.pics(b.extra), onClick = { i -> host?.viewer = b.id to i })
+            BlockType.Voice -> MediaExtra.voice(b.extra)?.let { VoiceTile(it) }
             else -> Unit
         }
     }

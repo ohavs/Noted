@@ -497,6 +497,9 @@ private fun EditorPage(
     fun blockMenu(id: String) {
         haptics.light()
         overlays.sheet.show("בלוק") {
+            val blk = state.blocks.firstOrNull { it.id == id }
+            val said = blk?.takeIf { it.type == BlockType.Voice }?.let { com.ohav.noted.data.MediaExtra.voice(it.extra)?.text }.orEmpty()
+            if (said.isNotBlank()) SheetRow(Ph.TextT, "התמלול כטקסט בפתק") { state.addTextAfter(id, said); overlays.sheet.close() }
             SheetRow(Ph.ArrowUp, "הזזה למעלה") { state.moveBy(id, -1); overlays.sheet.close() }
             SheetRow(Ph.ArrowDown, "הזזה למטה") { state.moveBy(id, 1); overlays.sheet.close() }
             SheetRow(Ph.CopySimple, "שכפול") { state.duplicate(id); overlays.sheet.close() }
@@ -557,7 +560,9 @@ private fun EditorPage(
                             },
                     )
                 }
-                SmartBar(state, toasts)
+                if (media.recording) {
+                    com.ohav.noted.ui.media.RecorderPanel(media.recorder, onCancel = media::cancelRecording, onDone = media::finishRecording)
+                } else SmartBar(state, toasts)
             }
             SelectionBubble(bubble, origin, state)
             MediaOverlays(media)
@@ -1047,7 +1052,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.TextHOne, "כותרת", sub == SubBar.Heading) { sub = if (sub == SubBar.Heading) SubBar.None else SubBar.Heading }
                         BarBtn(Ph.Minus, "קו מפריד") { state.insert(BlockType.Divider) }
                         BarBtn(Ph.Image, "תמונה") { media?.imageSheet(overlays) }
-                        BarBtn(Ph.Waveform, "הקלטה") { toasts.show("הקלטות מגיעות בשלב 5", Ph.Waveform) }
+                        BarBtn(Ph.Microphone, "הקלטה") { media?.record(); keyboard?.hide(); focusManager.clearFocus() }
                         BarBtn(Ph.ScribbleLoop, "ציור") { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) }
                     }
                     BarMode.Format -> {
