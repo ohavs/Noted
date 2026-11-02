@@ -91,6 +91,7 @@ fun rememberMediaBitmap(name: String, maxPx: Int = 1024): State<ImageBitmap?> {
     val key = "$name@$maxPx"
     return produceState(BitmapCache.cache.get(key), key) {
         if (value == null) {
+            Media.awaitFile(ctx, name)
             value = withContext(Dispatchers.IO) { runCatching { BitmapCache.decode(ctx, name, maxPx) }.getOrNull() }
                 ?.also { BitmapCache.cache.put(key, it) }
         }

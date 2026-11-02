@@ -48,6 +48,15 @@ class EdBlock(val id: String, type: BlockType, text: String, done: Boolean, inde
         value = TextFieldValue(SENTINEL + t, TextRange(cursor.coerceIn(0, t.length) + 1))
     }
 
+    /** Takes another side's version of this block, keeping the cursor where it was. */
+    fun update(b: Block) {
+        type = b.type; extra = b.extra; done = b.done; indent = b.indent; spans = b.spans
+        if (text != b.text) {
+            val len = SENTINEL.length + b.text.length
+            value = TextFieldValue(SENTINEL + b.text, TextRange(value.selection.start.coerceIn(1, len), value.selection.end.coerceIn(1, len)))
+        }
+    }
+
     fun toBlock() = Block(
         id, type, if (type in TEXT_TYPES) text else "", done, indent,
         if (type in TEXT_TYPES) spans else emptyList(),
@@ -71,6 +80,9 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         if (none { it.type in TEXT_TYPES }) add(EdBlock.new())
     }
     val titleFocus = FocusRequester()
+
+    /** What the store held when this editor last met it — the base of every merge on save. */
+    var base: Pair<String, List<Block>> = title to blocks
 
     /** Block with keyboard focus (null = title / nothing). */
     var focused by mutableStateOf<String?>(null)
@@ -151,6 +163,22 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     fun revertAll() {
         record(true)
         restore(original)
+    }
+
+    /**
+     * Shows a merged version (changes from another device / a notification) without
+     * touching what the editor changed itself; not an undo step and not a save.
+     */
+    fun absorb(t: String, list: List<Block>) {
+        if (title.text.trim() != t) title = TextFieldValue(t, TextRange(min(title.selection.end, t.length)))
+        val byId = blocks.associateBy { it.id }
+        val next = list.map { b -> byId[b.id]?.also { e -> if (e.toBlock() != b) e.update(b) } ?: EdBlock.of(b) }
+        if (next.map { it.id } != blocks.map { it.id }) {
+            blocks.clear()
+            blocks.addAll(next)
+        }
+        if (blocks.none { it.type in TEXT_TYPES }) blocks.add(EdBlock.new())
+        if (focused != null && blocks.none { it.id == focused }) focused = null
     }
 
     fun onTitle(v: TextFieldValue) {

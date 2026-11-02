@@ -7,6 +7,9 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -84,6 +87,15 @@ object MediaExtra {
 
 /** Files of media blocks live in `filesDir/media`, named by a fresh id. */
 object Media {
+    /** Names of files that just landed from the cloud, so views waiting on them can show them. */
+    val arrived = MutableSharedFlow<String>(extraBufferCapacity = 64)
+
+    /** Returns once [name] is in the media folder (now, or when sync brings it). */
+    suspend fun awaitFile(ctx: Context, name: String) {
+        if (file(ctx, name).exists()) return
+        arrived.onSubscription { if (file(ctx, name).exists()) emit(name) }.first { it == name }
+    }
+
     fun dir(ctx: Context): File = File(ctx.filesDir, "media").apply { mkdirs() }
     fun file(ctx: Context, name: String) = File(dir(ctx), name)
     fun newName(ext: String) = UUID.randomUUID().toString().replace("-", "").take(20) + "." + ext

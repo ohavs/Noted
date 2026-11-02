@@ -2,6 +2,7 @@ package com.ohav.noted.data
 
 import androidx.room.withTransaction
 import com.ohav.noted.design.NoteColor
+import com.ohav.noted.sync.Merge
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
@@ -31,6 +32,20 @@ class NotesRepository(private val db: NotedDatabase) {
 
     /** Editor autosave: title + blocks in one write. */
     suspend fun save(id: String, title: String, blocks: List<Block>) = dao.setContent(id, title, Blocks.serialize(blocks), now())
+
+    /**
+     * Editor save: applies what the editor changed since [base] onto whatever is stored now
+     * (sync or a notification action may have changed the note meanwhile). Returns what is stored.
+     */
+    suspend fun saveMerged(id: String, base: Pair<String, List<Block>>, title: String, blocks: List<Block>): Pair<String, List<Block>> =
+        db.withTransaction {
+            val cur = dao.get(id) ?: return@withTransaction title to blocks
+            val stored = Blocks.parse(cur.blocks)
+            val t = Merge.pick(base.first, title, cur.title)
+            val b = Merge.blocks(base.second, blocks, stored)
+            if (t != cur.title || b != stored) dao.setContent(id, t, Blocks.serialize(b), now())
+            t to b
+        }
 
     /** Flips one checklist row; returns the note's (done, total) afterwards. */
     suspend fun toggleCheck(noteId: String, blockId: String): Pair<Int, Int>? {

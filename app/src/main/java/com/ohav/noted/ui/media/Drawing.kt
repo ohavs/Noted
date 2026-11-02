@@ -83,6 +83,7 @@ object StrokeFile {
     fun cached(name: String): List<PenStroke>? = cache.get(name)
 
     suspend fun load(ctx: Context, name: String): List<PenStroke> = cache.get(name) ?: withContext(Dispatchers.IO) {
+        if (!Media.file(ctx, name).exists()) return@withContext emptyList()
         runCatching {
             val a = JSONObject(Media.file(ctx, name).readText()).getJSONArray("s")
             List(a.length()) { i ->
@@ -158,7 +159,9 @@ private fun DrawScope.drawStroke(path: Path, s: PenStroke, k: Float, ink: Color,
 fun DrawingView(d: Drawing, modifier: Modifier = Modifier) {
     val c = Noted.colors
     val ctx = LocalContext.current.applicationContext
-    val strokes by produceState(StrokeFile.cached(d.strokes), d.strokes) { if (value == null) value = StrokeFile.load(ctx, d.strokes) }
+    val strokes by produceState(StrokeFile.cached(d.strokes), d.strokes) {
+        if (value == null) { Media.awaitFile(ctx, d.strokes); value = StrokeFile.load(ctx, d.strokes) }
+    }
     Box(
         modifier
             .fillMaxWidth()

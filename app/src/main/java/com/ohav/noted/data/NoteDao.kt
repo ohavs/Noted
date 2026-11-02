@@ -12,6 +12,19 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE trashedAt IS NULL AND archived = 0 ORDER BY pinned DESC, position ASC")
     fun observeActive(): Flow<List<NoteEntity>>
 
+    /** Every note, trashed and archived too (sync). */
+    @Query("SELECT * FROM notes")
+    fun observeAll(): Flow<List<NoteEntity>>
+
+    @Query("SELECT * FROM notes")
+    suspend fun all(): List<NoteEntity>
+
+    @Query("DELETE FROM notes WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("SELECT * FROM categories")
+    suspend fun categories(): List<CategoryEntity>
+
     @Query("SELECT * FROM categories ORDER BY position ASC")
     fun observeCategories(): Flow<List<CategoryEntity>>
 

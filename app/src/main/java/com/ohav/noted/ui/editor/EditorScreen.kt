@@ -98,6 +98,7 @@ import androidx.compose.ui.zIndex
 import com.ohav.noted.NotedApp
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.sync.Merge
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.design.LocalOverlays
 import com.ohav.noted.design.Motion
@@ -253,7 +254,8 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         // the line must exist in the stored note before its reminder can ring
         if (state.version > 0) {
             val (title, blocks) = state.content()
-            app.scope.launch { app.notes.save(n.id, title, blocks) }
+            val base = state.base
+            app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }
         }
         openReminderPicker(app, overlays, toasts, scope, n.id, blockId, line, startPlace = place)
     }
@@ -274,19 +276,34 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             }
         }
     }
-    // autosave on every pause in typing
+    // autosave on every pause in typing; merged onto whatever the note became meanwhile
     LaunchedEffect(state) {
         snapshotFlow { state.version }.drop(1).collectLatest {
             delay(400)
-            val (title, blocks) = state.content()
-            app.notes.save(n.id, title, blocks)
+            val mine = state.content()
+            val stored = app.notes.saveMerged(n.id, state.base, mine.first, mine.second)
+            state.base = stored
+            if (stored != mine) state.absorb(stored.first, stored.second)
+        }
+    }
+    // the note changed under the editor (another device, a notification action): show it in place
+    LaunchedEffect(state) {
+        snapshotFlow { live }.collect { l ->
+            if (l == null) return@collect
+            val stored = l.title to Blocks.parse(l.blocks)
+            if (stored == state.base) return@collect
+            val mine = state.content()
+            val merged = Merge.pick(state.base.first, mine.first, stored.first) to Merge.blocks(state.base.second, mine.second, stored.second)
+            state.base = stored
+            if (merged != mine) state.absorb(merged.first, merged.second)
         }
     }
     DisposableEffect(state) {
         onDispose {
             if (state.version > 0) {
                 val (title, blocks) = state.content()
-                app.scope.launch { app.notes.save(n.id, title, blocks) }
+                val base = state.base
+                app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }
             }
         }
     }
@@ -299,7 +316,8 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         val changed = state.changedSinceOpen
         if (state.version > 0) {
             val (title, blocks) = state.content()
-            app.scope.launch { app.notes.save(n.id, title, blocks) }
+            val base = state.base
+            app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }
         }
         val t = nav.target()
         if (t != null) nav.from = t else if (nav.fresh) nav.toCard = false

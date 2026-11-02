@@ -80,6 +80,7 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
         Text("הגדרות", style = t.hero, color = c.ink, modifier = Modifier.padding(horizontal = 20.dp))
         VSpace(20.dp)
 
+        Section("חשבון") { AccountCard(app, toasts) }
         Section("ארגון") {
             Row(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)

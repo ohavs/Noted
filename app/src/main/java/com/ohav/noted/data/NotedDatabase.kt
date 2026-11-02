@@ -7,11 +7,12 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class], version = 4, exportSchema = true)
+@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class, ShadowEntity::class, MediaSyncEntity::class], version = 5, exportSchema = true)
 abstract class NotedDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun reminders(): ReminderDao
     abstract fun places(): PlaceDao
+    abstract fun sync(): SyncDao
 
     companion object {
         /** v2: categories get an icon; the seeded ones keep the icons they always showed. */
@@ -53,7 +54,15 @@ abstract class NotedDatabase : RoomDatabase() {
             }
         }
 
+        /** v5: cloud sync bookkeeping (stage 8). */
+        private val M4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `sync_shadows` (`id` TEXT NOT NULL, `json` TEXT NOT NULL, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `media_sync` (`name` TEXT NOT NULL, `owner` TEXT NOT NULL, `uploaded` INTEGER NOT NULL, PRIMARY KEY(`name`))")
+            }
+        }
+
         fun create(context: Context): NotedDatabase =
-            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4).build()
+            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4, M4_5).build()
     }
 }

@@ -87,4 +87,5 @@ dependencies {
     implementation(libs.credentials)
     implementation(libs.credentials.play)
     implementation(libs.googleid)
+    testImplementation(libs.junit)
 }

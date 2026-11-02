@@ -543,6 +543,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 ) { s ->
                     if (s) SearchBar(query, onQuery = { query = it; expanded = null }, onCancel = ::closeSearch)
                     else TopBar(
+                        app,
                         onProfile = onSettings,
                         onSearch = {
                             haptics.light()
@@ -755,20 +756,22 @@ private fun NoteEntity.isBlankDraft(blocks: List<com.ohav.noted.data.Block>) =
     (title.isBlank() || title == NEW_TITLE) && blocks.all { it.text.isBlank() } && reminderAt == null
 
 @Composable
-private fun TopBar(onProfile: () -> Unit, onSearch: () -> Unit) {
+private fun TopBar(app: NotedApp, onProfile: () -> Unit, onSearch: () -> Unit) {
+    val user by app.account.user.collectAsState()
+    val photo by app.account.photo.collectAsState()
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().padding(top = 14.dp).height(64.dp).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar("א", onProfile)
+        Avatar(user?.letter ?: "א", photo, onProfile)
         Spacer(Modifier.weight(1f))
         IconButton(Ph.MagnifyingGlass, "חיפוש", onClick = onSearch)
     }
 }
 
-/** Account avatar (settings live behind it until sign-in arrives) — conic gradient, ringed by the page. */
+/** Account avatar (settings live behind it): the Google photo, or a letter on a conic gradient, ringed by the page. */
 @Composable
-private fun Avatar(letter: String, onClick: () -> Unit) {
+private fun Avatar(letter: String, photo: androidx.compose.ui.graphics.ImageBitmap?, onClick: () -> Unit) {
     val c = Noted.colors
     val brush = remember { Brush.sweepGradient(listOf(Color(0xFFF4B98F), Color(0xFFE58F6F), Color(0xFFC9A2E8), Color(0xFFF4B98F))) }
     Box(
@@ -783,7 +786,14 @@ private fun Avatar(letter: String, onClick: () -> Unit) {
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(letter, style = Noted.type.button.copy(fontFamily = Noted.type.pair.display, fontSize = 17.sp), color = Color(0xFF2A1A10))
+        if (photo != null) {
+            androidx.compose.foundation.Image(
+                photo, null, Modifier.size(42.dp).clip(CircleShape),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+        } else {
+            Text(letter, style = Noted.type.button.copy(fontFamily = Noted.type.pair.display, fontSize = 17.sp), color = Color(0xFF2A1A10))
+        }
     }
 }
 
