@@ -1,7 +1,10 @@
 package com.ohav.noted.ui.home
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.ui.draw.clipToBounds
+import kotlinx.coroutines.CoroutineStart
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
@@ -44,11 +47,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -133,7 +134,6 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val stack = remember { StackState() }
-    val scroll = rememberScrollState()
     val catIndex = cats.indexOfFirst { it.id == cat }.coerceAtLeast(0)
 
     val overlays = LocalOverlays.current
@@ -338,7 +338,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     y < 90.dp.toPx() -> -speed
                     else -> 0f
                 }
-                if (v != 0f) lift.startTop += scroll.scrollBy(v)
+                if (v != 0f) lift.startTop += stack.scrollBy(v)
             }
         }
     }
@@ -369,22 +369,22 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         val i = visible.indexOfFirst { it.id == id }
         if (i < 0 || i >= stack.tops.size) return@LaunchedEffect
         with(density) {
-            val top = stack.stackTop + stack.tops[i]
+            val top = stack.tops[i]
             val bottom = top + stack.heights[i]
-            val viewB = scroll.value + scroll.viewportSize - 120.dp.toPx()
-            var target = scroll.value.toFloat()
+            val viewB = stack.value + stack.viewport - 120.dp.toPx()
+            var target = stack.value
             if (bottom > viewB) target += bottom - viewB
             val room = StackDims.PilePad.toPx() + minOf(StackDims.PEEK_N, i) * StackDims.Peek.toPx()
             target = minOf(target, top - room)
-            if (top < scroll.value + room) target = top - room
-            if (abs(target - scroll.value) > 2f) scroll.animateScrollTo(target.coerceAtLeast(0f).toInt(), Motion.glide())
+            if (top < stack.value + room) target = top - room
+            if (abs(target - stack.value) > 2f) stack.animateTo(target)
         }
     }
 
     // nav + FAB step aside while scrolling down, return on the way up
-    LaunchedEffect(scroll) {
-        var last = 0
-        snapshotFlow { scroll.value }.collect { st ->
+    LaunchedEffect(stack) {
+        var last = 0f
+        snapshotFlow { stack.value }.collect { st ->
             val d = st - last
             with(density) {
                 if (d > 6 && st > 60.dp.toPx()) chrome.navAway = true
@@ -394,7 +394,66 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         }
     }
     LaunchedEffect(chrome.scrollTopTick) {
-        if (chrome.scrollTopTick > 0) scroll.animateScrollTo(0, Motion.glide())
+        if (chrome.scrollTopTick > 0) stack.animateTo(0f)
+    }
+
+    // scrolling is how you move on: a drag away from the open card closes it, keeping it in place
+    val stepPx = with(density) { StackDims.Step.toPx() }
+    val closeAfter = with(density) { 26.dp.toPx() }
+    val expandedNow by rememberUpdatedState(expanded)
+    val visibleNow by rememberUpdatedState(visible)
+    var dragged by remember { mutableStateOf(0f) }
+    LaunchedEffect(expanded) { dragged = 0f }
+    DisposableEffect(stack) {
+        stack.onUserScroll = { d ->
+            val id = expandedNow
+            if (id != null) {
+                dragged += abs(d)
+                if (dragged > closeAfter) {
+                    dragged = 0f
+                    val i = visibleNow.indexOfFirst { it.id == id }
+                    val old = stack.tops.getOrNull(i)
+                    expanded = null
+                    haptics.tick()
+                    if (old != null) scope.launch(start = CoroutineStart.UNDISPATCHED) { stack.shift(i * stepPx - old) }
+                }
+            }
+        }
+        onDispose { stack.onUserScroll = null }
+    }
+    // after a drag or fling leaves the stack past its end, glide back
+    LaunchedEffect(stack) {
+        snapshotFlow { stack.scrollable.isScrollInProgress }.collect { busy ->
+            if (!busy && (stack.value > stack.maxValue + 1f || stack.value < 0f)) stack.animateTo(stack.value)
+        }
+    }
+
+    // new note: opens right away where you can see it. An untouched new note blocks the next one —
+    // tapping + again just brings that one back into focus.
+    var focusNew by remember { mutableStateOf<String?>(null) }
+    fun addNote() {
+        val draft = notes.firstOrNull { it.isBlankDraft(blocksOf[it.id].orEmpty()) }
+        if (draft != null) {
+            if (shownCat != "all" && draft.categoryId != shownCat) cat = "all"
+            focusNew = draft.id
+            haptics.light()
+            toasts.show("הפתק החדש עוד מחכה לך", Ph.NotePencil)
+            return
+        }
+        scope.launch {
+            focusNew = newNote(app, cat, notes.size).id
+            haptics.confirm()
+        }
+    }
+    // once the new note shows up in the stack (and any category change has settled), open it
+    LaunchedEffect(focusNew, visible, shownCat == cat) {
+        val id = focusNew ?: return@LaunchedEffect
+        if (cat != shownCat || visible.none { it.id == id }) return@LaunchedEffect
+        focusNew = null
+        if (expanded == id) {
+            val i = visible.indexOfFirst { it.id == id }
+            stack.tops.getOrNull(i)?.let { stack.animateTo(it - with(density) { StackDims.PilePad.toPx() + minOf(StackDims.PEEK_N, i) * StackDims.Peek.toPx() }) }
+        } else expanded = id
     }
 
     fun closeSearch() {
@@ -413,8 +472,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
-            Column(Modifier.fillMaxWidth().onSizeChanged { stack.stackTop = it.height }) {
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxWidth()) {
                 AnimatedContent(
                     targetState = searching,
                     transitionSpec = {
@@ -445,14 +504,22 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 }
             }
 
-            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            // only the stack scrolls; the title and the page around it stay put
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clipToBounds()
+                    .onSizeChanged { stack.viewport = it.height }
+                    .scrollable(stack.scrollable, Orientation.Vertical, reverseDirection = true)
+                    .padding(horizontal = 16.dp),
+            ) {
                 NoteStack(
                     notes = visible,
                     expanded = expanded,
                     state = stack,
-                    scroll = scroll,
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxSize()
                         .pointerInput(Unit) { detectTapGestures { expanded = null } }
                         .pointerInput(searching, selecting, catIndex, cats.size) {
                             if (searching || selecting) return@pointerInput
@@ -474,7 +541,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                                 scope.launch { stack.swipe.snapTo(band) }
                             }
                         },
-                ) { n, _ ->
+                ) { n, _, clipped ->
                     Box(
                         Modifier
                             .graphicsLayer { alpha = if (lift.id == n.id) 0f else 1f }
@@ -502,6 +569,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         onOpenEditor = { toasts.show("העורך מגיע בשלב הבא", Ph.NotePencil) },
                         selecting = selecting,
                         selected = n.id in selected,
+                        clipped = clipped,
                         lift = LiftGestures(
                             onStart = { lift.touchY = it.y },
                             onDrag = { d -> liftDrag(lift, n.id, d, visible, density, scope, haptics) { expanded = null } },
@@ -519,7 +587,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                             EmptyArt.Stack, "ריק כאן, בינתיים",
                             "פתק חדש ב״${cats.getOrNull(catIndex)?.name ?: ""}״ יופיע בראש הערימה.",
                             Modifier.padding(top = 10.dp),
-                        ) { Btn("פתק חדש", icon = Ph.Plus) { scope.launch { newNote(app, cat, notes.size) } } }
+                        ) { Btn("פתק חדש", icon = Ph.Plus) { addNote() } }
                     }
                 }
             }
@@ -538,12 +606,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     alpha = if (searching || selecting) 0f else 1f
                 }
                 .size(66.dp)
-                .press(enabled = !searching && !selecting, scale = .9f) {
-                    scope.launch {
-                        newNote(app, cat, notes.size)
-                        scroll.animateScrollTo(0, Motion.glide())
-                    }
-                }
+                .press(enabled = !searching && !selecting, scale = .9f) { addNote() }
                 .softShadow(fabShadow, 24.dp, c.accent)
                 .clip(Squircle(24.dp))
                 .background(c.accent),
@@ -627,10 +690,16 @@ private fun ColorGrid(onPick: (NoteColor) -> Unit) {
 
 private fun Color.compositeOverBlack(amount: Float) = Color(red * (1 - amount), green * (1 - amount), blue * (1 - amount), alpha)
 
-private suspend fun newNote(app: NotedApp, cat: String, count: Int) {
+private const val NEW_TITLE = "פתק חדש"
+
+private suspend fun newNote(app: NotedApp, cat: String, count: Int): NoteEntity {
     val colors = listOf(NoteColor.Butter, NoteColor.Peach, NoteColor.Rose, NoteColor.Lilac, NoteColor.Sky, NoteColor.Mint, NoteColor.Sage, NoteColor.Sand)
-    app.notes.create(if (cat == "all") "home" else cat, colors[(count * 3) % colors.size], title = "פתק חדש")
+    return app.notes.create(if (cat == "all") "home" else cat, colors[(count * 3) % colors.size], title = NEW_TITLE)
 }
+
+/** A note created with + and never written in. */
+private fun NoteEntity.isBlankDraft(blocks: List<com.ohav.noted.data.Block>) =
+    (title.isBlank() || title == NEW_TITLE) && blocks.all { it.text.isBlank() } && reminderAt == null
 
 @Composable
 private fun TopBar(onProfile: () -> Unit, onSearch: () -> Unit) {

@@ -42,6 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.graphicsLayer
@@ -197,7 +200,7 @@ private fun TabPage(title: String, content: @Composable () -> Unit) {
     }
 }
 
-/** Floating inverse pill. The active tab gets a sliding squircle, a filled icon and its label. */
+/** Floating light bar. The active tab gets a sliding accent-tinted squircle, a filled accent icon and its label. */
 @Composable
 private fun BottomNav(tab: Tab, away: Boolean, badge: Tab?, modifier: Modifier = Modifier, onSelect: (Tab) -> Unit) {
     val c = Noted.colors
@@ -215,12 +218,16 @@ private fun BottomNav(tab: Tab, away: Boolean, badge: Tab?, modifier: Modifier =
         Box(
             Modifier
                 .fillMaxSize()
-                .softShadow(Shadows.float(c.isDark), 30.dp, c.inverse)
+                .softShadow(Shadows.float(c.isDark), 30.dp, c.surface)
                 .clip(Squircle(30.dp))
-                .background(c.inverse),
+                .background(c.surface)
+                .drawBehind {
+                    val o = Squircle(30.dp).createOutline(size, layoutDirection, this)
+                    drawOutline(o, c.line, style = Stroke(1.5.dp.toPx()))
+                },
         ) {
             // offset() follows layout direction, so the indicator counts from the right in RTL
-            Box(Modifier.offset(x = x, y = 9.dp).size(itemW - 16.dp, 56.dp).clip(Squircle(22.dp)).background(c.inverse2))
+            Box(Modifier.offset(x = x, y = 9.dp).size(itemW - 16.dp, 56.dp).clip(Squircle(22.dp)).background(c.accentSoft))
             Row(Modifier.fillMaxSize().padding(horizontal = 8.dp)) {
                 Tab.entries.forEach { t -> NavItem(t, t == tab, t == badge, Modifier.weight(1f)) { onSelect(t) } }
             }
@@ -231,7 +238,7 @@ private fun BottomNav(tab: Tab, away: Boolean, badge: Tab?, modifier: Modifier =
 @Composable
 private fun NavItem(t: Tab, on: Boolean, badge: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val c = Noted.colors
-    val col by animateColorAsState(if (on) c.inverseInk else c.inverseInk2, Motion.glide(), label = "navCol")
+    val col by animateColorAsState(if (on) c.accent else c.ink2, Motion.glide(), label = "navCol")
     val p by animateFloatAsState(if (on) 1f else 0f, Motion.glide(), label = "navOn")
     val lift by animateFloatAsState(if (on) 1f else 0f, Motion.touch(), label = "navLift")
     Box(modifier.fillMaxHeight().press(scale = .9f, onClick = onClick), contentAlignment = Alignment.Center) {
@@ -247,7 +254,7 @@ private fun NavItem(t: Tab, on: Boolean, badge: Boolean, modifier: Modifier, onC
         if (badge) {
             Box(
                 Modifier.align(Alignment.TopCenter).padding(top = 15.dp).offset(x = 14.dp)
-                    .size(13.dp).clip(CircleShape).background(c.inverse).padding(2.5.dp).clip(CircleShape).background(c.accent),
+                    .size(13.dp).clip(CircleShape).background(c.surface).padding(2.5.dp).clip(CircleShape).background(c.accent),
             )
         }
     }

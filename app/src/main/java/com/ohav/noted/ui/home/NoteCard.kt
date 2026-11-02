@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -128,6 +129,7 @@ fun NoteCard(
     selecting: Boolean = false,
     selected: Boolean = false,
     lift: LiftGestures? = null,
+    clipped: Boolean = false,
 ) {
     val c = Noted.colors
     val t = Noted.type
@@ -190,6 +192,18 @@ fun NoteCard(
                     FullContent(n, blocks, onToggleCheck, onOpenEditor, Modifier.graphicsLayer { alpha = open })
                 }
             }
+        }
+        // a long note is cut at the viewport: fade the cut and keep the way into the editor in reach
+        val cut by animateFloatAsState(if (clipped && expanded) 1f else 0f, Motion.glide(), label = "cut")
+        if (cut > .01f) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .graphicsLayer { alpha = cut }
+                    .background(Brush.verticalGradient(0f to note.copy(alpha = 0f), .45f to note, 1f to note))
+                    .padding(start = 24.dp, end = 24.dp, top = 44.dp, bottom = 16.dp),
+            ) { ExpandHint(onOpenEditor, more = true) }
         }
         if (sel > .01f) {
             Box(
@@ -287,7 +301,7 @@ private fun ListRow(marker: String?, text: String) {
 
 /** Grab handle under the open card: tap or pull up → editor. */
 @Composable
-private fun ExpandHint(onOpenEditor: () -> Unit) {
+private fun ExpandHint(onOpenEditor: () -> Unit, more: Boolean = false) {
     val c = Noted.colors
     var pulled by remember { mutableStateOf(0f) }
     Column(
@@ -308,7 +322,7 @@ private fun ExpandHint(onOpenEditor: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Box(Modifier.size(38.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.noteInk.copy(alpha = .25f)))
-        Text("משיכה למעלה לעריכה", style = Noted.type.caption, color = c.noteInk2)
+        Text(if (more) "יש עוד — משיכה למעלה לפתק המלא" else "משיכה למעלה לעריכה", style = Noted.type.caption, color = c.noteInk2)
     }
 }
 

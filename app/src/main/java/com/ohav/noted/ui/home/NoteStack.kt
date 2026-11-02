@@ -1,7 +1,10 @@
 package com.ohav.noted.ui.home
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.foundation.ScrollState
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -62,8 +65,55 @@ class StackState {
     var enterArmed = false
     var enterGen by mutableIntStateOf(0)
 
-    /** Offset (px) of the stack inside the scroll content. */
-    var stackTop by mutableIntStateOf(0)
+    /**
+     * The stack scrolls inside its own viewport (the page above it stays put). [value] is our own
+     * state rather than a ScrollState so it can be shifted mid-drag — closing the open card keeps
+     * it where it is — without fighting the gesture's mutex.
+     */
+    var value by mutableFloatStateOf(0f)
+    var viewport by mutableIntStateOf(0)
+    var content = 0f
+        internal set
+
+    /** Visual offset added to every card; eases out a shift of [value] so nothing jumps. */
+    val bias = Animatable(0f)
+
+    /** Called with every user-driven delta (drag + its fling), never for programmatic scrolls. */
+    var onUserScroll: ((Float) -> Unit)? = null
+    private var auto = false
+
+    val maxValue: Float get() = max(0f, content - viewport)
+
+    val scrollable = ScrollableState { d ->
+        if (!auto) onUserScroll?.invoke(d)
+        val mx = maxValue
+        // never pull further out of range, but don't yank back either (that happens on release)
+        val nv = when {
+            d > 0f && value + d > mx -> max(value, mx)
+            d < 0f && value + d < 0f -> min(value, 0f)
+            else -> value + d
+        }
+        val used = nv - value
+        value = nv
+        used
+    }
+
+    suspend fun animateTo(target: Float, spec: AnimationSpec<Float> = Motion.glide()) {
+        auto = true
+        try { scrollable.animateScrollBy(target.coerceIn(0f, maxValue) - value, spec) } finally { auto = false }
+    }
+
+    suspend fun scrollBy(d: Float): Float {
+        auto = true
+        try { return scrollable.scrollBy(d) } finally { auto = false }
+    }
+
+    /** Shifts the scroll by [d] while the cards keep their place on screen, then eases the shift out. */
+    suspend fun shift(d: Float) {
+        value += d
+        bias.snapTo(bias.value + d)
+        bias.animateTo(0f, Motion.glide())
+    }
 
     /** Target slots of the last composition, px, aligned with the visible list. */
     var tops: List<Float> = emptyList()
@@ -76,19 +126,19 @@ class StackState {
 
 /**
  * The card pile. Cards are absolutely placed on [StackDims.Step] intervals so each covers the
- * lower part of the one before. Placement reads the scroll position, so cards scrolling past the
- * top collect into a pile that keeps [StackDims.PEEK_N] title strips — only re-placement runs per
- * frame, never recomposition. The open card is taken out of the pile and scrolls naturally;
- * the cards above it fold into the strips.
+ * lower part of the one before. Placement reads the stack's own scroll, so cards scrolling past
+ * the top collect into a pile that keeps [StackDims.PEEK_N] title strips — only re-placement runs
+ * per frame, never recomposition. The open card is taken out of the pile; the cards above it fold
+ * into the strips. An open card never grows past the viewport: [card] gets `clipped` and the
+ * rest lives in the editor.
  */
 @Composable
 fun NoteStack(
     notes: List<NoteEntity>,
     expanded: String?,
     state: StackState,
-    scroll: ScrollState,
     modifier: Modifier = Modifier,
-    card: @Composable (NoteEntity, Int) -> Unit,
+    card: @Composable (NoteEntity, Int, Boolean) -> Unit,
 ) {
     val density = LocalDensity.current
     val step: Float
@@ -107,7 +157,11 @@ fun NoteStack(
     val pn = StackDims.PEEK_N
 
     val ei = notes.indexOfFirst { it.id == expanded }
-    val heights = notes.map { n -> if (n.id == expanded) max(hc, (state.fullHeights[n.id] ?: 0).toFloat()) else hc }
+    val navRoom = with(density) { 120.dp.toPx() }
+    val cap = if (state.viewport > 0 && ei >= 0) max(hc, state.viewport - pad - min(pn, ei) * peek - navRoom) else Float.POSITIVE_INFINITY
+    val full = if (ei >= 0) max(hc, (state.fullHeights[notes[ei].id] ?: 0).toFloat()) else 0f
+    val clipped = full > cap + 1f
+    val heights = notes.mapIndexed { i, _ -> if (i == ei) min(full, cap) else hc }
     val tops = ArrayList<Float>(notes.size)
     var y = 0f
     notes.indices.forEach { i ->
@@ -124,6 +178,7 @@ fun NoteStack(
     SideEffect {
         state.tops = tops
         state.heights = heights
+        state.content = if (notes.isEmpty()) 0f else tops.last() + heights.last() + tail
         val ids = notes.mapTo(HashSet()) { it.id }
         state.holders.keys.retainAll(ids)
         state.fullHeights.keys.filter { it !in ids }.forEach { state.fullHeights.remove(it) }
@@ -153,7 +208,7 @@ fun NoteStack(
     val pileIndex = IntArray(notes.size) { -1 }.also { a -> nonExp.forEachIndexed { j, i -> a[i] = j } }
 
     Layout(
-        content = { notes.forEachIndexed { i, n -> key(n.id) { card(n, i) } } },
+        content = { notes.forEachIndexed { i, n -> key(n.id) { card(n, i, i == ei && clipped) } } },
         modifier = modifier,
     ) { measurables, constraints ->
         val w = constraints.maxWidth
@@ -161,10 +216,12 @@ fun NoteStack(
             val h = holders.getOrNull(i)?.height?.value ?: hc
             m.measure(Constraints.fixed(w, h.roundToInt().coerceAtLeast(1)))
         }
-        layout(w, (total + tail).roundToInt()) {
-            val s = scroll.value - state.stackTop
+        val vh = if (constraints.hasBoundedHeight) constraints.maxHeight else (total + tail).roundToInt()
+        layout(w, vh) {
+            val s = state.value
             val base = s + pad + pn * peek
-            val cur = FloatArray(holders.size) { holders[it].top.value }
+            val bias = state.bias.value
+            val cur = FloatArray(holders.size) { holders[it].top.value + bias }
 
             // how many (fractional) cards have crossed the pile line — keeps every position continuous
             var t = -1f
@@ -198,7 +255,7 @@ fun NoteStack(
                     if (k > pn) op = max(0f, 1f - (k - pn))
                 }
                 val e = h.enter.value
-                p.placeWithLayer(0, d.roundToInt(), zIndex = i.toFloat()) {
+                p.placeWithLayer(0, (d - s).roundToInt(), zIndex = i.toFloat()) {
                     transformOrigin = TransformOrigin(.5f, 0f)
                     val ss = sc * (.96f + .04f * e) * (1f - .04f * exit)
                     scaleX = ss
