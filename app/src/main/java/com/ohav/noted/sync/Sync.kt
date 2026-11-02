@@ -97,7 +97,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     // ------------------------------------------------------------------ session
 
     @OptIn(FlowPreview::class)
-    private suspend fun session(u: Account.User) = coroutineScope {
+    private suspend fun session(u: Account.User): Unit = coroutineScope {
         val uid = u.uid
         _status.value = Status(Phase.Connecting)
         mutex.withLock { prepare(uid) }

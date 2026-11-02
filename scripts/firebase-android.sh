@@ -29,3 +29,6 @@ jq -e . app/google-services.json >/dev/null
 if ! jq -e '[.client[].oauth_client[]? | select(.client_type == 3)] | length > 0' app/google-services.json >/dev/null; then
   echo "::warning::No web OAuth client in google-services.json — enable Google sign-in in Firebase Authentication."
 fi
+
+# Storage rules follow as soon as the owner has set up Storage in the console.
+(cd "$(dirname "$0")/.." && fb deploy --only storage >/dev/null 2>&1 && echo "storage rules deployed") || echo "storage not set up yet"
