@@ -20,19 +20,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm i -g --silent firebase-tools@15
+      - name: Enable APIs
+        run: |
+          AT=$(node -e "require('$(npm root -g)/firebase-tools/lib/auth').getAccessToken(process.env.FIREBASE_TOKEN, []).then(t => console.log(t.access_token))")
+          echo "::add-mask::$AT"
+          for api in firestore.googleapis.com firebaserules.googleapis.com firebasestorage.googleapis.com; do
+            curl -fsS -X POST -H "Authorization: Bearer $AT" -H "Content-Length: 0" \
+              "https://serviceusage.googleapis.com/v1/projects/noted-ce451/services/$api:enable" >/dev/null && echo "enabled $api" \
+              || echo "::warning::could not enable $api"
+          done
+          for i in $(seq 1 12); do
+            S=$(curl -fsS -H "Authorization: Bearer $AT" "https://serviceusage.googleapis.com/v1/projects/noted-ce451/services/firestore.googleapis.com" | jq -r .state)
+            [ "$S" = "ENABLED" ] && break; sleep 10
+          done
+          echo "firestore API: $S"
       - name: Firestore database
         run: |
-          fb() { npx --yes firebase-tools@15 "$@" --project noted-ce451 --non-interactive; }
+          fb() { firebase "$@" --project noted-ce451 --non-interactive; }
           if fb firestore:databases:list --json | jq -e '.result[]? | select((.name // "") | endswith("/databases/(default)"))' >/dev/null; then
             echo "(default) database exists"
           else
             # Tel Aviv; the free quota covers the (default) database in any location.
-            fb firestore:databases:create "(default)" --location me-west1 --delete-protection ENABLED
+            for i in 1 2 3 4; do
+              fb firestore:databases:create "(default)" --location me-west1 --delete-protection ENABLED && exit 0
+              sleep 30
+            done
+            exit 1
           fi
       - name: Firestore rules
-        run: npx --yes firebase-tools@15 deploy --only firestore --project noted-ce451 --non-interactive
+        run: firebase deploy --only firestore --project noted-ce451 --non-interactive
       - name: Storage rules
         run: |
-          if ! npx --yes firebase-tools@15 deploy --only storage --project noted-ce451 --non-interactive; then
+          if ! firebase deploy --only storage --project noted-ce451 --non-interactive; then
             echo "::warning::Storage not set up yet (needs Blaze + 'Get started' in the console) — media sync stays off."
           fi
