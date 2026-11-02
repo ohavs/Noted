@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ohav.noted.data.Block
+import com.ohav.noted.ui.editor.Rich
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.design.Motion
@@ -255,16 +256,16 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
         blocks.forEach { b ->
             if (b.type != BlockType.Num) num = 0
             when (b.type) {
-                BlockType.P -> if (b.text.isNotBlank()) Text(b.text, style = t.note, color = c.noteInk, modifier = Modifier.padding(bottom = 12.dp))
+                BlockType.P -> if (b.text.isNotBlank()) Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note, color = c.noteInk, modifier = Modifier.padding(bottom = 12.dp))
                 BlockType.H1, BlockType.H2, BlockType.H3 ->
-                    Text(b.text, style = t.note.copy(fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = c.noteInk, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                    Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note.copy(fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = c.noteInk, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                 BlockType.Quote -> Row(Modifier.padding(top = 8.dp, bottom = 12.dp).height(IntrinsicSize.Min)) {
                     Box(Modifier.width(3.dp).fillMaxHeight().background(c.noteInk, RoundedCornerShape(2.dp)))
                     Spacer(Modifier.width(12.dp))
-                    Text(b.text, style = t.note.copy(fontStyle = FontStyle.Italic), color = c.noteInk)
+                    Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note.copy(fontStyle = FontStyle.Italic), color = c.noteInk)
                 }
-                BlockType.Bullet -> ListRow(null, b.text)
-                BlockType.Num -> { num++; ListRow("$num.", b.text) }
+                BlockType.Bullet -> ListRow(null, Rich.annotate(b.text, b.spans, c.isDark), b.indent)
+                BlockType.Num -> { num++; ListRow("$num.", Rich.annotate(b.text, b.spans, c.isDark), b.indent) }
                 BlockType.Check -> CheckRow(b.text, b.done, c.note(NoteColor.of(n.color))) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> Unit // media blocks arrive with the editor (stage 4–5)
@@ -289,10 +290,10 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
 }
 
 @Composable
-private fun ListRow(marker: String?, text: String) {
+private fun ListRow(marker: String?, text: androidx.compose.ui.text.AnnotatedString, indent: Int = 0) {
     val c = Noted.colors
     val t = Noted.type
-    Row(Modifier.padding(vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Row(Modifier.padding(start = (indent * 18).dp, top = 3.dp, bottom = 3.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (marker == null) Box(Modifier.padding(top = 10.dp).size(6.dp).clip(CircleShape).background(c.noteInk))
         else Text(marker, style = t.note.copy(fontWeight = FontWeight.Bold), color = c.noteInk)
         Text(text, style = t.note, color = c.noteInk)

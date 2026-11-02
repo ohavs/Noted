@@ -69,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -225,7 +226,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                             .drawBehind {
                                 if (on) {
                                     val o = Squircle(14.dp).createOutline(size, layoutDirection, this)
-                                    androidx.compose.ui.graphics.drawOutline(o, c.ink, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
+                                    drawOutline(o, c.ink, style = androidx.compose.ui.graphics.drawscope.Stroke(2.5.dp.toPx()))
                                 }
                             },
                     )
@@ -663,7 +664,7 @@ private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toa
                     .background(c.noteInk.copy(alpha = p))
                     .drawBehind {
                         val o = Squircle(8.dp).createOutline(size, layoutDirection, this)
-                        androidx.compose.ui.graphics.drawOutline(o, c.noteInk.copy(alpha = .55f + .45f * p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                        drawOutline(o, c.noteInk.copy(alpha = .55f + .45f * p), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
                     },
                 contentAlignment = Alignment.Center,
             ) {
