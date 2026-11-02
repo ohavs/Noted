@@ -125,18 +125,15 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Velocity
-import androidx.compose.ui.unit.toSize
 import com.ohav.noted.ui.home.NoteCard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -477,9 +474,7 @@ private fun EditorPage(
     val c = Noted.colors
     val haptics = Noted.haptics
     val bubble = remember { Bubble() }
-    val fan = remember { FanState() }
     var origin by remember { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(Rect.Zero) }
     val scroll = rememberScrollState()
     val overlays = LocalOverlays.current
     val density = LocalDensity.current
@@ -512,7 +507,7 @@ private fun EditorPage(
         }
     }
 
-    CompositionLocalProvider(LocalTextToolbar provides bubble, LocalFan provides fan) {
+    CompositionLocalProvider(LocalTextToolbar provides bubble) {
         // absolute top-left: the overlays below are positioned by left edges in root coordinates
         Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }, contentAlignment = AbsoluteAlignment.TopLeft) {
             Column(Modifier.fillMaxSize().imePadding()) {
@@ -532,7 +527,6 @@ private fun EditorPage(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .onGloballyPositioned { viewport = it.boundsInRoot() }
                         .pointerInput(scroll) {
                             awaitEachGesture {
                                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -564,7 +558,6 @@ private fun EditorPage(
                 }
                 SmartBar(state, toasts)
             }
-            FanBar(fan, state, origin, viewport, toasts)
             SelectionBubble(bubble, origin, state)
         }
     }
@@ -841,7 +834,7 @@ private fun BlockRow(
     }
 }
 
-/** What sits before the text: bullet, number, checkbox — or the `+` fan on an empty paragraph. */
+/** What sits before the text: bullet, number, checkbox. */
 @Composable
 private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toasts: ToastState) {
     val c = Noted.colors
@@ -877,145 +870,7 @@ private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toa
                 if (p > .05f) Icon(Ph.Check, null, Modifier.size(15.dp).graphicsLayer { scaleX = p; scaleY = p }, tint = if (c.isDark) Color.Black else Color.White)
             }
         }
-        BlockType.P -> {
-            val show = focused && b.text.isEmpty()
-            // glide, not touch: a value that decides presence must never overshoot back past its threshold
-            val vis = animateFloatAsState(if (show) 1f else 0f, Motion.glide(), label = "plus")
-            val present by remember { derivedStateOf { vis.value > .002f } }
-            if (show || present) PlusButton(b, vis)
-        }
         else -> Unit
-    }
-}
-
-/** Which line's `+` is open, and where it sits (root px) — the fan floats beside it. */
-@Stable
-private class FanState {
-    var open by mutableStateOf(false)
-    var blockId by mutableStateOf<String?>(null)
-    var anchor by mutableStateOf(Rect.Zero)
-}
-
-private val LocalFan = staticCompositionLocalOf { FanState() }
-
-/**
- * Round `+` at the start of an empty line. Its width eases in and out with [vis] (layout only,
- * no recomposition), so the placeholder beside it slides instead of jumping.
- */
-@Composable
-private fun PlusButton(b: EdBlock, vis: State<Float>) {
-    val c = Noted.colors
-    val haptics = Noted.haptics
-    val fan = LocalFan.current
-    val o by animateFloatAsState(if (fan.open && fan.blockId == b.id) 1f else 0f, Motion.touch(), label = "plusTurn")
-    var coords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
-    fun rectOf(l: androidx.compose.ui.layout.LayoutCoordinates) = Rect(l.positionInRoot(), l.size.toSize())
-    Box(
-        Modifier
-            .layout { m, cons ->
-                val pl = m.measure(cons.copy(minWidth = 0))
-                val w = (pl.width * vis.value.coerceIn(0f, 1f)).roundToInt()
-                layout(w, pl.height) { pl.placeRelative(0, 0) }
-            }
-            .padding(top = 1.dp, end = 8.dp)
-            .graphicsLayer {
-                val v = vis.value.coerceIn(0f, 1f)
-                alpha = v
-                scaleX = .6f + .4f * v; scaleY = .6f + .4f * v
-            },
-    ) {
-        Box(
-            Modifier
-                .size(32.dp)
-                .onGloballyPositioned { coords = it; if (fan.blockId == b.id) fan.anchor = rectOf(it) }
-                .press(scale = .85f) {
-                    if (fan.open && fan.blockId == b.id) fan.open = false
-                    else {
-                        fan.blockId = b.id
-                        coords?.takeIf { it.isAttached }?.let { fan.anchor = rectOf(it) }
-                        fan.open = true
-                    }
-                    haptics.light()
-                }
-                .graphicsLayer { rotationZ = 45f * o }
-                .clip(CircleShape)
-                .background(c.noteInk),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Ph.Plus, "הוספה", Modifier.size(17.dp), tint = if (c.isDark) Color.Black else Color.White) }
-    }
-}
-
-/**
- * The `+` fan: a dark bar that floats next to its line instead of pushing the text. It goes
- * below an empty last line (nothing to cover there) and above a line with text under it, and
- * flips whenever that side would leave the visible page (keyboard and smart bar included).
- */
-@Composable
-private fun FanBar(fan: FanState, state: EditorState, origin: Offset, viewport: Rect, toasts: ToastState) {
-    val c = Noted.colors
-    val density = LocalDensity.current
-    val cur = state.current
-    // the fan belongs to an empty, focused line; anything else folds it
-    val valid = cur != null && cur.id == fan.blockId && cur.type == BlockType.P && cur.text.isEmpty()
-    LaunchedEffect(valid) { if (!valid) fan.open = false }
-    val shown = fan.open && valid
-    val fade = animateFloatAsState(if (shown) 1f else 0f, Motion.glide(), label = "fanFade")
-    val pop = animateFloatAsState(if (shown) 1f else 0f, Motion.touch(), label = "fanPop")
-    val present by remember { derivedStateOf { fade.value > .002f } }
-    if (!shown && !present) return
-    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
-    val below = remember(fan.blockId, state.blocks.size) { state.blocks.lastOrNull()?.id == fan.blockId }
-    fun done(act: () -> Unit) { fan.open = false; act() }
-    val items = listOf(
-        Act(Ph.CheckSquare, "צ׳קבוקס") { done { state.insert(BlockType.Check) } },
-        Act(Ph.ListBullets, "תבליטים") { done { state.insert(BlockType.Bullet) } },
-        Act(Ph.ListNumbers, "מספור") { done { state.insert(BlockType.Num) } },
-        Act(Ph.Image, "תמונה") { done { toasts.show("תמונות מגיעות בשלב 5", Ph.Image) } },
-        Act(Ph.ScribbleLoop, "ציור") { done { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) } },
-        Act(Ph.Waveform, "הקלטה") { done { toasts.show("הקלטות מגיעות בשלב 5", Ph.Waveform) } },
-    )
-    var up by remember { mutableStateOf(false) }
-    Row(
-        Modifier
-            .absoluteOffset {
-                val a = fan.anchor
-                val gap = 10.dp.roundToPx()
-                val h = size.height
-                val under = a.bottom + gap
-                val over = a.top - gap - h
-                var y = if (below) under else over
-                if (y < viewport.top) y = under
-                if (y + h > viewport.bottom) y = over
-                up = y < a.top
-                val m = 12.dp.toPx()
-                // RTL: the bar starts where the + is and runs toward the end (left)
-                val x = (a.right + 6.dp.toPx() - size.width).coerceIn(m, max(m, viewport.right - m - size.width))
-                IntOffset((x - origin.x).roundToInt(), (y - origin.y).roundToInt())
-            }
-            .onSizeChanged { size = it }
-            .graphicsLayer {
-                val k = .86f + .14f * pop.value
-                scaleX = k; scaleY = k
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, if (up) 1f else 0f)
-                translationY = (1f - pop.value) * (if (up) 6.dp.toPx() else -6.dp.toPx())
-                alpha = fade.value
-            }
-            .softShadow(Shadows.float(c.isDark), 22.dp, c.inverse)
-            .clip(Squircle(22.dp))
-            .background(c.inverse)
-            .padding(6.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        items.forEachIndexed { i, (icon, label, act) ->
-            Box(
-                Modifier.graphicsLayer {
-                    // staggered from the + outward
-                    val k = ((pop.value * (items.size + 2) - i) / 2f).coerceIn(0f, 1f)
-                    scaleX = .5f + .5f * k; scaleY = .5f + .5f * k
-                },
-            ) { BarBtn(icon, label, onClick = act) }
-        }
     }
 }
 
