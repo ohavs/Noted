@@ -8,7 +8,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import kotlin.math.abs
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -333,40 +336,54 @@ private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean 
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(top = 14.dp)
-            .offset(y = 6.dp)
+            .padding(top = 4.dp)
+            .offset(y = 10.dp)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { openNow() }
             .pointerInput(Unit) {
+                // Claimed in the Initial pass: once the finger heads up past the slop, the stack's
+                // scroll (and the card's tap) never see this gesture.
                 val dist = 440.dp.toPx()
-                val tracker = VelocityTracker()
-                var pulled = 0f
-                var held: CardPull? = null
-                fun finish(cancel: Boolean) {
-                    val h = held
-                    held = null
-                    if (h == null) {
-                        if (!cancel && pulled < -40.dp.toPx()) openNow()
-                        return
+                val slop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    val tracker = VelocityTracker()
+                    tracker.addPosition(down.uptimeMillis, down.position)
+                    var dx = 0f
+                    var dy = 0f
+                    var dragging = false
+                    var held: CardPull? = null
+                    var lifted = false
+                    try {
+                        while (true) {
+                            val ev = awaitPointerEvent(PointerEventPass.Initial)
+                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ch.pressed) { lifted = true; if (dragging) ch.consume(); break }
+                            val d = ch.position - ch.previousPosition
+                            dx += d.x; dy += d.y
+                            tracker.addPosition(ch.uptimeMillis, ch.position)
+                            if (!dragging) {
+                                // down or sideways belongs to the stack (scroll / category swipe)
+                                if (dy > slop || abs(dx) > slop && abs(dx) > abs(dy)) return@awaitEachGesture
+                                if (dy < -slop) dragging = true else continue
+                            }
+                            ch.consume()
+                            val p = pullNow
+                            if (held == null && p != null && p.start()) held = p
+                            held?.move(((-dy - slop) / dist).coerceIn(0f, 1f))
+                        }
+                    } finally {
+                        val h = held
+                        if (dragging) {
+                            val v = tracker.calculateVelocity().y
+                            val f = ((-dy - slop) / dist).coerceIn(0f, 1f)
+                            val open = lifted && (v < -700f || (f > .16f && v < 500f))
+                            if (h != null) h.end(open, -v / dist)
+                            else if (lifted && -dy > 40.dp.toPx()) openNow()
+                        }
                     }
-                    val v = tracker.calculateVelocity().y
-                    val f = (-pulled / dist).coerceIn(0f, 1f)
-                    val open = !cancel && (v < -700f || (f > .16f && v < 500f))
-                    h.end(open, -v / dist)
-                }
-                detectVerticalDragGestures(
-                    onDragStart = { tracker.resetTracking(); pulled = 0f; held = null },
-                    onDragEnd = { finish(false) },
-                    onDragCancel = { finish(true) },
-                ) { ch, dy ->
-                    ch.consume()
-                    tracker.addPosition(ch.uptimeMillis, ch.position)
-                    pulled += dy
-                    val p = pullNow
-                    if (held == null && p != null && pulled < 0f && p.start()) held = p
-                    held?.move((-pulled / dist).coerceIn(0f, 1f))
                 }
             }
-            .padding(vertical = 6.dp),
+            .padding(top = 12.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

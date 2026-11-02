@@ -61,11 +61,50 @@ class NotesRepository(private val db: NotedDatabase) {
         }
     }
 
+    // ------------------------------------------------------------ categories
+
+    suspend fun createCategory(name: String, icon: String): CategoryEntity {
+        val k = CategoryEntity(UUID.randomUUID().toString(), name.trim(), (dao.maxCategoryPosition() ?: -1) + 1, icon)
+        dao.upsertCategory(k)
+        return k
+    }
+
+    suspend fun editCategory(id: String, name: String, icon: String) = dao.editCategory(id, name.trim(), icon)
+
+    /** [ids] in the wanted order; rewrites only the rows whose slot changed. */
+    suspend fun reorderCategories(ids: List<String>, current: List<CategoryEntity>) {
+        val byId = current.associateBy { it.id }
+        db.withTransaction { ids.forEachIndexed { i, id -> if (byId[id]?.position != i) dao.setCategoryPosition(id, i) } }
+    }
+
+    /** What a category deletion did, so it can be undone exactly. */
+    class CategoryRemoval(val category: CategoryEntity, val noteIds: List<String>, val movedTo: String?)
+
+    /**
+     * Deletes a category. Its notes move to [moveTo], or go to the trash with it when null.
+     * Positions of the categories after it are left alone (gaps are harmless; order is relative).
+     */
+    suspend fun deleteCategory(k: CategoryEntity, moveTo: String?): CategoryRemoval = db.withTransaction {
+        val ids = dao.liveNoteIdsIn(k.id)
+        if (ids.isNotEmpty()) {
+            if (moveTo != null) dao.setCategory(ids, moveTo, now()) else now().let { dao.setTrashed(ids, it, it) }
+        }
+        dao.deleteCategory(k.id)
+        CategoryRemoval(k, ids, moveTo)
+    }
+
+    suspend fun undoDeleteCategory(r: CategoryRemoval) = db.withTransaction {
+        dao.upsertCategory(r.category)
+        if (r.noteIds.isNotEmpty()) {
+            if (r.movedTo != null) dao.setCategory(r.noteIds, r.category.id, now()) else dao.setTrashed(r.noteIds, null, now())
+        }
+    }
+
     /** First launch: a few notes in the prototype's voice so the stack isn't empty. */
     suspend fun seedIfEmpty() {
         if (dao.categoryCount() > 0) return
         dao.insertCategories(
-            listOf(CategoryEntity("home", "בית", 0), CategoryEntity("work", "עבודה", 1), CategoryEntity("ideas", "רעיונות", 2))
+            listOf(CategoryEntity("home", "בית", 0, "home"), CategoryEntity("work", "עבודה", 1, "work"), CategoryEntity("ideas", "רעיונות", 2, "ideas"))
         )
         val now = System.currentTimeMillis()
         var pos = 0.0

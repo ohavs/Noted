@@ -56,6 +56,8 @@ import com.ohav.noted.design.Shapes
 import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.press
 import com.ohav.noted.design.softShadow
+import com.ohav.noted.design.ShadowFrame
+import com.ohav.noted.design.fade
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -146,6 +148,8 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
         )
 
         // the clone
+        val floatShadow = Shadows.float(c.isDark)
+        val noteFill = c.note(NoteColor.of(n.color))
         Box(
             Modifier
                 .absoluteOffset {
@@ -160,7 +164,9 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
                     alpha = if (r.width > 0f) 1f else 0f
                 }
                 .then(with(density) { Modifier.size(lift.from.width.toDp(), lift.height.value.toDp()) })
-                .softShadow(Shadows.float(c.isDark), 30.dp, c.note(NoteColor.of(n.color))),
+                // the float shadow leaves with the pop; the card's own shadow (inside) stays, so the
+                // drop into the slot is the stack's shadow already
+                .softShadow { ShadowFrame(floatShadow.fade(lift.pop.value), 30.dp, noteFill) },
         ) {
             NoteCard(
                 n = n, blocks = ui.blocks, expanded = false,

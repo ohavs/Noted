@@ -102,6 +102,8 @@ import com.ohav.noted.design.press
 import com.ohav.noted.design.softShadow
 import com.ohav.noted.design.SoftShadow
 import com.ohav.noted.ui.Chrome
+import com.ohav.noted.ui.categories.CatIcons
+import com.ohav.noted.ui.categories.rememberCategoryActions
 import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
 import com.ohav.noted.update.Updater
@@ -116,7 +118,7 @@ import kotlin.math.sign
 private data class Cat(val id: String, val name: String)
 
 @Composable
-fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: () -> Unit) {
+fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: () -> Unit, onCategories: () -> Unit) {
     val c = Noted.colors
     val haptics = Noted.haptics
     val density = LocalDensity.current
@@ -137,6 +139,11 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val catIndex = cats.indexOfFirst { it.id == cat }.coerceAtLeast(0)
 
     val overlays = LocalOverlays.current
+    val catActions = rememberCategoryActions(app, overlays, toasts)
+    // the category on screen was deleted (here or in settings): fall back to all notes
+    LaunchedEffect(dbCats) {
+        if (dbCats.isNotEmpty() && cat != "all" && dbCats.none { it.id == cat }) cat = "all"
+    }
     val lift = remember { LiftState() }
     var selecting by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
@@ -172,6 +179,22 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
 
     fun goCat(i: Int) {
         cat = cats[i.coerceIn(0, cats.lastIndex)].id
+    }
+
+    /** Long press on the giant title: this category's actions, or new / manage for all notes. */
+    fun catMenu(i: Int) {
+        val id = cats.getOrNull(i)?.id ?: return
+        haptics.medium()
+        val k = dbCats.firstOrNull { it.id == id }
+        val count = if (k == null) notes.size else notes.count { it.categoryId == k.id }
+        overlays.sheet.show(k?.name ?: "כל הפתקים") {
+            if (k != null) SheetRow(Ph.PencilSimple, "שם ואייקון") { catActions.edit(k, dbCats, count) }
+            SheetRow(Ph.FolderSimplePlus, "קטגוריה חדשה") {
+                catActions.create(dbCats) { made -> cat = made.id }
+            }
+            SheetRow(Ph.ArrowsDownUp, "סידור וניהול", last = k == null) { overlays.sheet.close(); onCategories() }
+            if (k != null) SheetRow(Ph.Trash, "מחיקת הקטגוריה", danger = true, last = true) { catActions.delete(k, dbCats, count) }
+        }
     }
 
     fun startSelecting(first: String?) {
@@ -220,14 +243,20 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     fun openMove(ids: List<String>) {
         overlays.sheet.show(if (ids.size > 1) "להעביר ${ids.size} פתקים ל…" else "להעביר ל…") {
             dbCats.forEach { k ->
-                SheetRow(catIcon(k.id), k.name, end = "${notes.count { it.categoryId == k.id }}") {
+                SheetRow(CatIcons.of(k.icon), k.name, end = "${notes.count { it.categoryId == k.id }}") {
                     scope.launch { app.notes.move(ids, k.id) }
                     overlays.sheet.close()
                     if (selecting) stopSelecting()
                     toasts.show(if (ids.size > 1) "${ids.size} פתקים עברו ל״${k.name}״" else "עבר ל״${k.name}״", Ph.FolderSimple)
                 }
             }
-            SheetRow(Ph.Plus, "קטגוריה חדשה", last = true) { toasts.show("קטגוריות חדשות — בהמשך הדרך", Ph.FolderSimple) }
+            SheetRow(Ph.FolderSimplePlus, "קטגוריה חדשה", last = true) {
+                catActions.create(dbCats) { k ->
+                    scope.launch { app.notes.move(ids, k.id) }
+                    if (selecting) stopSelecting()
+                    toasts.show(if (ids.size > 1) "${ids.size} פתקים עברו ל״${k.name}״ החדשה" else "עבר ל״${k.name}״ החדשה", CatIcons.of(k.icon))
+                }
+            }
         }
     }
 
@@ -464,7 +493,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             return
         }
         scope.launch {
-            val n = newNote(app, cat, notes.size)
+            val n = newNote(app, if (cat == "all") dbCats.firstOrNull()?.id ?: "home" else cat, notes.size)
             focusNew = n.id
             haptics.confirm()
             chrome.editor.open(n, fabRect, fresh = true)
@@ -523,7 +552,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     )
                 }
                 if (!searching) {
-                    CategoryTrack(cats, catIndex, notes, onSelect = ::goCat)
+                    CategoryTrack(cats, catIndex, notes, onSelect = ::goCat, onLongPress = ::catMenu)
                     CatSub(visible, blocksOf)
                 } else {
                     Spacer(Modifier.height(10.dp))
@@ -690,14 +719,6 @@ private fun liftDrag(
     }
 }
 
-private fun catIcon(id: String) = when (id) {
-    "home" -> Ph.House
-    "work" -> Ph.Briefcase
-    "me" -> Ph.Heart
-    "trips" -> Ph.MapTrifold
-    "ideas" -> Ph.Lightbulb
-    else -> Ph.FolderSimple
-}
 
 /** 4-up grid of note colours (sheet content). */
 @Composable
@@ -725,7 +746,7 @@ private const val NEW_TITLE = "פתק חדש"
 
 private suspend fun newNote(app: NotedApp, cat: String, count: Int): NoteEntity {
     val colors = listOf(NoteColor.Butter, NoteColor.Peach, NoteColor.Rose, NoteColor.Lilac, NoteColor.Sky, NoteColor.Mint, NoteColor.Sage, NoteColor.Sand)
-    return app.notes.create(if (cat == "all") "home" else cat, colors[(count * 3) % colors.size])
+    return app.notes.create(cat, colors[(count * 3) % colors.size])
 }
 
 /** A note created with + and never written in. */
@@ -815,7 +836,7 @@ private fun SearchBar(query: String, onQuery: (String) -> Unit, onCancel: () -> 
  * "current" (ink, with its count); the category switches once the track settles there.
  */
 @Composable
-private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, onSelect: (Int) -> Unit) {
+private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, onSelect: (Int) -> Unit, onLongPress: (Int) -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val state = rememberLazyListState(initialFirstVisibleItemIndex = index)
@@ -824,6 +845,7 @@ private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, 
     val tail = (LocalConfiguration.current.screenWidthDp * .6f).dp
     val currentIndex by rememberUpdatedState(index)
     val select by rememberUpdatedState(onSelect)
+    val hold by rememberUpdatedState(onLongPress)
 
     LaunchedEffect(state) {
         snapshotFlow { if (state.isScrollInProgress) null else nearestItem(state) }
@@ -851,7 +873,7 @@ private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, 
             Row(
                 Modifier
                     .then(if (i == cats.lastIndex) Modifier.padding(end = tail) else Modifier)
-                    .pointerInput(i) { detectTapGestures { select(i) } },
+                    .pointerInput(i) { detectTapGestures(onLongPress = { hold(i) }) { select(i) } },
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(cat.name, style = t.cat, color = col, maxLines = 1, softWrap = false)

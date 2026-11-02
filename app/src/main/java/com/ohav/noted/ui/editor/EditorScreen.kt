@@ -110,6 +110,9 @@ import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.ToastState
 import com.ohav.noted.design.press
 import com.ohav.noted.design.softShadow
+import com.ohav.noted.design.ShadowFrame
+import com.ohav.noted.design.lerpShadow
+import com.ohav.noted.design.fade
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
@@ -342,6 +345,8 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             Rect(Offset(30.dp.toPx(), fullH - 190.dp.toPx()), androidx.compose.ui.geometry.Size(66.dp.toPx(), 66.dp.toPx()))
         }
         val fromCard = nav.from.width > 1f
+        val cardShadow = Shadows.card(c.isDark)
+        val floatShadow = Shadows.float(c.isDark)
         Box(
             Modifier
                 .fillMaxSize()
@@ -362,11 +367,21 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                     // absolute placement: x is a left edge in every layout direction
                     layout(fullW, fullH) { pl.place(lerp(r.left, 0f).roundToInt(), lerp(r.top, 0f).roundToInt()) }
                 }
+                // the card's own shadow at the ends (so landing in the stack changes nothing), a
+                // floating one in flight, gone on the full page — never an elevation outline that pops
+                .softShadow {
+                    val p = nav.p.value.coerceIn(0f, 1f)
+                    val k = 1f - p
+                    if (k <= 0f) return@softShadow null
+                    val landing = fromCard && nav.toCard
+                    val sh = lerpShadow(cardShadow, floatShadow, min(1f, p * 3f))
+                        .fade(min(1f, k * 3f) * (if (landing) 1f else min(1f, p * 4f)))
+                    ShadowFrame(sh, 30.dp * k, bg.value)
+                }
                 .graphicsLayer {
                     val k = (1f - nav.p.value).coerceIn(0f, 1f)
                     shape = if (k > 0f) Squircle(30.dp * k) else RectangleShape
                     clip = true
-                    shadowElevation = 14.dp.toPx() * min(1f, k * 3f)
                 }
                 .drawBehind { drawRect(bg.value) }
                 // the page owns every touch inside it, gaps included
@@ -655,15 +670,17 @@ private fun BlockList(state: EditorState, onBlockMenu: (String) -> Unit, toasts:
             val dragging = dragId == b.id
             androidx.compose.runtime.key(b.id) {
                 val sh = shiftOf(b.id)
+                // lifted → dropped eases on glide: scale and shadow settle, they don't snap off
+                val up = animateFloatAsState(if (dragging) 1f else 0f, Motion.glide(), label = "blockLift")
                 Box(
                     Modifier
-                        .zIndex(if (dragging) 1f else 0f)
+                        .zIndex(if (dragging || up.value > .01f) 1f else 0f)
                         .onSizeChanged { heights[b.id] = it.height }
                         .graphicsLayer {
                             translationY = if (dragging) dragDy else sh.value
-                            val k = if (dragging) 1.02f else 1f
+                            val k = 1f + .02f * up.value.coerceIn(0f, 1f)
                             scaleX = k; scaleY = k
-                            shadowElevation = if (dragging) 10.dp.toPx() else 0f
+                            shadowElevation = 10.dp.toPx() * up.value.coerceIn(0f, 1f)
                             shape = RoundedCornerShape(14.dp)
                         },
                 ) {

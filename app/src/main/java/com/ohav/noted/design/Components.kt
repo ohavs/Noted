@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 /** Springy press: scales down under the finger on the touch spring, light haptic on click. No ripple. */
@@ -216,17 +217,42 @@ object Shadows {
     else SoftShadow(androidx.compose.ui.graphics.Color(0x731E1405), 50.dp, 18.dp, (-18).dp)
 }
 
-fun Modifier.softShadow(shadow: SoftShadow, radius: Dp, fill: androidx.compose.ui.graphics.Color): Modifier = drawBehind {
+fun Modifier.softShadow(shadow: SoftShadow, radius: Dp, fill: androidx.compose.ui.graphics.Color): Modifier =
+    softShadow { ShadowFrame(shadow, radius, fill) }
+
+/** One frame of a shadow that changes while something moves (read in draw, never in composition). */
+class ShadowFrame(val shadow: SoftShadow, val radius: Dp, val fill: androidx.compose.ui.graphics.Color)
+
+/** Blend two shadows; at 0 it is [a], at 1 it is [b]. */
+fun lerpShadow(a: SoftShadow, b: SoftShadow, f: Float): SoftShadow {
+    val t = f.coerceIn(0f, 1f)
+    return SoftShadow(
+        androidx.compose.ui.graphics.lerp(a.color, b.color, t),
+        androidx.compose.ui.unit.lerp(a.blur, b.blur, t),
+        androidx.compose.ui.unit.lerp(a.dy, b.dy, t),
+        androidx.compose.ui.unit.lerp(a.spread, b.spread, t),
+    )
+}
+
+/** Same shadow with its colour faded by [k] — a shadow that leaves fades, it never pops. */
+fun SoftShadow.fade(k: Float) = copy(color = color.copy(alpha = color.alpha * k.coerceIn(0f, 1f)))
+
+/** Animated shadow: [frame] is evaluated every draw; null or a transparent colour draws nothing. */
+fun Modifier.softShadow(frame: () -> ShadowFrame?): Modifier = drawBehind {
+    val fr = frame() ?: return@drawBehind
+    val shadow = fr.shadow
+    if (shadow.color.alpha <= .004f) return@drawBehind
+    val fill = fr.fill
     val sp = shadow.spread.toPx()
     val w = size.width + 2 * sp
     val h = size.height + 2 * sp
     if (w <= 0f || h <= 0f) return@drawBehind
-    val outline = Squircle(radius).createOutline(androidx.compose.ui.geometry.Size(w, h), layoutDirection, this)
+    val outline = Squircle(fr.radius).createOutline(androidx.compose.ui.geometry.Size(w, h), layoutDirection, this)
     val paint = androidx.compose.ui.graphics.Paint()
     paint.asFrameworkPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.argb(255, (fill.red * 255).toInt(), (fill.green * 255).toInt(), (fill.blue * 255).toInt())
-        setShadowLayer(shadow.blur.toPx() / 2f, 0f, shadow.dy.toPx(), android.graphics.Color.argb(
+        setShadowLayer(max(.5f, shadow.blur.toPx() / 2f), 0f, shadow.dy.toPx(), android.graphics.Color.argb(
             (shadow.color.alpha * 255).toInt(), (shadow.color.red * 255).toInt(), (shadow.color.green * 255).toInt(), (shadow.color.blue * 255).toInt(),
         ))
     }

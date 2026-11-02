@@ -18,6 +18,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -133,7 +138,8 @@ fun SheetHost(state: SheetState) {
                 .graphicsLayer { translationY = (1f - p.value) * (h + 30.dp.toPx()) }
                 .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
                 .background(c.surface)
-                .navigationBarsPadding()
+                // a field in the sheet keeps the sheet above the keyboard
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(bottom = 16.dp),
         ) {
             Column(

@@ -63,7 +63,7 @@ import com.ohav.noted.update.Updater
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit) {
+fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCategories: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -80,6 +80,21 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit) {
         Text("הגדרות", style = t.hero, color = c.ink, modifier = Modifier.padding(horizontal = 20.dp))
         VSpace(20.dp)
 
+        Section("ארגון") {
+            Row(
+                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)
+                    .press(scale = .98f, onClick = onCategories)
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Ph.FolderSimple, null, Modifier.size(22.dp), tint = c.ink2)
+                Spacer(Modifier.width(14.dp))
+                Text("קטגוריות", style = t.body, color = c.ink, modifier = Modifier.weight(1f))
+                Text("שם, אייקון, סדר", style = t.caption, color = c.ink3)
+                Spacer(Modifier.width(8.dp))
+                Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.ink3)
+            }
+        }
         Section("מראה") {
             Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ThemeMode.entries.forEach { m ->

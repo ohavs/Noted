@@ -69,6 +69,7 @@ import com.ohav.noted.design.press
 import com.ohav.noted.design.softShadow
 import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
+import com.ohav.noted.ui.categories.CategoriesScreen
 import com.ohav.noted.ui.editor.EditorHost
 import com.ohav.noted.ui.editor.EditorNav
 import com.ohav.noted.ui.home.HomeScreen
@@ -100,9 +101,11 @@ enum class Tab(val label: String, val icon: ImageVector, val iconOn: ImageVector
 @Composable
 fun NotedRoot(app: NotedApp) {
     var screen by rememberSaveable { mutableStateOf("main") }
+    // categories open from settings or from home; back returns to whichever it was
+    var catsFrom by rememberSaveable { mutableStateOf("main") }
     val toasts = remember { ToastState() }
     val overlays = remember { Overlays() }
-    BackHandler(enabled = screen != "main") { screen = "main" }
+    BackHandler(enabled = screen != "main") { screen = if (screen == "categories") catsFrom else "main" }
 
     CompositionLocalProvider(LocalOverlays provides overlays) {
     Box(Modifier.fillMaxSize().background(Noted.colors.bg)) {
@@ -114,15 +117,16 @@ fun NotedRoot(app: NotedApp) {
             targetState = screen,
             transitionSpec = {
                 // RTL: going deeper enters from the left (end side), back returns from the right.
-                val forward = targetState != "main"
+                val forward = targetState == "categories" || targetState == "settings" && initialState == "main"
                 (slideInHorizontally(Motion.glide()) { if (forward) -it / 3 else it / 3 } + fadeIn(Motion.glide()))
                     .togetherWith(slideOutHorizontally(Motion.glide()) { if (forward) it / 4 else -it / 4 } + fadeOut(Motion.glide()))
             },
             label = "screen",
         ) { s ->
             when (s) {
-                "settings" -> SettingsScreen(app, toasts, onBack = { screen = "main" })
-                else -> MainScreen(app, toasts, onSettings = { screen = "settings" })
+                "settings" -> SettingsScreen(app, toasts, onBack = { screen = "main" }, onCategories = { catsFrom = "settings"; screen = "categories" })
+                "categories" -> CategoriesScreen(app, toasts, overlays, onBack = { screen = catsFrom })
+                else -> MainScreen(app, toasts, onSettings = { screen = "settings" }, onCategories = { catsFrom = "main"; screen = "categories" })
             }
         }
         overlays.layer?.invoke()
@@ -134,7 +138,7 @@ fun NotedRoot(app: NotedApp) {
 }
 
 @Composable
-private fun MainScreen(app: NotedApp, toasts: ToastState, onSettings: () -> Unit) {
+private fun MainScreen(app: NotedApp, toasts: ToastState, onSettings: () -> Unit, onCategories: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var sharedSeen by rememberSaveable { mutableStateOf(false) }
     val chrome = remember { Chrome() }
@@ -153,7 +157,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, onSettings: () -> Unit
             label = "tab",
         ) { t ->
             when (t) {
-                Tab.Home -> HomeScreen(app, toasts, chrome, onSettings)
+                Tab.Home -> HomeScreen(app, toasts, chrome, onSettings, onCategories)
                 Tab.Shared -> TabPage("משותף") {
                     EmptyState(
                         EmptyArt.Shared, "עוד לא שיתפת כלום",

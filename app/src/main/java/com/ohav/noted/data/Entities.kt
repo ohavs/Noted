@@ -1,5 +1,6 @@
 package com.ohav.noted.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -9,6 +10,8 @@ data class CategoryEntity(
     @PrimaryKey val id: String,
     val name: String,
     val position: Int,
+    /** Key into the category icon set (see ui/categories). */
+    @ColumnInfo(defaultValue = "folder") val icon: String = "folder",
 )
 
 /**

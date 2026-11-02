@@ -21,6 +21,24 @@ interface NoteDao {
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun categoryCount(): Int
 
+    @Query("SELECT MAX(position) FROM categories")
+    suspend fun maxCategoryPosition(): Int?
+
+    @Upsert
+    suspend fun upsertCategory(category: CategoryEntity)
+
+    @Query("UPDATE categories SET name = :name, icon = :icon WHERE id = :id")
+    suspend fun editCategory(id: String, name: String, icon: String)
+
+    @Query("UPDATE categories SET position = :position WHERE id = :id")
+    suspend fun setCategoryPosition(id: String, position: Int)
+
+    @Query("DELETE FROM categories WHERE id = :id")
+    suspend fun deleteCategory(id: String)
+
+    @Query("SELECT id FROM notes WHERE categoryId = :cat AND trashedAt IS NULL")
+    suspend fun liveNoteIdsIn(cat: String): List<String>
+
     @Upsert
     suspend fun upsert(note: NoteEntity)
 
