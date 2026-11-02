@@ -73,4 +73,5 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(libs.datastore.preferences)
     implementation(libs.coroutines.android)
+    implementation(libs.mlkit.docscanner)
 }

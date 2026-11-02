@@ -1,6 +1,7 @@
 package com.ohav.noted.ui.home
 
 import androidx.compose.animation.animateColorAsState
+import com.ohav.noted.ui.media.CardMedia
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -292,7 +293,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 BlockType.Num -> { num++; ListRow("$num.", ann, b.indent) }
                 BlockType.Check -> CheckRow(b.text, b.done, c.note(NoteColor.of(n.color))) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
-                else -> Unit // media blocks arrive with the editor (stage 4–5)
+                else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
             }
         }
         n.reminderAt?.let { at ->

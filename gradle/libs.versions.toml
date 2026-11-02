@@ -9,6 +9,7 @@ lifecycle = "2.9.1"
 room = "2.7.2"
 datastore = "1.1.7"
 coroutines = "1.10.2"
+docScanner = "16.0.0-beta1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -26,6 +27,7 @@ room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
 coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+mlkit-docscanner = { module = "com.google.android.gms:play-services-mlkit-document-scanner", version.ref = "docScanner" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

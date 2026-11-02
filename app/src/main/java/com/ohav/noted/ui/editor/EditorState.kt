@@ -10,6 +10,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.BlockType
+import com.ohav.noted.data.MediaExtra
+import com.ohav.noted.data.Pic
 import com.ohav.noted.data.Span
 import java.util.UUID
 import kotlin.math.max
@@ -23,10 +25,12 @@ const val SENTINEL = "​"
 
 val TEXT_TYPES = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 val LIST_TYPES = setOf(BlockType.Bullet, BlockType.Num, BlockType.Check)
+val MEDIA_TYPES = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link)
 
 @Stable
-class EdBlock(val id: String, type: BlockType, text: String, done: Boolean, indent: Int, spans: List<Span>) {
+class EdBlock(val id: String, type: BlockType, text: String, done: Boolean, indent: Int, spans: List<Span>, extra: String = "") {
     var type by mutableStateOf(type)
+    var extra by mutableStateOf(extra)
     var done by mutableStateOf(done)
     var indent by mutableStateOf(indent)
     var spans by mutableStateOf(spans)
@@ -42,12 +46,16 @@ class EdBlock(val id: String, type: BlockType, text: String, done: Boolean, inde
         value = TextFieldValue(SENTINEL + t, TextRange(cursor.coerceIn(0, t.length) + 1))
     }
 
-    fun toBlock() = Block(id, type, if (type in TEXT_TYPES) text else "", done, indent, if (type in TEXT_TYPES) spans else emptyList())
+    fun toBlock() = Block(
+        id, type, if (type in TEXT_TYPES) text else "", done, indent,
+        if (type in TEXT_TYPES) spans else emptyList(),
+        if (type in MEDIA_TYPES) extra else "",
+    )
 
     companion object {
-        fun of(b: Block) = EdBlock(b.id, b.type, b.text, b.done, b.indent, b.spans)
-        fun new(type: BlockType = BlockType.P, text: String = "", spans: List<Span> = emptyList(), indent: Int = 0) =
-            EdBlock(UUID.randomUUID().toString(), type, text, false, indent, spans)
+        fun of(b: Block) = EdBlock(b.id, b.type, b.text, b.done, b.indent, b.spans, b.extra)
+        fun new(type: BlockType = BlockType.P, text: String = "", spans: List<Span> = emptyList(), indent: Int = 0, extra: String = "") =
+            EdBlock(UUID.randomUUID().toString(), type, text, false, indent, spans, extra)
     }
 }
 
@@ -67,6 +75,9 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
 
     /** Focus request for the next composition: block id → cursor (text coordinates). */
     var pendingFocus by mutableStateOf<Pair<String, Int>?>(null)
+
+    /** Media block marked by a backspace right under it; the next backspace removes it. */
+    var armedDelete by mutableStateOf<String?>(null)
 
     /** Styles armed with a collapsed cursor; applied to whatever is typed next. */
     var pending by mutableStateOf(emptySet<String>())
@@ -162,6 +173,7 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
             return
         }
         record(false)
+        armedDelete = null
         var spans = Rich.shift(oldText, newText, b.spans)
         // armed styles cover what was just typed
         if (pending.isNotEmpty() && newText.length > oldText.length) {
@@ -240,8 +252,11 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
             b.type != BlockType.P -> { record(true); b.type = BlockType.P }
             i > 0 -> {
                 val prev = blocks[i - 1]
+                // first backspace marks the picture / recording above, the second one removes it
+                if (prev.type in MEDIA_TYPES && armedDelete != prev.id) { armedDelete = prev.id; return }
                 record(true)
                 if (prev.type !in TEXT_TYPES) {
+                    armedDelete = null
                     blocks.removeAt(i - 1)
                 } else {
                     val at = prev.text.length
@@ -348,18 +363,80 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         val i = indexOf(id).takeIf { it >= 0 } ?: return
         val b = blocks[i]
         record(true)
-        blocks.add(i + 1, EdBlock.new(b.type, b.text, b.spans, b.indent).also { it.done = b.done })
+        blocks.add(i + 1, EdBlock.new(b.type, b.text, b.spans, b.indent, b.extra).also { it.done = b.done })
         changed()
     }
 
     fun delete(id: String) {
         val i = indexOf(id).takeIf { it >= 0 } ?: return
         record(true)
+        val wasText = blocks[i].type in TEXT_TYPES
         blocks.removeAt(i)
         if (blocks.none { it.type in TEXT_TYPES }) blocks.add(EdBlock.new())
         val near = blocks.getOrNull(min(i, blocks.lastIndex))
-        if (near != null && near.type in TEXT_TYPES) pendingFocus = near.id to near.text.length
+        if (wasText && near != null && near.type in TEXT_TYPES) pendingFocus = near.id to near.text.length
         changed()
+    }
+
+    // ---- media ------------------------------------------------------------------------------
+
+    /**
+     * Puts a media block next to [anchor] (the line that had focus when it was asked for): an empty
+     * line keeps its place under the new block, otherwise it goes below with a fresh line after it.
+     * Focus is not taken back, so the keyboard doesn't cover what was just added.
+     */
+    fun insertMedia(type: BlockType, extra: String, anchor: String?): EdBlock {
+        record(true)
+        val m = EdBlock.new(type, extra = extra)
+        val a = anchor?.let { id -> blocks.firstOrNull { it.id == id } }
+            ?: blocks.lastOrNull()?.takeIf { it.type == BlockType.P && it.text.isEmpty() }
+        if (a != null && a.type == BlockType.P && a.text.isEmpty()) {
+            blocks.add(indexOf(a.id), m)
+        } else {
+            val i = a?.let { indexOf(it.id) } ?: blocks.lastIndex
+            blocks.add(i + 1, m)
+            blocks.add(i + 2, EdBlock.new())
+        }
+        changed()
+        return m
+    }
+
+    /** New pictures join the Images block right above an empty anchor line, or start a new block. */
+    fun addPics(anchor: String?, pics: List<Pic>) {
+        if (pics.isEmpty()) return
+        val a = anchor?.let { id -> blocks.firstOrNull { it.id == id } }
+        val prev = when {
+            a == null -> blocks.lastOrNull()?.let { last -> if (last.type == BlockType.P && last.text.isEmpty()) blocks.getOrNull(blocks.lastIndex - 1) else last }
+            a.type == BlockType.P && a.text.isEmpty() -> blocks.getOrNull(indexOf(a.id) - 1)
+            else -> a
+        }
+        if (prev != null && prev.type == BlockType.Images && pics.all { it.doc } == MediaExtra.pics(prev.extra).all { it.doc }) {
+            record(true)
+            prev.extra = MediaExtra.ofPics(MediaExtra.pics(prev.extra) + pics)
+            changed()
+        } else insertMedia(BlockType.Images, MediaExtra.ofPics(pics), anchor)
+    }
+
+    /** Replaces a media block's payload (one undo step). */
+    fun setExtra(id: String, extra: String) {
+        val b = blocks.firstOrNull { it.id == id } ?: return
+        if (b.extra == extra) return
+        record(true)
+        b.extra = extra
+        changed()
+    }
+
+    /** Payload updates that aren't the user's edit (a link preview arriving) — no undo step. */
+    fun patchExtra(id: String, extra: String) {
+        val b = blocks.firstOrNull { it.id == id } ?: return
+        if (b.extra != extra) { b.extra = extra; changed() }
+    }
+
+    fun removePic(id: String, index: Int) {
+        val b = blocks.firstOrNull { it.id == id } ?: return
+        val pics = MediaExtra.pics(b.extra)
+        if (index !in pics.indices) return
+        if (pics.size == 1) delete(id) else setExtra(id, MediaExtra.ofPics(pics.filterIndexed { i, _ -> i != index }))
     }
 
     /** Paste plain text at the cursor of the focused block (multi-line becomes several blocks). */

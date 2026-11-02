@@ -19,6 +19,8 @@ data class Block(
     val done: Boolean = false,
     val indent: Int = 0,
     val spans: List<Span> = emptyList(),
+    /** Per-type payload of media blocks as a JSON object (see [MediaExtra]); empty for text. */
+    val extra: String = "",
 )
 
 object Blocks {
@@ -37,6 +39,7 @@ object Blocks {
                     val s = sp.getJSONObject(j)
                     Span(s.optInt("s"), s.optInt("e"), s.optString("t"))
                 },
+                extra = o.optJSONObject("x")?.toString().orEmpty(),
             )
         }
     }.getOrDefault(emptyList())
@@ -44,6 +47,7 @@ object Blocks {
     fun serialize(blocks: List<Block>): String = JSONArray().apply {
         blocks.forEach { b ->
             val o = JSONObject().put("id", b.id).put("type", b.type.name).put("text", b.text).put("done", b.done).put("indent", b.indent)
+            if (b.extra.isNotEmpty()) runCatching { o.put("x", JSONObject(b.extra)) }
             if (b.spans.isNotEmpty()) {
                 o.put("spans", JSONArray().apply { b.spans.forEach { put(JSONObject().put("s", it.start).put("e", it.end).put("t", it.style)) } })
             }

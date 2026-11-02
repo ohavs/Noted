@@ -474,6 +474,7 @@ private fun EditorPage(
     val c = Noted.colors
     val haptics = Noted.haptics
     val bubble = remember { Bubble() }
+    val media = rememberMediaHost(state, toasts)
     var origin by remember { mutableStateOf(Offset.Zero) }
     val scroll = rememberScrollState()
     val overlays = LocalOverlays.current
@@ -507,7 +508,7 @@ private fun EditorPage(
         }
     }
 
-    CompositionLocalProvider(LocalTextToolbar provides bubble) {
+    CompositionLocalProvider(LocalTextToolbar provides bubble, LocalMedia provides media) {
         // absolute top-left: the overlays below are positioned by left edges in root coordinates
         Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }, contentAlignment = AbsoluteAlignment.TopLeft) {
             Column(Modifier.fillMaxSize().imePadding()) {
@@ -559,6 +560,7 @@ private fun EditorPage(
                 SmartBar(state, toasts)
             }
             SelectionBubble(bubble, origin, state)
+            MediaOverlays(media)
         }
     }
 }
@@ -758,7 +760,9 @@ private fun BlockRow(
             .padding(start = (b.indent * 22).dp),
         verticalAlignment = Alignment.Top,
     ) {
-        if (b.type == BlockType.Divider) {
+        if (b.type in MEDIA_TYPES) {
+            Box(Modifier.weight(1f)) { MediaBlock(state, b, armed = state.armedDelete == b.id) }
+        } else if (b.type == BlockType.Divider) {
             Box(
                 Modifier
                     .weight(1f)
@@ -783,7 +787,7 @@ private fun BlockRow(
                 if (b.text.isEmpty() && focused) {
                     Text(
                         when (b.type) {
-                            BlockType.P -> if (state.blocks.size == 1) "כותבים כאן…" else "כתיבה, או + להוספה"
+                            BlockType.P -> if (state.blocks.size == 1) "כותבים כאן…" else "כתיבה…"
                             BlockType.H1, BlockType.H2, BlockType.H3 -> "כותרת"
                             BlockType.Check -> "משימה"
                             BlockType.Quote -> "ציטוט"
@@ -808,7 +812,7 @@ private fun BlockRow(
                         .padding(start = if (quote) 14.dp else 0.dp)
                         .focusRequester(b.focus)
                         .onFocusChanged {
-                            if (it.isFocused) state.focused = b.id
+                            if (it.isFocused) { state.focused = b.id; state.armedDelete = null }
                             else if (state.focused == b.id) state.focused = null
                         },
                 )
@@ -819,7 +823,7 @@ private fun BlockRow(
             Modifier
                 .padding(top = 4.dp)
                 .size(30.dp, 30.dp)
-                .graphicsLayer { alpha = handle * .6f + if (b.type == BlockType.Divider) .4f else 0f }
+                .graphicsLayer { alpha = handle * .6f + if (b.type == BlockType.Divider || b.type in MEDIA_TYPES) .4f else 0f }
                 .clip(RoundedCornerShape(9.dp))
                 .clickable(remember { MutableInteractionSource() }, indication = null) { onHandleTap() }
                 .pointerInput(b.id) {
@@ -960,6 +964,8 @@ private enum class SubBar { None, Heading, Color, Mark }
 @Composable
 private fun SmartBar(state: EditorState, toasts: ToastState) {
     val c = Noted.colors
+    val media = LocalMedia.current
+    val overlays = LocalOverlays.current
     val haptics = Noted.haptics
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -1040,7 +1046,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.ListNumbers, "מספור") { state.insert(BlockType.Num) }
                         BarBtn(Ph.TextHOne, "כותרת", sub == SubBar.Heading) { sub = if (sub == SubBar.Heading) SubBar.None else SubBar.Heading }
                         BarBtn(Ph.Minus, "קו מפריד") { state.insert(BlockType.Divider) }
-                        BarBtn(Ph.Image, "תמונה") { toasts.show("תמונות מגיעות בשלב 5", Ph.Image) }
+                        BarBtn(Ph.Image, "תמונה") { media?.imageSheet(overlays) }
                         BarBtn(Ph.Waveform, "הקלטה") { toasts.show("הקלטות מגיעות בשלב 5", Ph.Waveform) }
                         BarBtn(Ph.ScribbleLoop, "ציור") { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) }
                     }
