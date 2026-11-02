@@ -170,7 +170,7 @@ private fun AccentOption(a: Accent, selected: Boolean, onClick: () -> Unit) {
     val checkScale by animateFloatAsState(if (selected) 1f else 0f, Motion.touch(), label = "check")
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.press(scale = .9f, onClick = onClick)) {
         Box(Modifier.size(58.dp).clip(Squircle(20.dp)).background(col), contentAlignment = Alignment.Center) {
-            Icon(Ph.Check, null, Modifier.size(24.dp).graphicsLayer { scaleX = checkScale; scaleY = checkScale }, tint = ink)
+            Icon(Ph.Check, null, Modifier.size(24.dp).graphicsLayer { scaleX = checkScale.coerceAtLeast(0f); scaleY = checkScale.coerceAtLeast(0f) }, tint = ink)
         }
         VSpace(6.dp)
         Text(a.label, style = Noted.type.label, color = if (selected) c.ink else c.ink2)

@@ -33,6 +33,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -85,6 +87,12 @@ import kotlin.math.min
 /** Long-press-then-drag hooks (reordering a lifted card). */
 class LiftGestures(val onStart: (Offset) -> Unit, val onDrag: (Float) -> Unit, val onEnd: () -> Unit)
 
+/**
+ * Pulling the open card up into the editor, under the finger: [start] hands the card to the
+ * editor (false = not now), [move] sets the progress 0..1, [end] lets go (open?, velocity in p/s).
+ */
+class CardPull(val start: () -> Boolean, val move: (Float) -> Unit, val end: (Boolean, Float) -> Unit)
+
 private val TEXTY = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 
 fun snippetOf(blocks: List<Block>): String = blocks.firstOrNull { it.type in TEXTY && it.text.isNotBlank() }?.text.orEmpty()
@@ -131,6 +139,7 @@ fun NoteCard(
     selected: Boolean = false,
     lift: LiftGestures? = null,
     clipped: Boolean = false,
+    pull: CardPull? = null,
 ) {
     val c = Noted.colors
     val t = Noted.type
@@ -139,10 +148,16 @@ fun NoteCard(
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val s by animateFloatAsState(if (pressed) .975f else 1f, Motion.touch(), label = "press")
-    val open by animateFloatAsState(if (expanded) 1f else 0f, Motion.glide(), label = "open")
+    // Animated values are read in layout/draw only; composition sees just the derived on/off
+    // switches, so a card never recomposes per frame while it opens, closes or gets selected.
+    val open = animateFloatAsState(if (expanded) 1f else 0f, Motion.glide(), label = "open")
+    val showSummary by remember { derivedStateOf { open.value < .99f } }
+    val showFull by remember { derivedStateOf { open.value > .01f } }
     val progress = remember(blocks) { progressOf(blocks) }
     val liftNow by androidx.compose.runtime.rememberUpdatedState(lift)
     val sel by animateFloatAsState(if (selecting) 1f else 0f, Motion.touch(), label = "selecting")
+    val selFade = animateFloatAsState(if (selecting) 1f else 0f, Motion.glide(), label = "selFade")
+    val selShown by remember { derivedStateOf { selFade.value > .005f } }
     val picked by animateFloatAsState(if (selected) 1f else 0f, Motion.touch(), label = "selected")
 
     Box(
@@ -188,34 +203,37 @@ fun NoteCard(
                 if (progress != null) ProgressRing(progress.first, progress.second, Modifier.offset(y = (-4).dp).graphicsLayer { alpha = 1f - sel })
             }
             Box(Modifier.padding(top = 6.dp)) {
-                if (open < .99f) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open })
-                if (expanded || open > .01f) {
-                    FullContent(n, blocks, onToggleCheck, onOpenEditor, Modifier.graphicsLayer { alpha = open })
+                if (showSummary) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open.value })
+                if (expanded || showFull) {
+                    FullContent(n, blocks, onToggleCheck, onOpenEditor, pull, Modifier.graphicsLayer { alpha = open.value })
                 }
             }
         }
         // a long note is cut at the viewport: fade the cut and keep the way into the editor in reach
-        val cut by animateFloatAsState(if (clipped && expanded) 1f else 0f, Motion.glide(), label = "cut")
-        if (cut > .01f) {
+        val cut = animateFloatAsState(if (clipped && expanded) 1f else 0f, Motion.glide(), label = "cut")
+        val cutShown by remember { derivedStateOf { cut.value > .01f } }
+        if (cutShown) {
             Column(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .graphicsLayer { alpha = cut }
+                    .graphicsLayer { alpha = cut.value }
                     .background(Brush.verticalGradient(0f to note.copy(alpha = 0f), .45f to note, 1f to note))
                     .padding(start = 24.dp, end = 24.dp, top = 44.dp, bottom = 16.dp),
-            ) { ExpandHint(onOpenEditor, more = true) }
+            ) { ExpandHint(onOpenEditor, pull, more = true) }
         }
-        if (sel > .01f) {
+        if (selecting || selShown) {
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
                     .padding(top = 20.dp, end = 20.dp)
                     .size(28.dp)
-                    .graphicsLayer { val k = .4f + .6f * sel; scaleX = k; scaleY = k; alpha = sel.coerceIn(0f, 1f) }
+                    .graphicsLayer { val k = (.4f + .6f * sel).coerceAtLeast(0f); scaleX = k; scaleY = k; alpha = selFade.value.coerceIn(0f, 1f) }
                     .clip(CircleShape)
-                    .background(c.noteInk.copy(alpha = picked.coerceIn(0f, 1f)))
-                    .drawBehind { drawCircle(c.noteInk, size.minDimension / 2 - 1.25.dp.toPx(), style = Stroke(2.5.dp.toPx())) },
+                    .drawBehind {
+                        drawCircle(c.noteInk.copy(alpha = picked.coerceIn(0f, 1f)))
+                        drawCircle(c.noteInk, size.minDimension / 2 - 1.25.dp.toPx(), style = Stroke(2.5.dp.toPx()))
+                    },
                 contentAlignment = Alignment.Center,
             ) { if (selected) Icon(Ph.Check, null, Modifier.size(15.dp), tint = note) }
         }
@@ -248,24 +266,27 @@ private fun MetaItem(icon: ImageVector, text: String?) {
 }
 
 @Composable
-private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (String) -> Unit, onOpenEditor: () -> Unit, modifier: Modifier) {
+private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (String) -> Unit, onOpenEditor: () -> Unit, pull: CardPull?, modifier: Modifier) {
     val c = Noted.colors
     val t = Noted.type
+    // rich text is built once per block content, not on every pass
+    val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark) } }
     Column(modifier.fillMaxWidth()) {
         var num = 0
         blocks.forEach { b ->
             if (b.type != BlockType.Num) num = 0
+            val ann = rich[b.id] ?: androidx.compose.ui.text.AnnotatedString(b.text)
             when (b.type) {
-                BlockType.P -> if (b.text.isNotBlank()) Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note, color = c.noteInk, modifier = Modifier.padding(bottom = 12.dp))
+                BlockType.P -> if (b.text.isNotBlank()) Text(ann, style = t.note, color = c.noteInk, modifier = Modifier.padding(bottom = 12.dp))
                 BlockType.H1, BlockType.H2, BlockType.H3 ->
-                    Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note.copy(fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = c.noteInk, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                    Text(ann, style = t.note.copy(fontWeight = FontWeight.ExtraBold, fontSize = 16.sp), color = c.noteInk, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                 BlockType.Quote -> Row(Modifier.padding(top = 8.dp, bottom = 12.dp).height(IntrinsicSize.Min)) {
                     Box(Modifier.width(3.dp).fillMaxHeight().background(c.noteInk, RoundedCornerShape(2.dp)))
                     Spacer(Modifier.width(12.dp))
-                    Text(Rich.annotate(b.text, b.spans, c.isDark), style = t.note.copy(fontStyle = FontStyle.Italic), color = c.noteInk)
+                    Text(ann, style = t.note.copy(fontStyle = FontStyle.Italic), color = c.noteInk)
                 }
-                BlockType.Bullet -> ListRow(null, Rich.annotate(b.text, b.spans, c.isDark), b.indent)
-                BlockType.Num -> { num++; ListRow("$num.", Rich.annotate(b.text, b.spans, c.isDark), b.indent) }
+                BlockType.Bullet -> ListRow(null, ann, b.indent)
+                BlockType.Num -> { num++; ListRow("$num.", ann, b.indent) }
                 BlockType.Check -> CheckRow(b.text, b.done, c.note(NoteColor.of(n.color))) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> Unit // media blocks arrive with the editor (stage 4–5)
@@ -285,7 +306,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 Text(fmtRel(at), style = t.label, color = c.note(NoteColor.of(n.color)))
             }
         }
-        ExpandHint(onOpenEditor)
+        ExpandHint(onOpenEditor, pull)
     }
 }
 
@@ -300,23 +321,50 @@ private fun ListRow(marker: String?, text: androidx.compose.ui.text.AnnotatedStr
     }
 }
 
-/** Grab handle under the open card: tap or pull up → editor. */
+/**
+ * Grab handle under the open card: tap → editor; pull up → the editor grows out of the card
+ * under the finger and settles open or back depending on how far and how fast it was thrown.
+ */
 @Composable
-private fun ExpandHint(onOpenEditor: () -> Unit, more: Boolean = false) {
+private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean = false) {
     val c = Noted.colors
-    var pulled by remember { mutableStateOf(0f) }
+    val openNow by androidx.compose.runtime.rememberUpdatedState(onOpenEditor)
+    val pullNow by androidx.compose.runtime.rememberUpdatedState(pull)
     Column(
         Modifier
             .fillMaxWidth()
             .padding(top = 14.dp)
             .offset(y = 6.dp)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onOpenEditor() }
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { openNow() }
             .pointerInput(Unit) {
+                val dist = 440.dp.toPx()
+                val tracker = VelocityTracker()
+                var pulled = 0f
+                var held: CardPull? = null
+                fun finish(cancel: Boolean) {
+                    val h = held
+                    held = null
+                    if (h == null) {
+                        if (!cancel && pulled < -40.dp.toPx()) openNow()
+                        return
+                    }
+                    val v = tracker.calculateVelocity().y
+                    val f = (-pulled / dist).coerceIn(0f, 1f)
+                    val open = !cancel && (v < -700f || (f > .16f && v < 500f))
+                    h.end(open, -v / dist)
+                }
                 detectVerticalDragGestures(
-                    onDragStart = { pulled = 0f },
-                    onDragEnd = { if (pulled < -40.dp.toPx()) onOpenEditor(); pulled = 0f },
-                    onDragCancel = { pulled = 0f },
-                ) { ch, dy -> ch.consume(); pulled += dy }
+                    onDragStart = { tracker.resetTracking(); pulled = 0f; held = null },
+                    onDragEnd = { finish(false) },
+                    onDragCancel = { finish(true) },
+                ) { ch, dy ->
+                    ch.consume()
+                    tracker.addPosition(ch.uptimeMillis, ch.position)
+                    pulled += dy
+                    val p = pullNow
+                    if (held == null && p != null && pulled < 0f && p.start()) held = p
+                    held?.move((-pulled / dist).coerceIn(0f, 1f))
+                }
             }
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

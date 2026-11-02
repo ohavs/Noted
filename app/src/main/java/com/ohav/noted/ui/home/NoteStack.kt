@@ -98,9 +98,27 @@ class StackState {
         used
     }
 
+    private val glide = Animatable(0f)
+
+    /**
+     * Programmatic scroll on the glide spring. A new target while one is still running picks up
+     * the current velocity instead of restarting from rest, so retargets (an open card that
+     * measures taller a frame later, a second tap) stay one continuous motion.
+     */
     suspend fun animateTo(target: Float, spec: AnimationSpec<Float> = Motion.glide()) {
-        auto = true
-        try { scrollable.animateScrollBy(target.coerceIn(0f, maxValue) - value, spec) } finally { auto = false }
+        val v0 = if (glide.isRunning) glide.velocity else 0f
+        try {
+            scrollable.scroll {
+                // set inside: the run this one interrupts clears the flag on its way out
+                auto = true
+                glide.snapTo(value)
+                glide.animateTo(target.coerceIn(0f, maxValue), spec, initialVelocity = v0) {
+                    scrollBy(this.value - this@StackState.value)
+                }
+            }
+        } finally {
+            auto = false
+        }
     }
 
     suspend fun scrollBy(d: Float): Float {

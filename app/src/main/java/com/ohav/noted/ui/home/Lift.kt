@@ -133,7 +133,9 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
     val screenH = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     var menuH by androidx.compose.runtime.remember { mutableFloatStateOf(with(density) { 330.dp.toPx() }) }
 
-    Box(Modifier.fillMaxSize()) {
+    // absolute top-left: the clone and the menu are placed by left edges in root coordinates
+    // (a plain Box would park them against the right edge in RTL and then add the offset)
+    Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.AbsoluteAlignment.TopLeft) {
         // scrim — taps dismiss while the menu is up
         Box(
             Modifier

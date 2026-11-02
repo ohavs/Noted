@@ -159,7 +159,15 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         val o = lift.order ?: return@LaunchedEffect
         if (!lift.dragging && !lift.settling && baseVisible.map { it.id } == o) lift.order = null
     }
-    val blocksOf = remember(notes) { notes.associate { it.id to Blocks.parse(it.blocks) } }
+    // parse only what changed: an autosave of one note must not re-parse (and recompose) the rest
+    val parsed = remember { HashMap<String, Pair<String, List<com.ohav.noted.data.Block>>>() }
+    val blocksOf = remember(notes) {
+        notes.associate { n ->
+            val hit = parsed[n.id]
+            n.id to if (hit != null && hit.first == n.blocks) hit.second
+            else Blocks.parse(n.blocks).also { parsed[n.id] = n.blocks to it }
+        }
+    }
     if (expanded != null && visible.none { it.id == expanded }) expanded = null
 
     fun goCat(i: Int) {
@@ -437,6 +445,14 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         if (selecting || lift.id != null) return
         chrome.editor.open(n, cardRect(n.id) ?: fabRect.takeIf { fresh || it.width > 0f }, fresh)
     }
+    fun pullFor(n: NoteEntity) = CardPull(
+        start = {
+            !selecting && lift.id == null && cardRect(n.id) != null &&
+                chrome.editor.open(n, cardRect(n.id), held = true).also { if (it) haptics.light() }
+        },
+        move = { f -> chrome.editor.drag(scope, f) },
+        end = { open, v -> chrome.editor.letGo(open, v) },
+    )
     fun addNote() {
         val draft = notes.firstOrNull { it.isBlankDraft(blocksOf[it.id].orEmpty()) }
         if (draft != null) {
@@ -580,6 +596,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                             }
                         },
                         onOpenEditor = { openEditor(n) },
+                        pull = remember(n) { pullFor(n) },
                         selecting = selecting,
                         selected = n.id in selected,
                         clipped = clipped,

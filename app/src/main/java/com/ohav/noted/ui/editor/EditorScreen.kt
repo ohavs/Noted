@@ -117,10 +117,36 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.AbsoluteAlignment
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.unit.toSize
+import com.ohav.noted.ui.home.NoteCard
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlin.math.min
 
 /**
  * Which note the editor shows and where it grew from. The editor is a container transform:
- * it opens out of the card's bounds and folds back into wherever that card is now.
+ * it opens out of the card's bounds and folds back into wherever that card is now. The
+ * transform can also be held by a finger — pulling an open card up, or the page down from its
+ * top — and is released with the finger's velocity.
  */
 @Stable
 class EditorNav {
@@ -132,22 +158,58 @@ class EditorNav {
     var closing by mutableStateOf(false)
     val p = Animatable(0f)
 
-    /** Where the note's card is on screen right now (home provides it), for the way back. */
+    /** The finger drives [p] right now. */
+    var held by mutableStateOf(false)
+        private set
+
+    /** A finger let go: settle open or shut, with its velocity (p/s). Identity-keyed on purpose. */
+    internal class Release(val open: Boolean, val velocity: Float)
+
+    internal var release by mutableStateOf<Release?>(null)
+
+    /** False once the note is gone (trashed from the editor): nothing to fold back into. */
+    internal var toCard = true
+
+    /** The card's rect as of the last frame, for the card face drawn inside the transform. */
+    internal var rectNow = Rect.Zero
+
+    /** Where the note's card is on screen right now (home provides it), tracked every frame. */
     var cardRect: ((String) -> Rect?)? = null
 
     val openId: String? get() = note?.id
 
-    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false) {
-        if (note != null) return
+    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false): Boolean {
+        if (note != null) return false
         note = n
         from = rect ?: Rect.Zero
+        rectNow = from
         this.fresh = fresh
+        this.held = held
         closing = false
+        toCard = true
+        release = null
+        return true
     }
+
+    /** Finger-driven progress: 0 = the card, 1 = the full page. Applied synchronously. */
+    fun drag(scope: CoroutineScope, f: Float) {
+        held = true
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { p.snapTo(f.coerceIn(0f, 1f)) }
+    }
+
+    fun letGo(open: Boolean, velocity: Float) {
+        if (!held) return
+        held = false
+        release = Release(open, velocity)
+    }
+
+    internal fun target(): Rect? = if (toCard) note?.id?.let { cardRect?.invoke(it) } else null
 
     internal fun finish() {
         note = null
         closing = false
+        held = false
+        release = null
     }
 }
 
@@ -155,23 +217,26 @@ class EditorNav {
 fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     val n = nav.note ?: return
     val c = Noted.colors
-    val t = Noted.type
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val overlays = LocalOverlays.current
     val state = remember(n.id) { EditorState(n.id, n.title, Blocks.parse(n.blocks)) }
-    val live by app.notes.notes.collectAsState(initial = null)
-    val color = NoteColor.of(live?.firstOrNull { it.id == n.id }?.color ?: n.color)
-    val bg by animateColorAsState(c.note(color), Motion.glide(), label = "edBg")
+    // only this note's row: other notes saving never recompose the editor
+    val live by remember(n.id) {
+        app.notes.notes.map { l -> l.firstOrNull { it.id == n.id } }.distinctUntilChanged()
+    }.collectAsState(initial = n)
+    val color = NoteColor.of(live?.color ?: n.color)
+    val bg = animateColorAsState(c.note(color), Motion.glide(), label = "edBg")
 
     LaunchedEffect(n.id) {
-        nav.p.snapTo(0f)
+        if (nav.held) return@LaunchedEffect
         nav.p.animateTo(1f, Motion.glide())
     }
     LaunchedEffect(n.id) {
+        snapshotFlow { nav.held }.first { !it }
         delay(260)
-        if (nav.fresh || state.isEmpty) runCatching { state.titleFocus.requestFocus() }
+        if (!nav.closing && (nav.fresh || state.isEmpty)) runCatching { state.titleFocus.requestFocus() }
     }
     // autosave on every pause in typing
     LaunchedEffect(state) {
@@ -190,7 +255,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         }
     }
 
-    fun close() {
+    fun close(velocity: Float = 0f) {
         if (nav.closing) return
         nav.closing = true
         keyboard?.hide()
@@ -200,12 +265,20 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             val (title, blocks) = state.content()
             app.scope.launch { app.notes.save(n.id, title, blocks) }
         }
-        nav.cardRect?.invoke(n.id)?.let { nav.from = it }
+        val t = nav.target()
+        if (t != null) nav.from = t else if (nav.fresh) nav.toCard = false
         scope.launch {
-            nav.p.animateTo(0f, Motion.glide(0.002f))
+            nav.p.animateTo(0f, Motion.glide(0.002f), initialVelocity = velocity)
             nav.finish()
             if (changed) toasts.show("נשמר", Ph.CheckCircleFill, millis = 1400)
         }
+    }
+
+    // a finger let go: settle the way it was heading
+    LaunchedEffect(nav.release) {
+        val r = nav.release ?: return@LaunchedEffect
+        val v = r.velocity
+        if (r.open) nav.p.animateTo(1f, Motion.glide(), initialVelocity = v) else close(v)
     }
 
     fun menu() {
@@ -248,7 +321,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             SheetRow(Ph.Trash, "העברה לסל", danger = true, last = true) {
                 overlays.sheet.close()
                 app.scope.launch { app.notes.trash(listOf(n.id)) }
-                nav.cardRect = null
+                nav.toCard = false
                 close()
                 toasts.show("הפתק הועבר לסל המחזור", Ph.Trash, action = "ביטול", millis = 5000) {
                     app.scope.launch { app.notes.restore(listOf(n.id)) }
@@ -259,53 +332,89 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
 
     BackHandler { close() }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // Every frame of the transform is layout + draw only: nothing here reads p during composition.
+    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = AbsoluteAlignment.TopLeft) {
         val density = LocalDensity.current
-        val fullW = constraints.maxWidth.toFloat()
-        val fullH = constraints.maxHeight.toFloat()
-        val p = nav.p.value
-        val r = nav.from.takeIf { it.width > 1f } ?: with(density) {
+        val fullW = constraints.maxWidth
+        val fullH = constraints.maxHeight
+        val fab = with(density) {
             // no card to grow from: rise from the + button's corner
             Rect(Offset(30.dp.toPx(), fullH - 190.dp.toPx()), androidx.compose.ui.geometry.Size(66.dp.toPx(), 66.dp.toPx()))
         }
-        fun lerp(a: Float, b: Float) = a + (b - a) * p
-        val x = lerp(r.left, 0f)
-        val y = lerp(r.top, 0f)
-        val w = lerp(r.width, fullW)
-        val h = lerp(r.height, fullH)
-        val radius = 30.dp * (1f - p).coerceIn(0f, 1f)
+        val fromCard = nav.from.width > 1f
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = p.coerceIn(0f, 1f) * .5f }
+                .graphicsLayer { alpha = nav.p.value.coerceIn(0f, 1f) * .5f }
                 .background(c.scrim),
         )
-        with(density) {
+        Box(
+            Modifier
+                .layout { m, _ ->
+                    val p = nav.p.value
+                    // folding back (or held by a finger): follow the card live, it may still be moving
+                    val r = (if (nav.closing || nav.held) nav.target() else null) ?: nav.from.takeIf { fromCard } ?: fab
+                    nav.rectNow = r
+                    fun lerp(a: Float, b: Float) = a + (b - a) * p
+                    val w = lerp(r.width, fullW.toFloat()).roundToInt().coerceAtLeast(1)
+                    val h = lerp(r.height, fullH.toFloat()).roundToInt().coerceAtLeast(1)
+                    val pl = m.measure(Constraints.fixed(w, h))
+                    // absolute placement: x is a left edge in every layout direction
+                    layout(fullW, fullH) { pl.place(lerp(r.left, 0f).roundToInt(), lerp(r.top, 0f).roundToInt()) }
+                }
+                .graphicsLayer {
+                    val k = (1f - nav.p.value).coerceIn(0f, 1f)
+                    shape = if (k > 0f) Squircle(30.dp * k) else RectangleShape
+                    clip = true
+                    shadowElevation = 14.dp.toPx() * min(1f, k * 3f)
+                }
+                .drawBehind { drawRect(bg.value) }
+                // the page owns every touch inside it, gaps included
+                .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
+        ) {
+            // the card's own face, at the card's size, fades as the page grows out of it
+            val face by remember { derivedStateOf { nav.p.value < .4f } }
+            if (face && fromCard && nav.toCard && (nav.closing || nav.held || !nav.fresh)) {
+                CardFace(live ?: n, nav, Modifier.graphicsLayer { alpha = (1f - nav.p.value * 3.2f).coerceIn(0f, 1f) })
+            }
             Box(
                 Modifier
-                    .absoluteOffset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                    .size(w.toDp(), h.toDp())
-                    .softShadow(Shadows.card(c.isDark), radius, bg)
-                    .clip(Squircle(radius))
-                    .background(bg)
-                    // the page owns every touch inside it, gaps included
-                    .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
+                    .wrapContentSize(Alignment.TopStart, unbounded = true)
+                    .layout { m, _ ->
+                        val pl = m.measure(Constraints.fixed(fullW, fullH))
+                        layout(fullW, fullH) { pl.placeRelative(0, 0) }
+                    }
+                    .graphicsLayer { alpha = ((nav.p.value - .22f) / .6f).coerceIn(0f, 1f) },
             ) {
-                // the card's own title fades out as the page grows from it
-                Text(
-                    n.title.ifBlank { "ללא כותרת" }, style = t.cardTitle, color = c.noteInk, maxLines = 1,
-                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 22.dp).graphicsLayer { alpha = (1f - p * 3f).coerceIn(0f, 1f) },
+                EditorPage(
+                    state, nav,
+                    onBack = { close() }, onMenu = ::menu,
+                    onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
+                    onRelease = { open, v -> nav.letGo(open, v) },
+                    toasts = toasts,
                 )
-                Box(
-                    Modifier
-                        .wrapContentSize(Alignment.TopStart, unbounded = true)
-                        .requiredSize(fullW.toDp(), fullH.toDp())
-                        .graphicsLayer { alpha = ((p - .25f) / .75f).coerceIn(0f, 1f) },
-                ) {
-                    EditorPage(state, onBack = ::close, onMenu = ::menu, toasts = toasts)
-                }
             }
         }
+    }
+}
+
+/** The home card exactly as it sits in the stack (open), so the transform starts and ends on it. */
+@Composable
+private fun CardFace(n: NoteEntity, nav: EditorNav, modifier: Modifier) {
+    val blocks = remember(n.blocks) { Blocks.parse(n.blocks) }
+    var full by remember { mutableStateOf(0) }
+    Box(
+        modifier.layout { m, cons ->
+            val r = nav.rectNow
+            val pl = m.measure(Constraints.fixed(r.width.roundToInt().coerceAtLeast(1), r.height.roundToInt().coerceAtLeast(1)))
+            layout(cons.maxWidth, cons.maxHeight) { pl.placeRelative(0, 0) }
+        },
+    ) {
+        NoteCard(
+            n = n, blocks = blocks, expanded = true,
+            onFullHeight = { full = it }, onClick = {}, onLongClick = {}, onToggleCheck = {}, onOpenEditor = {},
+            clipped = full > nav.rectNow.height + 1f,
+        )
     }
 }
 
@@ -341,14 +450,38 @@ private class Bubble : TextToolbar {
 }
 
 @Composable
-private fun EditorPage(state: EditorState, onBack: () -> Unit, onMenu: () -> Unit, toasts: ToastState) {
+private fun EditorPage(
+    state: EditorState,
+    nav: EditorNav,
+    onBack: () -> Unit,
+    onMenu: () -> Unit,
+    onPull: (Float) -> Unit,
+    onRelease: (open: Boolean, velocity: Float) -> Unit,
+    toasts: ToastState,
+) {
     val c = Noted.colors
-    val t = Noted.type
     val haptics = Noted.haptics
     val bubble = remember { Bubble() }
+    val fan = remember { FanState() }
     var origin by remember { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(Rect.Zero) }
     val scroll = rememberScrollState()
     val overlays = LocalOverlays.current
+    val density = LocalDensity.current
+
+    // Pull down from the top of the page → the page folds back into its card. Only a drag that
+    // starts with the page already at its top counts; a scroll that reaches the top just stops.
+    val pullDist = with(density) { 560.dp.toPx() }
+    val pullNow by rememberUpdatedState(onPull)
+    val releaseNow by rememberUpdatedState(onRelease)
+    val dismiss = remember(scroll) {
+        PullToDismiss(
+            dist = pullDist,
+            closing = { nav.closing },
+            onPull = { pullNow(it) },
+            onRelease = { open, v -> releaseNow(open, v) },
+        )
+    }
 
     fun blockMenu(id: String) {
         haptics.light()
@@ -364,8 +497,9 @@ private fun EditorPage(state: EditorState, onBack: () -> Unit, onMenu: () -> Uni
         }
     }
 
-    CompositionLocalProvider(LocalTextToolbar provides bubble) {
-        Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }) {
+    CompositionLocalProvider(LocalTextToolbar provides bubble, LocalFan provides fan) {
+        // absolute top-left: the overlays below are positioned by left edges in root coordinates
+        Box(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }, contentAlignment = AbsoluteAlignment.TopLeft) {
             Column(Modifier.fillMaxSize().imePadding()) {
                 // top bar: back · undo · redo · more
                 Row(
@@ -383,6 +517,14 @@ private fun EditorPage(state: EditorState, onBack: () -> Unit, onMenu: () -> Uni
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
+                        .onGloballyPositioned { viewport = it.boundsInRoot() }
+                        .pointerInput(scroll) {
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                dismiss.armed = scroll.value == 0
+                            }
+                        }
+                        .nestedScroll(dismiss)
                         .verticalScroll(scroll)
                         .padding(start = 22.dp, end = 22.dp, top = 6.dp),
                 ) {
@@ -407,8 +549,55 @@ private fun EditorPage(state: EditorState, onBack: () -> Unit, onMenu: () -> Uni
                 }
                 SmartBar(state, toasts)
             }
+            FanBar(fan, state, origin, viewport, toasts)
             SelectionBubble(bubble, origin, state)
         }
+    }
+}
+
+/**
+ * Nested-scroll side of "pull the page down to close": once armed (the drag began at the top),
+ * whatever the page can't scroll further down becomes the pull; scrolling back up eats it first.
+ */
+private class PullToDismiss(
+    val dist: Float,
+    val closing: () -> Boolean,
+    val onPull: (Float) -> Unit,
+    val onRelease: (open: Boolean, velocity: Float) -> Unit,
+) : NestedScrollConnection {
+    var armed = false
+    private var pulled = 0f
+
+    private fun pull(d: Float) {
+        pulled = max(0f, pulled + d)
+        onPull(1f - (pulled / dist).coerceIn(0f, 1f))
+    }
+
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (pulled > 0f && available.y < 0f) {
+            val used = max(available.y, -pulled)
+            pull(used)
+            return Offset(0f, used)
+        }
+        return Offset.Zero
+    }
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        if (armed && source == NestedScrollSource.UserInput && available.y > 0f && !closing()) {
+            pull(available.y)
+            return Offset(0f, available.y)
+        }
+        return Offset.Zero
+    }
+
+    override suspend fun onPreFling(available: Velocity): Velocity {
+        armed = false
+        if (pulled <= 0f) return Velocity.Zero
+        val v = available.y
+        val shut = v > 900f || (pulled > dist * .18f && v > -400f)
+        pulled = 0f
+        onRelease(!shut, -v / dist)
+        return available
     }
 }
 
@@ -673,54 +862,142 @@ private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toa
         }
         BlockType.P -> {
             val show = focused && b.text.isEmpty()
-            val vis by animateFloatAsState(if (show) 1f else 0f, Motion.touch(), label = "plus")
-            if (vis > .01f) PlusFan(state, vis, toasts)
+            // glide, not touch: a value that decides presence must never overshoot back past its threshold
+            val vis = animateFloatAsState(if (show) 1f else 0f, Motion.glide(), label = "plus")
+            val present by remember { derivedStateOf { vis.value > .002f } }
+            if (show || present) PlusButton(b, vis)
         }
         else -> Unit
     }
 }
 
-/** Round `+` at the start of an empty line; opens a fan of round insert buttons in place. */
+/** Which line's `+` is open, and where it sits (root px) — the fan floats beside it. */
+@Stable
+private class FanState {
+    var open by mutableStateOf(false)
+    var blockId by mutableStateOf<String?>(null)
+    var anchor by mutableStateOf(Rect.Zero)
+}
+
+private val LocalFan = staticCompositionLocalOf { FanState() }
+
+/**
+ * Round `+` at the start of an empty line. Its width eases in and out with [vis] (layout only,
+ * no recomposition), so the placeholder beside it slides instead of jumping.
+ */
 @Composable
-private fun PlusFan(state: EditorState, vis: Float, toasts: ToastState) {
+private fun PlusButton(b: EdBlock, vis: State<Float>) {
     val c = Noted.colors
     val haptics = Noted.haptics
-    var open by remember { mutableStateOf(false) }
-    val o by animateFloatAsState(if (open) 1f else 0f, Motion.touch(), label = "fan")
-    LaunchedEffect(state.focused) { if (state.focused == null) open = false }
-    val items = listOf(
-        Act(Ph.CheckSquare, "צ׳קבוקס") { state.insert(BlockType.Check) },
-        Act(Ph.ListBullets, "רשימה") { state.insert(BlockType.Bullet) },
-        Act(Ph.Image, "תמונה") { toasts.show("תמונות מגיעות בשלב 5", Ph.Image) },
-        Act(Ph.ScribbleLoop, "ציור") { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) },
-        Act(Ph.Waveform, "הקלטה") { toasts.show("הקלטות מגיעות בשלב 5", Ph.Waveform) },
-    )
-    Row(
-        Modifier.padding(top = 1.dp, end = 8.dp).graphicsLayer { alpha = vis; scaleX = .6f + .4f * vis; scaleY = .6f + .4f * vis },
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    val fan = LocalFan.current
+    val o by animateFloatAsState(if (fan.open && fan.blockId == b.id) 1f else 0f, Motion.touch(), label = "plusTurn")
+    var coords by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    fun rectOf(l: androidx.compose.ui.layout.LayoutCoordinates) = Rect(l.positionInRoot(), l.size.toSize())
+    Box(
+        Modifier
+            .layout { m, cons ->
+                val pl = m.measure(cons.copy(minWidth = 0))
+                val w = (pl.width * vis.value.coerceIn(0f, 1f)).roundToInt()
+                layout(w, pl.height) { pl.placeRelative(0, 0) }
+            }
+            .padding(top = 1.dp, end = 8.dp)
+            .graphicsLayer {
+                val v = vis.value.coerceIn(0f, 1f)
+                alpha = v
+                scaleX = .6f + .4f * v; scaleY = .6f + .4f * v
+            },
     ) {
         Box(
             Modifier
                 .size(32.dp)
-                .press(scale = .85f) { open = !open; haptics.light() }
+                .onGloballyPositioned { coords = it; if (fan.blockId == b.id) fan.anchor = rectOf(it) }
+                .press(scale = .85f) {
+                    if (fan.open && fan.blockId == b.id) fan.open = false
+                    else {
+                        fan.blockId = b.id
+                        coords?.takeIf { it.isAttached }?.let { fan.anchor = rectOf(it) }
+                        fan.open = true
+                    }
+                    haptics.light()
+                }
                 .graphicsLayer { rotationZ = 45f * o }
                 .clip(CircleShape)
                 .background(c.noteInk),
             contentAlignment = Alignment.Center,
         ) { Icon(Ph.Plus, "הוספה", Modifier.size(17.dp), tint = if (c.isDark) Color.Black else Color.White) }
-        if (o > .01f) {
-            items.forEachIndexed { i, (icon, label, act) ->
-                val k = ((o * (items.size + 2) - i) / 2f).coerceIn(0f, 1f)
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .graphicsLayer { alpha = k; scaleX = .4f + .6f * k; scaleY = .4f + .6f * k; translationX = 0f }
-                        .press(scale = .85f) { open = false; act() }
-                        .clip(CircleShape)
-                        .background(c.noteInk.copy(alpha = .1f)),
-                    contentAlignment = Alignment.Center,
-                ) { Icon(icon, label, Modifier.size(17.dp), tint = c.noteInk) }
+    }
+}
+
+/**
+ * The `+` fan: a dark bar that floats next to its line instead of pushing the text. It goes
+ * below an empty last line (nothing to cover there) and above a line with text under it, and
+ * flips whenever that side would leave the visible page (keyboard and smart bar included).
+ */
+@Composable
+private fun FanBar(fan: FanState, state: EditorState, origin: Offset, viewport: Rect, toasts: ToastState) {
+    val c = Noted.colors
+    val density = LocalDensity.current
+    val cur = state.current
+    // the fan belongs to an empty, focused line; anything else folds it
+    val valid = cur != null && cur.id == fan.blockId && cur.type == BlockType.P && cur.text.isEmpty()
+    LaunchedEffect(valid) { if (!valid) fan.open = false }
+    val shown = fan.open && valid
+    val fade = animateFloatAsState(if (shown) 1f else 0f, Motion.glide(), label = "fanFade")
+    val pop = animateFloatAsState(if (shown) 1f else 0f, Motion.touch(), label = "fanPop")
+    val present by remember { derivedStateOf { fade.value > .002f } }
+    if (!shown && !present) return
+    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val below = remember(fan.blockId, state.blocks.size) { state.blocks.lastOrNull()?.id == fan.blockId }
+    fun done(act: () -> Unit) { fan.open = false; act() }
+    val items = listOf(
+        Act(Ph.CheckSquare, "צ׳קבוקס") { done { state.insert(BlockType.Check) } },
+        Act(Ph.ListBullets, "תבליטים") { done { state.insert(BlockType.Bullet) } },
+        Act(Ph.ListNumbers, "מספור") { done { state.insert(BlockType.Num) } },
+        Act(Ph.Image, "תמונה") { done { toasts.show("תמונות מגיעות בשלב 5", Ph.Image) } },
+        Act(Ph.ScribbleLoop, "ציור") { done { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) } },
+        Act(Ph.Waveform, "הקלטה") { done { toasts.show("הקלטות מגיעות בשלב 5", Ph.Waveform) } },
+    )
+    var up by remember { mutableStateOf(false) }
+    Row(
+        Modifier
+            .absoluteOffset {
+                val a = fan.anchor
+                val gap = 10.dp.roundToPx()
+                val h = size.height
+                val under = a.bottom + gap
+                val over = a.top - gap - h
+                var y = if (below) under else over
+                if (y < viewport.top) y = under
+                if (y + h > viewport.bottom) y = over
+                up = y < a.top
+                val m = 12.dp.toPx()
+                // RTL: the bar starts where the + is and runs toward the end (left)
+                val x = (a.right + 6.dp.toPx() - size.width).coerceIn(m, max(m, viewport.right - m - size.width))
+                IntOffset((x - origin.x).roundToInt(), (y - origin.y).roundToInt())
             }
+            .onSizeChanged { size = it }
+            .graphicsLayer {
+                val k = .86f + .14f * pop.value
+                scaleX = k; scaleY = k
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, if (up) 1f else 0f)
+                translationY = (1f - pop.value) * (if (up) 6.dp.toPx() else -6.dp.toPx())
+                alpha = fade.value
+            }
+            .softShadow(Shadows.float(c.isDark), 22.dp, c.inverse)
+            .clip(Squircle(22.dp))
+            .background(c.inverse)
+            .padding(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items.forEachIndexed { i, (icon, label, act) ->
+            Box(
+                Modifier.graphicsLayer {
+                    // staggered from the + outward
+                    val k = ((pop.value * (items.size + 2) - i) / 2f).coerceIn(0f, 1f)
+                    scaleX = .5f + .5f * k; scaleY = .5f + .5f * k
+                },
+            ) { BarBtn(icon, label, onClick = act) }
         }
     }
 }
@@ -732,9 +1009,12 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
     val haptics = Noted.haptics
     val clipboard = LocalClipboardManager.current
     val shown = bubble.status == TextToolbarStatus.Shown && bubble.rect != null
-    val p by animateFloatAsState(if (shown) 1f else 0f, Motion.touch(), label = "bubble")
+    // presence fades on glide; the pop is the touch spring (its overshoot only scales, never toggles)
+    val fade = animateFloatAsState(if (shown) 1f else 0f, Motion.glide(), label = "bubbleFade")
+    val pop = animateFloatAsState(if (shown) 1f else 0f, Motion.touch(), label = "bubble")
+    val present by remember { derivedStateOf { fade.value > .002f } }
     val r = bubble.rect ?: return
-    if (p < .01f) return
+    if (!shown && !present) return
     val density = LocalDensity.current
     val screenWDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
     var w by remember { mutableStateOf(0) }
@@ -770,7 +1050,10 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
             Modifier
                 .absoluteOffset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .onSizeChanged { w = it.width }
-                .graphicsLayer { alpha = p.coerceIn(0f, 1f); scaleX = .7f + .3f * p; scaleY = .7f + .3f * p; translationY = (1f - p) * 8.dp.toPx() },
+                .graphicsLayer {
+                    val p = pop.value
+                    alpha = fade.value.coerceIn(0f, 1f); scaleX = .7f + .3f * p; scaleY = .7f + .3f * p; translationY = (1f - p) * 8.dp.toPx()
+                },
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items.forEach { (icon, label, act) ->
@@ -809,10 +1092,11 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val b = state.current
-    val vis by animateFloatAsState(if (b != null) 1f else 0f, Motion.glide(), label = "bar")
+    val vis = animateFloatAsState(if (b != null) 1f else 0f, Motion.glide(), label = "bar")
+    val present by remember { derivedStateOf { vis.value > .01f } }
     var sub by remember { mutableStateOf(SubBar.None) }
     LaunchedEffect(b?.id) { sub = SubBar.None }
-    if (vis < .01f) return
+    if (b == null && !present) return
     val mode = when {
         b == null -> BarMode.Text
         !b.sel.collapsed -> BarMode.Format
@@ -827,7 +1111,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
-            .graphicsLayer { alpha = vis; translationY = (1f - vis) * 30.dp.toPx() },
+            .graphicsLayer { alpha = vis.value; translationY = (1f - vis.value) * 30.dp.toPx() },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AnimatedContent(
