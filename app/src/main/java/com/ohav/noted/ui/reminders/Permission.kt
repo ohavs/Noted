@@ -112,7 +112,7 @@ fun PermissionCard(onDone: () -> Unit) {
 }
 
 @Composable
-private fun PermRow(icon: ImageVector, title: String, sub: String, granted: Boolean, onGrant: () -> Unit) {
+internal fun PermRow(icon: ImageVector, title: String, sub: String, granted: Boolean, onGrant: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val bg by animateColorAsState(if (granted) c.accentSoft else c.bg, Motion.glide(), label = "permBg")

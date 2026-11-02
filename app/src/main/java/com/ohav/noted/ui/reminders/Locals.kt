@@ -11,3 +11,12 @@ fun ReminderEntity.chip(): String = com.ohav.noted.ui.home.fmtRel(occAt) + When.
 
 /** Opens the reminder picker from inside the editor: for the note (`""`) or for one line. */
 val LocalRemind = androidx.compose.runtime.staticCompositionLocalOf<(blockId: String, line: String?) -> Unit> { { _, _ -> } }
+
+/** A place reminder as a chip: "בהגעה · סופר". Only reminders that can still ring. */
+data class PlaceChip(val text: String, val leave: Boolean, val always: Boolean)
+
+/** Every open place reminder by id (same ids as [LocalReminders]). */
+val LocalPlaceChips = compositionLocalOf<Map<String, PlaceChip>> { emptyMap() }
+
+/** Same as [LocalRemind], opening on the place side. */
+val LocalRemindPlace = androidx.compose.runtime.staticCompositionLocalOf<(blockId: String, line: String?) -> Unit> { { _, _ -> } }

@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.sp
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.ReminderEntity
 import com.ohav.noted.ui.reminders.LocalReminders
+import com.ohav.noted.ui.reminders.LocalPlaceChips
+import com.ohav.noted.ui.reminders.PlaceChip
 import com.ohav.noted.ui.reminders.chip
 import com.ohav.noted.ui.editor.Rich
 import com.ohav.noted.data.BlockType
@@ -259,6 +261,7 @@ private fun Summary(n: NoteEntity, blocks: List<Block>, modifier: Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LocalReminders.current[n.id]?.let { MetaItem(if (it.repeat.repeats) Ph.Repeat else Ph.Bell, it.chip()) }
+            LocalPlaceChips.current[n.id]?.let { MetaItem(if (it.leave) Ph.SignOut else Ph.MapPin, it.text) }
         }
     }
 }
@@ -279,6 +282,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
     // rich text is built once per block content, not on every pass
     val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark, links = true) } }
     val reminders = LocalReminders.current
+    val placeChips = LocalPlaceChips.current
     Column(modifier.fillMaxWidth()) {
         var num = 0
         blocks.forEach { b ->
@@ -298,26 +302,34 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 BlockType.Check -> CheckRow(
                     b.text, b.done, c.note(NoteColor.of(n.color)),
                     remind = reminders[ReminderEntity.idFor(n.id, b.id)]?.let { fmtRel(it.occAt) },
+                    place = placeChips[ReminderEntity.idFor(n.id, b.id)],
                 ) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
             }
         }
-        LocalReminders.current[n.id]?.let { r ->
-            Row(
-                Modifier
-                    .padding(top = 8.dp)
-                    .clip(AbsoluteRoundedCornerShape(12.dp, 12.dp, 12.dp, 4.dp))
-                    .background(c.noteInk)
-                    .padding(start = 12.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Icon(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, null, Modifier.size(17.dp), tint = c.note(NoteColor.of(n.color)))
-                Text(r.chip(), style = t.label, color = c.note(NoteColor.of(n.color)))
-            }
-        }
+        val paper = c.note(NoteColor.of(n.color))
+        LocalReminders.current[n.id]?.let { r -> CardChip(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, r.chip(), paper) }
+        placeChips[n.id]?.let { pc -> CardChip(if (pc.leave) Ph.SignOut else Ph.MapPin, pc.text + if (pc.always) " · בכל פעם" else "", paper) }
         ExpandHint(onOpenEditor, pull)
+    }
+}
+
+/** The dark reminder tag at the foot of an open card. */
+@Composable
+private fun CardChip(icon: ImageVector, text: String, paper: Color) {
+    val c = Noted.colors
+    Row(
+        Modifier
+            .padding(top = 8.dp)
+            .clip(AbsoluteRoundedCornerShape(12.dp, 12.dp, 12.dp, 4.dp))
+            .background(c.noteInk)
+            .padding(start = 12.dp, end = 14.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(icon, null, Modifier.size(17.dp), tint = paper)
+        Text(text, style = Noted.type.label, color = paper)
     }
 }
 
@@ -402,7 +414,7 @@ private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean 
 
 /** Checklist row: squircle box fills and draws its tick, text greys out under a growing strike. */
 @Composable
-fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, onToggle: () -> Unit) {
+fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, place: PlaceChip? = null, onToggle: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -474,14 +486,21 @@ fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, o
                 }
             },
         )
-        if (remind != null) {
+        if (remind != null || place != null) {
             Row(
                 Modifier.padding(top = 3.dp).graphicsLayer { alpha = 1f - .5f * p },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(Ph.Bell, null, Modifier.size(14.dp), tint = c.noteInk2)
-                Text(remind, style = t.meta, color = c.noteInk2, maxLines = 1)
+                if (remind != null) {
+                    Icon(Ph.Bell, null, Modifier.size(14.dp), tint = c.noteInk2)
+                    Text(remind, style = t.meta, color = c.noteInk2, maxLines = 1)
+                }
+                if (place != null) {
+                    if (remind != null) Spacer(Modifier.width(6.dp))
+                    Icon(if (place.leave) Ph.SignOut else Ph.MapPin, null, Modifier.size(14.dp), tint = c.noteInk2)
+                    Text(place.text, style = t.meta, color = c.noteInk2, maxLines = 1)
+                }
             }
         }
     }

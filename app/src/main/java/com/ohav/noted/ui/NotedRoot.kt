@@ -73,7 +73,11 @@ import com.ohav.noted.ui.categories.CategoriesScreen
 import com.ohav.noted.ui.editor.EditorHost
 import com.ohav.noted.ui.editor.EditorNav
 import com.ohav.noted.ui.home.HomeScreen
+import com.ohav.noted.ui.places.PlacesScreen
 import com.ohav.noted.ui.reminders.LocalReminders
+import com.ohav.noted.ui.reminders.LocalPlaceChips
+import com.ohav.noted.ui.reminders.PlaceChip
+import com.ohav.noted.ui.reminders.PlaceWords
 import com.ohav.noted.ui.reminders.Agenda
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -117,8 +121,14 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>) {
     LaunchedEffect(openNote.value) { if (openNote.value != null) screen = "main" }
     val reminders by app.reminders.all.collectAsStateWithLifecycle(initialValue = emptyList())
     val remindersById = remember(reminders) { reminders.associateBy { it.id } }
+    val placeReminders by app.places.reminders.collectAsStateWithLifecycle(initialValue = emptyList())
+    val places by app.places.places.collectAsStateWithLifecycle(initialValue = emptyList())
+    val placeChips = remember(placeReminders, places) {
+        val byId = places.associateBy { it.id }
+        placeReminders.filter { !it.fired }.associate { it.id to PlaceChip(PlaceWords.chip(it, byId[it.placeId]), it.leave, it.always) }
+    }
 
-    CompositionLocalProvider(LocalOverlays provides overlays, LocalReminders provides remindersById) {
+    CompositionLocalProvider(LocalOverlays provides overlays, LocalReminders provides remindersById, LocalPlaceChips provides placeChips) {
     Box(Modifier.fillMaxSize().background(Noted.colors.bg)) {
         AnimatedContent(
             modifier = Modifier.graphicsLayer {
@@ -197,12 +207,13 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
                 Tab.Agenda -> TabPage("לוח") {
                     Agenda(notes, categories) { n, rect -> chrome.editor.open(n, rect) }
                 }
-                Tab.Places -> TabPage("מקומות") {
-                    EmptyState(
-                        EmptyArt.Places, "המקומות שלך",
-                        "שמור בית, עבודה, סופר — ופתקים יקפצו כשתגיע.",
-                        Modifier.padding(top = 60.dp),
-                    ) { Btn("שמור מיקום נוכחי", icon = Ph.MapPin) { toasts.show("מקומות מגיעים בשלב 7", Ph.Info) } }
+                Tab.Places -> PlacesScreen(app, toasts, notes) { n ->
+                    val rect = with(density) {
+                        val w = config.screenWidthDp.dp.toPx()
+                        val h = config.screenHeightDp.dp.toPx()
+                        Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
+                    }
+                    chrome.editor.open(n, rect)
                 }
             }
         }

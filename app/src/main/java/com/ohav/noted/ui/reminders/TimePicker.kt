@@ -27,6 +27,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -86,6 +89,8 @@ import com.ohav.noted.design.press
 import com.ohav.noted.reminders.Alarm
 import com.ohav.noted.reminders.Notifier
 import com.ohav.noted.ui.home.fmtRel
+import com.ohav.noted.ui.places.PlacePermissionCard
+import com.ohav.noted.ui.places.placesReady
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -117,15 +122,19 @@ private class PickerModel(start: LocalDateTime, repeat: Repeat, val existing: Re
  */
 fun openReminderPicker(
     app: NotedApp, overlays: Overlays, toasts: ToastState, scope: CoroutineScope,
-    noteId: String, blockId: String = "", line: String? = null,
+    noteId: String, blockId: String = "", line: String? = null, startPlace: Boolean = false,
 ) {
     scope.launch {
         val existing = app.reminders.get(noteId, blockId)
+        val existingPlace = app.places.reminder(noteId, blockId)
+        val hasPlaces = app.places.all().isNotEmpty()
         val now = System.currentTimeMillis()
         val start = existing?.takeIf { it.occAt > now }?.let {
             Instant.ofEpochMilli(it.occAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
         } ?: When.default()
         val m = PickerModel(start, existing?.repeat ?: Repeat.None, existing)
+        val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces)
+        val ui = PickerUi(place = startPlace || existingPlace != null && existing == null)
         val sheet = overlays.sheet
         val remove: (() -> Unit)? = existing?.let { old ->
             fun() {
@@ -139,35 +148,125 @@ fun openReminderPicker(
                 }
             }
         }
+        val removePlace: (() -> Unit)? = existingPlace?.let { old ->
+            fun() {
+                app.scope.launch(Dispatchers.Main) {
+                    app.places.remove(noteId, blockId)
+                    pm.saved = true
+                    sheet.close()
+                    toasts.show("תזכורת המקום הוסרה", Ph.BellSlash, action = "ביטול") {
+                        app.scope.launch { app.places.restoreReminder(old) }
+                    }
+                }
+            }
+        }
         sheet.show(
             if (blockId.isEmpty()) "תזכורת" else "תזכורת לשורה",
             guard = {
-                !m.dirty || m.saved || overlays.dialog.confirm(
-                    "לצאת בלי לקבוע?", "הזמן שבחרת לא יישמר.", Ph.BellSlash,
+                val dirty = (m.dirty && !m.saved) || (pm.dirty && !pm.saved)
+                !dirty || overlays.dialog.confirm(
+                    "לצאת בלי לקבוע?", "מה שבחרת לא יישמר.", Ph.BellSlash,
                     confirm = "צא בלי לשמור", cancel = "המשך לבחור",
                 )
             },
         ) {
             AnimatedContent(
-                targetState = m.asking,
+                targetState = if (m.asking) 1 else if (ui.askingPlace) 2 else 0,
                 transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
                 label = "pickerStep",
-            ) { asking ->
+            ) { step ->
                 Column {
-                    if (asking) PermissionCard(onDone = { sheet.close() })
-                    else PickerBody(
-                        m, line,
-                        onSet = {
-                            app.scope.launch(Dispatchers.Main) {
-                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat)
-                                m.saved = true
-                                toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging)
-                                if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
-                                else { sheet.setTitle(""); m.asking = true }
+                    when (step) {
+                        1 -> PermissionCard(onDone = { sheet.close() })
+                        2 -> PlacePermissionCard(saved = true, onDone = { sheet.close() })
+                        else -> {
+                            ModeSwitch(ui.place) { ui.place = it }
+                            Spacer(Modifier.height(20.dp))
+                            AnimatedContent(
+                                targetState = ui.place,
+                                transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
+                                label = "pickerMode",
+                            ) { place ->
+                                Column {
+                                    if (place) PlacePickBody(
+                                        app, pm, line,
+                                        onSet = {
+                                            val pid = pm.placeId
+                                            if (pid != null) app.scope.launch(Dispatchers.Main) {
+                                                app.places.set(
+                                                    noteId, blockId, pid, pm.leave, pm.always,
+                                                    if (pm.windowOn) pm.days else emptySet(),
+                                                    if (pm.windowOn) pm.from else null, if (pm.windowOn) pm.to else null,
+                                                )
+                                                pm.saved = true
+                                                val p = app.places.place(pid)
+                                                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave)} · ${p?.name.orEmpty()}", Ph.MapPin)
+                                                if (placesReady(app)) sheet.close()
+                                                else { sheet.setTitle(""); ui.askingPlace = true }
+                                            }
+                                        },
+                                        onRemove = removePlace,
+                                    ) else PickerBody(
+                                        m, line,
+                                        onSet = {
+                                            app.scope.launch(Dispatchers.Main) {
+                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat)
+                                                m.saved = true
+                                                toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging)
+                                                if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
+                                                else { sheet.setTitle(""); m.asking = true }
+                                            }
+                                        },
+                                        onRemove = remove,
+                                    )
+                                }
                             }
-                        },
-                        onRemove = remove,
-                    )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Stable
+private class PickerUi(place: Boolean) {
+    var place by mutableStateOf(place)
+    var askingPlace by mutableStateOf(false)
+}
+
+/** זמן | מקום — a dark thumb slides under the chosen half (offset follows RTL). */
+@Composable
+private fun ModeSwitch(place: Boolean, onPick: (Boolean) -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val p by animateFloatAsState(if (place) 1f else 0f, Motion.glide(), label = "modeP")
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxWidth().height(54.dp).clip(Shapes.md).background(c.bg).padding(4.dp),
+    ) {
+        val half = maxWidth / 2
+        Box(
+            Modifier
+                .offset { androidx.compose.ui.unit.IntOffset((p * half.toPx()).toInt(), 0) }
+                .size(half, maxHeight)
+                .clip(Squircle(14.dp))
+                .background(c.inverse),
+        )
+        Row(Modifier.fillMaxSize()) {
+            listOf(false to (Ph.Clock to "זמן"), true to (Ph.MapPin to "מקום")).forEach { (isPlace, v) ->
+                val on = isPlace == place
+                val col by animateColorAsState(if (on) c.inverseInk else c.ink2, Motion.glide(), label = "modeCol")
+                Row(
+                    Modifier.weight(1f).fillMaxHeight().press(scale = .95f, haptic = false) {
+                        if (!on) { haptics.tick(); onPick(isPlace) }
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(v.first, null, Modifier.size(20.dp), tint = col)
+                    Spacer(Modifier.width(8.dp))
+                    Text(v.second, style = t.label, color = col)
                 }
             }
         }

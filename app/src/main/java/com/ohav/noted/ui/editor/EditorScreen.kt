@@ -121,6 +121,8 @@ import com.ohav.noted.ui.reminders.LocalRemind
 import com.ohav.noted.ui.reminders.LocalReminders
 import com.ohav.noted.ui.reminders.chip
 import com.ohav.noted.ui.reminders.openReminderPicker
+import com.ohav.noted.ui.reminders.LocalPlaceChips
+import com.ohav.noted.ui.reminders.LocalRemindPlace
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
@@ -246,15 +248,17 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         delay(260)
         if (!nav.closing && (nav.fresh || state.isEmpty)) runCatching { state.titleFocus.requestFocus() }
     }
-    val remind: (String, String?) -> Unit = { blockId, line ->
+    fun remindAt(blockId: String, line: String?, place: Boolean) {
         keyboard?.hide()
         // the line must exist in the stored note before its reminder can ring
         if (state.version > 0) {
             val (title, blocks) = state.content()
             app.scope.launch { app.notes.save(n.id, title, blocks) }
         }
-        openReminderPicker(app, overlays, toasts, scope, n.id, blockId, line)
+        openReminderPicker(app, overlays, toasts, scope, n.id, blockId, line, startPlace = place)
     }
+    val remind: (String, String?) -> Unit = { blockId, line -> remindAt(blockId, line, false) }
+    val remindPlace: (String, String?) -> Unit = { blockId, line -> remindAt(blockId, line, true) }
     // "מחר ב-5" typed into the note → offer a reminder, once per phrase
     LaunchedEffect(state) {
         val offered = state.blocks.mapNotNull { Detect.find(it.text)?.phrase }.toMutableSet()
@@ -437,7 +441,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                     },
             ) {
-                CompositionLocalProvider(LocalPaper provides c.note(color), LocalRemind provides remind) {
+                CompositionLocalProvider(LocalPaper provides c.note(color), LocalRemind provides remind, LocalRemindPlace provides remindPlace) {
                     EditorPage(
                         state, nav,
                         onBack = { close() }, onMenu = ::menu,
@@ -568,7 +572,7 @@ private fun EditorPage(
                     BarIcon(Ph.ArrowUUpRight, "ברירה", c.noteInk, enabled = state.canUndo) { state.undo(); haptics.tick() }
                     BarIcon(Ph.ArrowUUpLeft, "חזרה על פעולה", c.noteInk, enabled = state.canRedo) { state.redo(); haptics.tick() }
                     BarIcon(
-                        if (LocalReminders.current[state.noteId] != null) Ph.BellRingingFill else Ph.Bell, "תזכורת", c.noteInk,
+                        if (LocalReminders.current[state.noteId] != null || LocalPlaceChips.current[state.noteId] != null) Ph.BellRingingFill else Ph.Bell, "תזכורת", c.noteInk,
                     ) { remindNow("", null) }
                     BarIcon(Ph.DotsThreeVertical, "עוד", c.noteInk, onClick = onMenu)
                 }
@@ -587,7 +591,11 @@ private fun EditorPage(
                         .padding(start = 22.dp, end = 22.dp, top = 6.dp),
                 ) {
                     TitleField(state)
-                    LocalReminders.current[state.noteId]?.let { r -> NoteReminderChip(r) { remindNow("", null) } }
+                    LocalReminders.current[state.noteId]?.let { r -> NoteReminderChip(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, r.chip()) { remindNow("", null) } }
+                    LocalPlaceChips.current[state.noteId]?.let { pc ->
+                        val remindPlaceNow = LocalRemindPlace.current
+                        NoteReminderChip(if (pc.leave) Ph.SignOut else Ph.MapPin, pc.text + if (pc.always) " · בכל פעם" else "") { remindPlaceNow("", null) }
+                    }
                     Spacer(Modifier.height(10.dp))
                     BlockList(state, onBlockMenu = ::blockMenu, toasts = toasts)
                     // tap under the last block → keep writing at the end
@@ -673,7 +681,7 @@ private fun BarIcon(icon: ImageVector, desc: String, tint: Color, enabled: Boole
 
 /** The note's reminder under its title — tap to change it. */
 @Composable
-private fun NoteReminderChip(r: ReminderEntity, onClick: () -> Unit) {
+private fun NoteReminderChip(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, onClick: () -> Unit) {
     val c = Noted.colors
     val paper = LocalPaper.current
     Row(
@@ -686,8 +694,8 @@ private fun NoteReminderChip(r: ReminderEntity, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, null, Modifier.size(17.dp), tint = paper)
-        Text(r.chip(), style = Noted.type.label, color = paper, maxLines = 1)
+        Icon(icon, null, Modifier.size(17.dp), tint = paper)
+        Text(text, style = Noted.type.label, color = paper, maxLines = 1)
     }
 }
 
@@ -888,15 +896,30 @@ private fun BlockRow(
                         },
                 )
             }
-            LocalReminders.current[ReminderEntity.idFor(state.noteId, b.id)]?.let { r ->
-                val remindNow = LocalRemind.current
-                Row(
-                    Modifier.padding(top = 8.dp, start = 6.dp).press(scale = .9f) { remindNow(b.id, b.text) },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(if (r.repeat.repeats) Ph.Repeat else Ph.Bell, "תזכורת לשורה", Modifier.size(15.dp), tint = c.noteInk2)
-                    Text(fmtRel(r.occAt), style = t.meta, color = c.noteInk2, maxLines = 1)
+            val lineTime = LocalReminders.current[ReminderEntity.idFor(state.noteId, b.id)]
+            val linePlace = LocalPlaceChips.current[ReminderEntity.idFor(state.noteId, b.id)]
+            if (lineTime != null || linePlace != null) Row(Modifier.padding(top = 8.dp, start = 6.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                lineTime?.let { r ->
+                    val remindNow = LocalRemind.current
+                    Row(
+                        Modifier.press(scale = .9f) { remindNow(b.id, b.text) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(if (r.repeat.repeats) Ph.Repeat else Ph.Bell, "תזכורת לשורה", Modifier.size(15.dp), tint = c.noteInk2)
+                        Text(fmtRel(r.occAt), style = t.meta, color = c.noteInk2, maxLines = 1)
+                    }
+                }
+                linePlace?.let { pc ->
+                    val remindPlaceNow = LocalRemindPlace.current
+                    Row(
+                        Modifier.press(scale = .9f) { remindPlaceNow(b.id, b.text) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(if (pc.leave) Ph.SignOut else Ph.MapPin, "תזכורת מקום לשורה", Modifier.size(15.dp), tint = c.noteInk2)
+                        Text(pc.text, style = t.meta, color = c.noteInk2, maxLines = 1)
+                    }
                 }
             }
         }

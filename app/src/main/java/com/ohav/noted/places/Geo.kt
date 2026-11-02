@@ -181,6 +181,36 @@ object Geo {
         return lat to lng
     }
 
+    /**
+     * Follows a shortened link's redirects. Returns the coordinates when the long URL has them,
+     * otherwise the place text it names (`?q=…`), for the geocoder.
+     */
+    suspend fun expand(text: String): Pair<Pair<Double, Double>?, String?> = withContext(Dispatchers.IO) {
+        val start = Regex("""https?://\S+""").find(text)?.value ?: return@withContext null to null
+        var url = runCatching { java.net.URL(start) }.getOrNull() ?: return@withContext null to null
+        runCatching {
+            var hops = 0
+            while (hops++ < 6 && parse(url.toString()) == null) {
+                val c = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    connectTimeout = 6000
+                    readTimeout = 6000
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) noted")
+                }
+                val code = c.responseCode
+                val loc = c.getHeaderField("Location")
+                c.disconnect()
+                if (code !in 300..399 || loc == null) break
+                url = java.net.URL(url, loc)
+            }
+        }
+        val long = url.toString()
+        val q = Regex("""[?&]q=([^&]+)""").find(long)?.groupValues?.get(1)
+            ?.let { runCatching { URLDecoder.decode(it, "UTF-8") }.getOrNull() }
+            ?.takeIf { parse(it) == null }
+        parse(long) to q
+    }
+
     /** A shortened link has no coordinates in it — worth saying so instead of failing quietly. */
     fun isShortLink(text: String) = SHORT.containsMatchIn(text)
 }
