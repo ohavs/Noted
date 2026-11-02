@@ -47,6 +47,13 @@ import com.ohav.noted.design.SheetRow
 import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.ToastState
 import com.ohav.noted.ui.media.ImageViewer
+import com.ohav.noted.ui.media.DrawPad
+import com.ohav.noted.ui.media.DrawingView
+import com.ohav.noted.ui.media.PenStroke
+import com.ohav.noted.ui.media.StrokeFile
+import com.ohav.noted.data.Drawing
+import com.ohav.noted.design.press
+import androidx.compose.ui.graphics.takeOrElse
 import com.ohav.noted.ui.media.LinkCard
 import com.ohav.noted.ui.media.LinkField
 import com.ohav.noted.data.LinkInfo
@@ -81,6 +88,25 @@ class MediaHost(
 ) {
     var anchor: String? = null
     var viewer by mutableStateOf<Pair<String, Int>?>(null)
+
+    /** Open drawing pad: the Draw block being edited (null = a new one under [anchor]). */
+    class DrawReq(val blockId: String?, val anchor: String?)
+    var drawing by mutableStateOf<DrawReq?>(null)
+
+    fun draw() { mark(); drawing = DrawReq(null, anchor) }
+    fun editDrawing(id: String) { drawing = DrawReq(id, null) }
+
+    internal fun saveDrawing(req: DrawReq, strokes: List<PenStroke>) {
+        drawing = null
+        if (strokes.isEmpty()) return
+        scope.launch {
+            val name = StrokeFile.save(ctx, strokes)
+            val (top, bottom) = StrokeFile.crop(strokes)
+            val extra = MediaExtra.ofDrawing(Drawing(name, 1f / (bottom - top), top))
+            if (req.blockId != null && state.blocks.any { it.id == req.blockId }) state.setExtra(req.blockId, extra)
+            else state.insertMedia(BlockType.Draw, extra, req.anchor)
+        }
+    }
 
     internal var launchGallery: () -> Unit = {}
     internal var launchCamera: () -> Unit = {}
@@ -139,6 +165,9 @@ class MediaHost(
 }
 
 val LocalMedia = staticCompositionLocalOf<MediaHost?> { null }
+
+/** The note's paper colour (the drawing pad takes it). */
+val LocalPaper = androidx.compose.runtime.compositionLocalOf { androidx.compose.ui.graphics.Color.Unspecified }
 
 @Composable
 fun rememberMediaHost(state: EditorState, toasts: ToastState): MediaHost {
@@ -252,6 +281,9 @@ fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
                 }
                 LinkCard(l)
             }
+            BlockType.Draw -> MediaExtra.drawing(b.extra)?.let { d ->
+                DrawingView(d, Modifier.press(scale = .98f) { host?.editDrawing(b.id) })
+            }
             else -> Unit
         }
     }
@@ -260,6 +292,16 @@ fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
 /** Full-screen media layers over the editor. */
 @Composable
 fun MediaOverlays(host: MediaHost) {
+    host.drawing?.let { req ->
+        val ctx = LocalContext.current.applicationContext
+        val file = req.blockId?.let { id -> host.state.blocks.firstOrNull { it.id == id } }?.let { MediaExtra.drawing(it.extra)?.strokes }
+        val initial by androidx.compose.runtime.produceState<List<PenStroke>?>(if (file == null) emptyList() else StrokeFile.cached(file), req) {
+            if (value == null && file != null) value = StrokeFile.load(ctx, file)
+        }
+        initial?.let { init ->
+            DrawPad(init, LocalPaper.current.takeOrElse { Noted.colors.surface }, onClose = { host.drawing = null }, onDone = { host.saveDrawing(req, it) })
+        }
+    }
     val v = host.viewer ?: return
     val b = host.state.blocks.firstOrNull { it.id == v.first }
     if (b == null) { androidx.compose.runtime.LaunchedEffect(v) { host.viewer = null }; return }

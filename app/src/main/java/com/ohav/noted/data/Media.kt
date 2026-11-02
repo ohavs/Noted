@@ -25,8 +25,11 @@ data class Voice(val f: String, val ms: Long, val wave: List<Int>, val text: Str
 /** Link card: the address and whatever its page told us about itself. */
 data class LinkInfo(val url: String, val title: String = "", val desc: String = "", val site: String = "", val img: String = "", val loaded: Boolean = false)
 
-/** Drawing: strokes (to edit again) + rendered picture (to show), width / height of the canvas. */
-data class Drawing(val strokes: String, val png: String, val r: Float)
+/**
+ * Drawing: a strokes file (vector, drawn live so it follows the theme), the shown crop's
+ * width / height and its top edge (in pad widths).
+ */
+data class Drawing(val strokes: String, val r: Float, val y0: Float)
 
 /** Reads and writes the JSON payload ([Block.extra]) of media blocks. */
 object MediaExtra {
@@ -63,18 +66,18 @@ object MediaExtra {
 
     fun drawing(s: String): Drawing? {
         val o = obj(s)
-        val p = o.optString("png").ifEmpty { return null }
-        return Drawing(o.optString("strokes"), p, o.optDouble("r", 1.0).toFloat())
+        val f = o.optString("strokes").ifEmpty { return null }
+        return Drawing(f, o.optDouble("r", 1.0).toFloat(), o.optDouble("y0", 0.0).toFloat())
     }
 
-    fun ofDrawing(d: Drawing): String = JSONObject().put("strokes", d.strokes).put("png", d.png).put("r", d.r.toDouble()).toString()
+    fun ofDrawing(d: Drawing): String = JSONObject().put("strokes", d.strokes).put("r", d.r.toDouble()).put("y0", d.y0.toDouble()).toString()
 
     /** Every media file a block points at (for cleanup / sync later). */
     fun files(b: Block): List<String> = when (b.type) {
         BlockType.Images -> pics(b.extra).map { it.f }
         BlockType.Voice -> listOfNotNull(voice(b.extra)?.f)
         BlockType.Link -> listOfNotNull(link(b.extra)?.img?.ifEmpty { null })
-        BlockType.Draw -> drawing(b.extra)?.let { listOf(it.strokes, it.png) }.orEmpty()
+        BlockType.Draw -> listOfNotNull(drawing(b.extra)?.strokes)
         else -> emptyList()
     }
 }

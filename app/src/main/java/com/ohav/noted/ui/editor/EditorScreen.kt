@@ -405,13 +405,15 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                     },
             ) {
-                EditorPage(
-                    state, nav,
-                    onBack = { close() }, onMenu = ::menu,
-                    onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
-                    onRelease = { open, v -> nav.letGo(open, v) },
-                    toasts = toasts,
-                )
+                CompositionLocalProvider(LocalPaper provides c.note(color)) {
+                    EditorPage(
+                        state, nav,
+                        onBack = { close() }, onMenu = ::menu,
+                        onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
+                        onRelease = { open, v -> nav.letGo(open, v) },
+                        toasts = toasts,
+                    )
+                }
             }
         }
     }
@@ -1068,7 +1070,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                             media?.linkSheet(overlays, clip)
                         }
                         BarBtn(Ph.Microphone, "הקלטה") { media?.record(); keyboard?.hide(); focusManager.clearFocus() }
-                        BarBtn(Ph.ScribbleLoop, "ציור") { toasts.show("ציור מגיע בשלב 5", Ph.ScribbleLoop) }
+                        BarBtn(Ph.ScribbleLoop, "ציור") { media?.draw(); keyboard?.hide(); focusManager.clearFocus() }
                     }
                     BarMode.Format -> {
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }

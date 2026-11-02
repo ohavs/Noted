@@ -14,6 +14,7 @@ fun CardMedia(b: Block, modifier: Modifier = Modifier) {
         BlockType.Images -> PicGrid(MediaExtra.pics(b.extra), modifier, corner = 14.dp, gap = 4.dp, maxShown = 4, maxPx = 640)
         BlockType.Voice -> MediaExtra.voice(b.extra)?.let { VoiceTile(it, compact = true, modifier = modifier) }
         BlockType.Link -> MediaExtra.link(b.extra)?.let { LinkCard(it, compact = true, modifier = modifier) }
+        BlockType.Draw -> MediaExtra.drawing(b.extra)?.let { DrawingView(it, modifier) }
         else -> Unit
     }
 }
