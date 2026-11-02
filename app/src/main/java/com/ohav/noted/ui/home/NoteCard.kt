@@ -70,6 +70,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ohav.noted.data.Block
+import com.ohav.noted.data.ReminderEntity
+import com.ohav.noted.ui.reminders.LocalReminders
+import com.ohav.noted.ui.reminders.chip
 import com.ohav.noted.ui.editor.Rich
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.NoteEntity
@@ -255,7 +258,7 @@ private fun Summary(n: NoteEntity, blocks: List<Block>, modifier: Modifier) {
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            n.reminderAt?.let { MetaItem(Ph.Bell, fmtRel(it)) }
+            LocalReminders.current[n.id]?.let { MetaItem(if (it.repeat.repeats) Ph.Repeat else Ph.Bell, it.chip()) }
         }
     }
 }
@@ -275,6 +278,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
     val t = Noted.type
     // rich text is built once per block content, not on every pass
     val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark, links = true) } }
+    val reminders = LocalReminders.current
     Column(modifier.fillMaxWidth()) {
         var num = 0
         blocks.forEach { b ->
@@ -291,12 +295,15 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 }
                 BlockType.Bullet -> ListRow(null, ann, b.indent)
                 BlockType.Num -> { num++; ListRow("$num.", ann, b.indent) }
-                BlockType.Check -> CheckRow(b.text, b.done, c.note(NoteColor.of(n.color))) { onToggleCheck(b.id) }
+                BlockType.Check -> CheckRow(
+                    b.text, b.done, c.note(NoteColor.of(n.color)),
+                    remind = reminders[ReminderEntity.idFor(n.id, b.id)]?.let { fmtRel(it.occAt) },
+                ) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
             }
         }
-        n.reminderAt?.let { at ->
+        LocalReminders.current[n.id]?.let { r ->
             Row(
                 Modifier
                     .padding(top = 8.dp)
@@ -306,8 +313,8 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(Ph.BellRinging, null, Modifier.size(17.dp), tint = c.note(NoteColor.of(n.color)))
-                Text(fmtRel(at), style = t.label, color = c.note(NoteColor.of(n.color)))
+                Icon(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, null, Modifier.size(17.dp), tint = c.note(NoteColor.of(n.color)))
+                Text(r.chip(), style = t.label, color = c.note(NoteColor.of(n.color)))
             }
         }
         ExpandHint(onOpenEditor, pull)
@@ -395,7 +402,7 @@ private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean 
 
 /** Checklist row: squircle box fills and draws its tick, text greys out under a growing strike. */
 @Composable
-fun CheckRow(text: String, done: Boolean, tick: Color, onToggle: () -> Unit) {
+fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, onToggle: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -467,6 +474,16 @@ fun CheckRow(text: String, done: Boolean, tick: Color, onToggle: () -> Unit) {
                 }
             },
         )
+        if (remind != null) {
+            Row(
+                Modifier.padding(top = 3.dp).graphicsLayer { alpha = 1f - .5f * p },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(Ph.Bell, null, Modifier.size(14.dp), tint = c.noteInk2)
+                Text(remind, style = t.meta, color = c.noteInk2, maxLines = 1)
+            }
+        }
     }
 }
 

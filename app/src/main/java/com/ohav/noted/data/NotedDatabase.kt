@@ -7,9 +7,10 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, CategoryEntity::class], version = 2, exportSchema = true)
+@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class], version = 3, exportSchema = true)
 abstract class NotedDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
+    abstract fun reminders(): ReminderDao
 
     companion object {
         /** v2: categories get an icon; the seeded ones keep the icons they always showed. */
@@ -20,7 +21,20 @@ abstract class NotedDatabase : RoomDatabase() {
             }
         }
 
+        /** v3: time reminders (stage 6). */
+        private val M2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `reminders` (`id` TEXT NOT NULL, `noteId` TEXT NOT NULL, `blockId` TEXT NOT NULL, " +
+                        "`anchor` TEXT NOT NULL, `occ` TEXT NOT NULL, `zone` TEXT NOT NULL, `rule` TEXT NOT NULL, `until` TEXT, " +
+                        "`fired` INTEGER NOT NULL, `snoozeAt` INTEGER, PRIMARY KEY(`id`))"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reminders_noteId` ON `reminders` (`noteId`)")
+                db.execSQL("UPDATE notes SET reminderAt = NULL")
+            }
+        }
+
         fun create(context: Context): NotedDatabase =
-            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2).build()
+            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3).build()
     }
 }

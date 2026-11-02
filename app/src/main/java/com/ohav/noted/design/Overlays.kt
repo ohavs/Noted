@@ -83,15 +83,33 @@ class SheetState {
     internal var open by mutableStateOf(false)
     internal var gen by mutableIntStateOf(0)
 
-    fun show(title: String, content: @Composable ColumnScope.() -> Unit) {
+    /** Asked before a dismiss the user didn't confirm (scrim, back, drag); false keeps the sheet. */
+    internal var guard: (suspend () -> Boolean)? = null
+
+    fun show(title: String, guard: (suspend () -> Boolean)? = null, content: @Composable ColumnScope.() -> Unit) {
         this.title = title
         this.content = content
+        this.guard = guard
         open = true
         gen++
     }
 
+    fun setTitle(title: String) {
+        this.title = title
+    }
+
+    /** Closes without asking. */
     fun close() {
         open = false
+        guard = null
+    }
+
+    /** A dismiss gesture: closes unless the guard says to stay. Returns whether it closed. */
+    suspend fun dismiss(): Boolean {
+        val g = guard
+        if (g != null && !g()) return false
+        close()
+        return true
     }
 }
 
@@ -111,7 +129,7 @@ fun SheetHost(state: SheetState) {
         p.animateTo(if (state.open) 1f else 0f, Motion.glide())
         if (!state.open) state.content = null
     }
-    BackHandler(enabled = state.open) { state.close() }
+    BackHandler(enabled = state.open) { scope.launch { state.dismiss() } }
     val content = state.content ?: return
 
     val drag = rememberDraggableState { dy ->
@@ -127,7 +145,7 @@ fun SheetHost(state: SheetState) {
                 .fillMaxSize()
                 .graphicsLayer { alpha = p.value.coerceIn(0f, 1f) }
                 .background(c.scrim)
-                .pointerInput(Unit) { detectTapGestures { state.close() } },
+                .pointerInput(Unit) { detectTapGestures { scope.launch { state.dismiss() } } },
         )
         Column(
             Modifier
@@ -146,7 +164,7 @@ fun SheetHost(state: SheetState) {
                 Modifier.fillMaxWidth().draggable(
                     drag, Orientation.Vertical,
                     onDragStopped = { vel ->
-                        if (vel > 1400f || p.value < .6f) state.close()
+                        if ((vel > 1400f || p.value < .6f) && state.dismiss()) Unit
                         else p.animateTo(1f, Motion.glide(), initialVelocity = -vel / h)
                     },
                 ),

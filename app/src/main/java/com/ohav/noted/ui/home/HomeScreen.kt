@@ -11,6 +11,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import com.ohav.noted.design.LocalOverlays
+import com.ohav.noted.ui.reminders.openReminderPicker
 import com.ohav.noted.design.SheetRow
 import kotlin.math.roundToInt
 import androidx.compose.animation.AnimatedContent
@@ -313,7 +314,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             "archive" -> settleLift { archive(ids) }
             "delete" -> settleLift { confirmDelete(ids) }
             "select" -> settleLift { startSelecting(n.id) }
-            "remind" -> settleLift { toasts.show("תזכורות מגיעות בשלב 6", Ph.Bell) }
+            "remind" -> settleLift { openReminderPicker(app, overlays, toasts, scope, n.id) }
             "share" -> settleLift { toasts.show("שיתוף מגיע עם החשבון והסנכרון", Ph.ShareNetwork) }
             "lock" -> settleLift { toasts.show("נעילת פתקים מגיעה בהמשך", Ph.Lock) }
         }

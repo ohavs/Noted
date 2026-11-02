@@ -113,6 +113,14 @@ import com.ohav.noted.design.softShadow
 import com.ohav.noted.design.ShadowFrame
 import com.ohav.noted.design.lerpShadow
 import com.ohav.noted.design.fade
+import com.ohav.noted.data.ReminderEntity
+import com.ohav.noted.data.Repeat
+import com.ohav.noted.ui.home.fmtRel
+import com.ohav.noted.ui.reminders.Detect
+import com.ohav.noted.ui.reminders.LocalRemind
+import com.ohav.noted.ui.reminders.LocalReminders
+import com.ohav.noted.ui.reminders.chip
+import com.ohav.noted.ui.reminders.openReminderPicker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
@@ -237,6 +245,30 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         snapshotFlow { nav.held }.first { !it }
         delay(260)
         if (!nav.closing && (nav.fresh || state.isEmpty)) runCatching { state.titleFocus.requestFocus() }
+    }
+    val remind: (String, String?) -> Unit = { blockId, line ->
+        keyboard?.hide()
+        // the line must exist in the stored note before its reminder can ring
+        if (state.version > 0) {
+            val (title, blocks) = state.content()
+            app.scope.launch { app.notes.save(n.id, title, blocks) }
+        }
+        openReminderPicker(app, overlays, toasts, scope, n.id, blockId, line)
+    }
+    // "מחר ב-5" typed into the note → offer a reminder, once per phrase
+    LaunchedEffect(state) {
+        val offered = state.blocks.mapNotNull { Detect.find(it.text)?.phrase }.toMutableSet()
+        snapshotFlow { state.current?.text }.drop(1).collectLatest { text ->
+            delay(1200)
+            val hit = text?.let { Detect.find(it) } ?: return@collectLatest
+            if (!offered.add(hit.phrase)) return@collectLatest
+            if (app.reminders.get(n.id) != null) return@collectLatest
+            val at = hit.at.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            toasts.show("להזכיר ${fmtRel(at)}?", Ph.Sparkle, action = "כן", millis = 5000) {
+                app.scope.launch { app.reminders.set(n.id, "", hit.at, Repeat.None) }
+                toasts.show("תזכורת נקבעה · ${fmtRel(at)}", Ph.BellRinging)
+            }
+        }
     }
     // autosave on every pause in typing
     LaunchedEffect(state) {
@@ -405,7 +437,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
                     },
             ) {
-                CompositionLocalProvider(LocalPaper provides c.note(color)) {
+                CompositionLocalProvider(LocalPaper provides c.note(color), LocalRemind provides remind) {
                     EditorPage(
                         state, nav,
                         onBack = { close() }, onMenu = ::menu,
@@ -488,6 +520,7 @@ private fun EditorPage(
     val scroll = rememberScrollState()
     val overlays = LocalOverlays.current
     val density = LocalDensity.current
+    val remindNow = LocalRemind.current
 
     // Pull down from the top of the page → the page folds back into its card. Only a drag that
     // starts with the page already at its top counts; a scroll that reaches the top just stops.
@@ -534,6 +567,9 @@ private fun EditorPage(
                     // RTL: "back in time" points right
                     BarIcon(Ph.ArrowUUpRight, "ברירה", c.noteInk, enabled = state.canUndo) { state.undo(); haptics.tick() }
                     BarIcon(Ph.ArrowUUpLeft, "חזרה על פעולה", c.noteInk, enabled = state.canRedo) { state.redo(); haptics.tick() }
+                    BarIcon(
+                        if (LocalReminders.current[state.noteId] != null) Ph.BellRingingFill else Ph.Bell, "תזכורת", c.noteInk,
+                    ) { remindNow("", null) }
                     BarIcon(Ph.DotsThreeVertical, "עוד", c.noteInk, onClick = onMenu)
                 }
                 Column(
@@ -551,6 +587,7 @@ private fun EditorPage(
                         .padding(start = 22.dp, end = 22.dp, top = 6.dp),
                 ) {
                     TitleField(state)
+                    LocalReminders.current[state.noteId]?.let { r -> NoteReminderChip(r) { remindNow("", null) } }
                     Spacer(Modifier.height(10.dp))
                     BlockList(state, onBlockMenu = ::blockMenu, toasts = toasts)
                     // tap under the last block → keep writing at the end
@@ -632,6 +669,26 @@ private fun BarIcon(icon: ImageVector, desc: String, tint: Color, enabled: Boole
         Modifier.size(46.dp).graphicsLayer { alpha = a }.clip(CircleShape).press(enabled = enabled, scale = .86f, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, desc, Modifier.size(24.dp), tint = tint) }
+}
+
+/** The note's reminder under its title — tap to change it. */
+@Composable
+private fun NoteReminderChip(r: ReminderEntity, onClick: () -> Unit) {
+    val c = Noted.colors
+    val paper = LocalPaper.current
+    Row(
+        Modifier
+            .padding(top = 10.dp)
+            .press(scale = .95f, onClick = onClick)
+            .clip(androidx.compose.foundation.shape.AbsoluteRoundedCornerShape(12.dp, 12.dp, 12.dp, 4.dp))
+            .background(c.noteInk)
+            .padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, null, Modifier.size(17.dp), tint = paper)
+        Text(r.chip(), style = Noted.type.label, color = paper, maxLines = 1)
+    }
 }
 
 @Composable
@@ -831,6 +888,17 @@ private fun BlockRow(
                         },
                 )
             }
+            LocalReminders.current[ReminderEntity.idFor(state.noteId, b.id)]?.let { r ->
+                val remindNow = LocalRemind.current
+                Row(
+                    Modifier.padding(top = 8.dp, start = 6.dp).press(scale = .9f) { remindNow(b.id, b.text) },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(if (r.repeat.repeats) Ph.Repeat else Ph.Bell, "תזכורת לשורה", Modifier.size(15.dp), tint = c.noteInk2)
+                    Text(fmtRel(r.occAt), style = t.meta, color = c.noteInk2, maxLines = 1)
+                }
+            }
         }
         // drag handle: tap → block menu, drag → reorder
         Box(
@@ -987,6 +1055,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
     val haptics = Noted.haptics
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val remind = LocalRemind.current
     val b = state.current
     val vis = animateFloatAsState(if (b != null) 1f else 0f, Motion.glide(), label = "bar")
     val present by remember { derivedStateOf { vis.value > .01f } }
@@ -1071,6 +1140,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         }
                         BarBtn(Ph.Microphone, "הקלטה") { media?.record(); keyboard?.hide(); focusManager.clearFocus() }
                         BarBtn(Ph.ScribbleLoop, "ציור") { media?.draw(); keyboard?.hide(); focusManager.clearFocus() }
+                        BarBtn(Ph.Bell, "תזכורת") { remind("", null) }
                     }
                     BarMode.Format -> {
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }
@@ -1088,6 +1158,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.CheckSquare, "צ׳קבוקס", b?.type == BlockType.Check) { state.setType(BlockType.Check) }
                         BarBtn(Ph.ListBullets, "תבליטים", b?.type == BlockType.Bullet) { state.setType(BlockType.Bullet) }
                         BarBtn(Ph.ListNumbers, "מספור", b?.type == BlockType.Num) { state.setType(BlockType.Num) }
+                        BarBtn(Ph.Bell, "תזכורת לשורה") { b?.let { remind(it.id, it.text) } }
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }
                     }
                     BarMode.Text -> {
@@ -1101,6 +1172,7 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }
                         BarBtn(Ph.TextItalic, "נטוי", state.isOn(Rich.ITALIC)) { state.style(Rich.ITALIC) }
                         BarBtn(Ph.Palette, "צבע טקסט", sub == SubBar.Color) { sub = if (sub == SubBar.Color) SubBar.None else SubBar.Color }
+                        BarBtn(Ph.Bell, "תזכורת") { remind("", null) }
                     }
                 }
                 Spacer(Modifier.width(4.dp))
