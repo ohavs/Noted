@@ -3,6 +3,7 @@ package com.ohav.noted
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import kotlinx.coroutines.launch
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -56,6 +57,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         preferHighRefreshRate()
-        (application as NotedApp).updater.onResume()
+        val app = application as NotedApp
+        app.updater.onResume()
+        // "allow all the time" is granted outside the app; coming back is when fences can be registered
+        app.scope.launch { app.places.sync() }
     }
 }

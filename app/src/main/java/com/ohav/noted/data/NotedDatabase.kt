@@ -7,10 +7,11 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class], version = 3, exportSchema = true)
+@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class], version = 4, exportSchema = true)
 abstract class NotedDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun reminders(): ReminderDao
+    abstract fun places(): PlaceDao
 
     companion object {
         /** v2: categories get an icon; the seeded ones keep the icons they always showed. */
@@ -34,7 +35,25 @@ abstract class NotedDatabase : RoomDatabase() {
             }
         }
 
+        /** v4: places and place reminders (stage 7). */
+        private val M3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `places` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                        "`lat` REAL NOT NULL, `lng` REAL NOT NULL, `radius` INTEGER NOT NULL, `address` TEXT NOT NULL, " +
+                        "`position` REAL NOT NULL, `createdAt` INTEGER NOT NULL, `armIn` INTEGER NOT NULL, `armOut` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `place_reminders` (`id` TEXT NOT NULL, `noteId` TEXT NOT NULL, `blockId` TEXT NOT NULL, " +
+                        "`placeId` TEXT NOT NULL, `leave` INTEGER NOT NULL, `always` INTEGER NOT NULL, `days` TEXT NOT NULL, " +
+                        "`fromMin` INTEGER, `toMin` INTEGER, `fired` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_place_reminders_noteId` ON `place_reminders` (`noteId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_place_reminders_placeId` ON `place_reminders` (`placeId`)")
+            }
+        }
+
         fun create(context: Context): NotedDatabase =
-            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3).build()
+            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4).build()
     }
 }

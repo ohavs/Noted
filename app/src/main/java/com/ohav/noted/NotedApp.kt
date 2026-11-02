@@ -3,6 +3,7 @@ package com.ohav.noted
 import android.app.Application
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.NotesRepository
+import com.ohav.noted.places.Places
 import com.ohav.noted.reminders.Notifier
 import com.ohav.noted.reminders.Reminders
 import com.ohav.noted.settings.SettingsRepository
@@ -19,6 +20,7 @@ class NotedApp : Application() {
     lateinit var settings: SettingsRepository private set
     lateinit var updater: Updater private set
     lateinit var reminders: Reminders private set
+    lateinit var places: Places private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
@@ -26,6 +28,7 @@ class NotedApp : Application() {
         val db = NotedDatabase.create(this)
         notes = NotesRepository(db)
         reminders = Reminders(this, db)
+        places = Places(this, db)
         Notifier.ensureChannel(this)
         settings = SettingsRepository(this)
         updater = Updater(this)
@@ -36,5 +39,7 @@ class NotedApp : Application() {
             reminders.fireDue()
             reminders.observeTick().debounce(250).collect { reminders.schedule() }
         }
+        // fences follow every change to places / place reminders / notes (throttled inside)
+        scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
     }
 }

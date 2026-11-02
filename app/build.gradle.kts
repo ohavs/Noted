@@ -74,4 +74,6 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.coroutines.android)
     implementation(libs.mlkit.docscanner)
+    implementation(libs.play.location)
+    implementation(libs.coroutines.play)
 }

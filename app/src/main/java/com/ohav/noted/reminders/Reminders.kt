@@ -230,7 +230,7 @@ object Notifier {
         }
     }
 
-    private fun summary(blocks: List<Block>): String {
+    fun summary(blocks: List<Block>): String {
         val checks = blocks.filter { it.type == BlockType.Check }
         if (checks.isNotEmpty()) {
             val open = checks.filter { !it.done }.map { it.text.trim() }.filter { it.isNotEmpty() }
@@ -249,6 +249,7 @@ class ReminderReceiver : BroadcastReceiver() {
             try {
                 when (intent.action) {
                     DONE -> intent.getStringExtra(EXTRA_ID)?.let { app.reminders.done(it) }
+                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> app.places.sync(force = true)
                     SNOOZE -> {
                         val id = intent.getStringExtra(EXTRA_ID)
                         val at = intent.getLongExtra(EXTRA_AT, 0L)
