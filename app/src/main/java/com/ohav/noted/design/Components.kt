@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Springy press: scales down under the finger on the touch spring, light haptic on click. No ripple. */
@@ -247,7 +248,12 @@ fun Modifier.softShadow(frame: () -> ShadowFrame?): Modifier = drawBehind {
     val w = size.width + 2 * sp
     val h = size.height + 2 * sp
     if (w <= 0f || h <= 0f) return@drawBehind
-    val outline = Squircle(fr.radius).createOutline(androidx.compose.ui.geometry.Size(w, h), layoutDirection, this)
+    // A rounded rect, not the squircle path: Skia blurs rounded rects analytically on the GPU,
+    // while a path that changes every frame (transitions) is re-rasterised and blurred on the
+    // render thread — enough to drop a 120 Hz panel to 60. With the radius at the squircle's
+    // extent the rect sits inside the squircle, so its fill never peeks out; under the blur the
+    // corner difference is invisible.
+    val rad = min(fr.radius.toPx() * 1.5f, min(w, h) / 2f)
     val paint = androidx.compose.ui.graphics.Paint()
     paint.asFrameworkPaint().apply {
         isAntiAlias = true
@@ -259,7 +265,7 @@ fun Modifier.softShadow(frame: () -> ShadowFrame?): Modifier = drawBehind {
     drawIntoCanvas { canvas ->
         canvas.save()
         canvas.translate(-sp, -sp)
-        canvas.drawOutline(outline, paint)
+        canvas.drawRoundRect(.5f, .5f, w - .5f, h - .5f, rad, rad, paint)
         canvas.restore()
     }
 }

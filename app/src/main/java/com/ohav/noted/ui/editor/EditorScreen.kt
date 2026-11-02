@@ -387,7 +387,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             // the card's own face, at the card's size, fades as the page grows out of it
             val face by remember { derivedStateOf { nav.p.value < .4f } }
             if (face && fromCard && nav.toCard && (nav.closing || nav.held || !nav.fresh)) {
-                CardFace(live ?: n, nav, Modifier.graphicsLayer { alpha = (1f - nav.p.value * 3.2f).coerceIn(0f, 1f) })
+                CardFace(live ?: n, nav, Modifier.graphicsLayer {
+                    alpha = (1f - nav.p.value * 3.2f).coerceIn(0f, 1f)
+                    // fade by modulating each draw instead of an offscreen copy every frame
+                    compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                })
             }
             Box(
                 Modifier
@@ -396,7 +400,10 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         val pl = m.measure(Constraints.fixed(fullW, fullH))
                         layout(fullW, fullH) { pl.placeRelative(0, 0) }
                     }
-                    .graphicsLayer { alpha = ((nav.p.value - .22f) / .6f).coerceIn(0f, 1f) },
+                    .graphicsLayer {
+                        alpha = ((nav.p.value - .22f) / .6f).coerceIn(0f, 1f)
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+                    },
             ) {
                 EditorPage(
                     state, nav,
