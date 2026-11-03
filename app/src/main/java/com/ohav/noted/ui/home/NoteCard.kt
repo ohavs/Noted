@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontStyle
@@ -106,8 +107,6 @@ class CardPull(
     val start: () -> Boolean,
     val move: (Float) -> Unit,
     val end: (Boolean, Float) -> Unit,
-    /** The stack can't scroll on (it's at its end): an upward drag anywhere on the open card is a pull. */
-    val atEnd: () -> Boolean = { false },
 )
 
 private val TEXTY = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
@@ -194,7 +193,6 @@ fun NoteCard(
                     ) { ch, d -> ch.consume(); liftNow?.onDrag?.invoke(d.y) }
                 },
             )
-            .then(if (expanded && pull != null) Modifier.pullUp(pull, onOpenEditor, gate = { pull.atEnd() }) else Modifier)
             .softShadow(Shadows.card(c.isDark), 30.dp, note)
             .clip(Shapes.card)
             .background(note)
@@ -384,24 +382,41 @@ private fun ListRow(marker: String?, text: androidx.compose.ui.text.AnnotatedStr
 /**
  * Grab handle under the open card: tap → editor; pull up → the editor grows out of the card
  * under the finger and settles open or back depending on how far and how fast it was thrown.
+ *
+ * The pull zone is the whole strip from just above the bar down to the card's edge, full width:
+ * any upward drag that starts there is a pull, never a scroll. Above it the card scrolls as usual.
  */
 @Composable
 private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean = false) {
     val c = Noted.colors
     val openNow by androidx.compose.runtime.rememberUpdatedState(onOpenEditor)
+    var held by remember { mutableStateOf(false) }
+    val grip by animateFloatAsState(if (held) 1f else 0f, Motion.touch(), label = "grip")
+    val gripInk by animateFloatAsState(if (held) 1f else 0f, Motion.glide(), label = "gripInk")
     Column(
         Modifier
             .fillMaxWidth()
             .padding(top = 4.dp)
-            // reaches down into the card's bottom padding: the thumb lands around the handle, rarely on it
-            .offset(y = 12.dp)
+            // the bar sits 12dp lower than its slot; the zone runs on through the card's bottom padding
+            // (24dp) to its edge without making the card taller — the overhang is the card's to clip
+            .layout { m, k ->
+                val p = m.measure(k)
+                val over = 12.dp.roundToPx()
+                layout(p.width, p.height - over) { p.place(0, over) }
+            }
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { openNow() }
-            .pullUp(pull, onOpenEditor)
-            .padding(top = 12.dp, bottom = 22.dp),
+            .pullUp(pull, onOpenEditor) { held = it }
+            .padding(top = 12.dp, bottom = 34.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Box(Modifier.size(38.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.noteInk.copy(alpha = .25f)))
+        Box(
+            Modifier
+                .size(38.dp, 5.dp)
+                // under the finger the bar widens and darkens: this strip is the pull
+                .graphicsLayer { scaleX = 1f + .4f * grip }
+                .drawBehind { drawRoundRect(c.noteInk.copy(alpha = .25f + .25f * gripInk.coerceIn(0f, 1f)), cornerRadius = CornerRadius(size.height / 2)) },
+        )
         Text(if (more) "יש עוד — משיכה למעלה לפתק המלא" else "משיכה למעלה לעריכה", style = Noted.type.caption, color = c.noteInk2)
     }
 }
@@ -410,18 +425,18 @@ private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean 
  * Pull up into the editor. Claimed in the Initial pass once the finger heads up past the slop,
  * so the stack's scroll, the category swipe and the card's tap never see the gesture.
  *
- * - Up is anything within ~60° of straight up (a thumb sweeps in an arc, rarely straight);
- *   clearly sideways or down is left to the stack.
+ * - Up is anything within ~70° of straight up (a thumb sweeps in an arc, rarely straight);
+ *   only a plainly sideways drag (the category swipe) or a downward one goes to the stack.
  * - Opens if the throw would carry it past a quarter of the way: distance plus where the
  *   velocity is heading, so a short flick counts as much as a long slow drag.
  * - A tick when the release would open, and again if it drops back under.
- * - [gate] is asked once the finger moves: false = not a pull this time.
+ * - [onHold]: the finger is down in the zone (true) / gone (false).
  */
-private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, gate: () -> Boolean = { true }): Modifier = composed {
+private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, onHold: (Boolean) -> Unit = {}): Modifier = composed {
     val haptics = Noted.haptics
     val pullNow by androidx.compose.runtime.rememberUpdatedState(pull)
     val openNow by androidx.compose.runtime.rememberUpdatedState(onOpen)
-    val gateNow by androidx.compose.runtime.rememberUpdatedState(gate)
+    val holdNow by androidx.compose.runtime.rememberUpdatedState(onHold)
     pointerInput(Unit) {
         val dist = 440.dp.toPx()
         val slop = viewConfiguration.touchSlop
@@ -438,6 +453,7 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, gate: () -> Boo
             var armed = false
             fun fraction() = ((-dy - slop) / dist).coerceIn(0f, 1f)
             fun opens(v: Float) = v < -flick || (fraction() + (-v / dist) * .18f > .25f && v < 400.dp.toPx())
+            holdNow(true)
             try {
                 while (true) {
                     val ev = awaitPointerEvent(PointerEventPass.Initial)
@@ -451,10 +467,9 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, gate: () -> Boo
                         // held still long enough to lift the card: that drag is the reorder's
                         if (ch.uptimeMillis - down.uptimeMillis > viewConfiguration.longPressTimeoutMillis) return@awaitEachGesture
                         val up = -dy
-                        // down, or clearly sideways: the stack's
-                        if (dy > slop || abs(dx) > slop * 1.5f && abs(dx) > up * 1.6f) return@awaitEachGesture
-                        if (up <= slop || up < abs(dx) * .6f) continue
-                        if (!gateNow()) return@awaitEachGesture
+                        // down, or plainly sideways: the stack's
+                        if (dy > slop || abs(dx) > slop * 1.5f && abs(dx) > up * 2.75f) return@awaitEachGesture
+                        if (up <= slop || up < abs(dx) * .36f) continue
                         dragging = true
                         // start from here: no jump by the slop already travelled
                         dy = -slop
@@ -467,6 +482,7 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, gate: () -> Boo
                     if (now != armed) { armed = now; haptics.tick() }
                 }
             } finally {
+                holdNow(false)
                 val h = held
                 if (dragging) {
                     val v = tracker.calculateVelocity().y

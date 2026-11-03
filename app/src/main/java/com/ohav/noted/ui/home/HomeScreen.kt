@@ -523,7 +523,6 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         },
         move = { f -> chrome.editor.drag(scope, f) },
         end = { open, v -> chrome.editor.letGo(open, v) },
-        atEnd = { stack.value >= stack.maxValue - 1f },
     )
     fun addNote() {
         val draft = notes.firstOrNull { it.isBlankDraft(blocksOf[it.id].orEmpty()) }
