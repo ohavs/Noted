@@ -1,5 +1,6 @@
 package com.ohav.noted.wear.ui
 
+import androidx.compose.runtime.remember
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
