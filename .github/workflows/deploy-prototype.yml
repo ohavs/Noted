@@ -36,7 +36,7 @@ jobs:
           for i in 1 2 3 4 5 6; do
             a=$(curl -sS -o /dev/null -w '%{http_code}' $B/ ; true)
             l=$(curl -sS $B/.well-known/assetlinks.json | grep -c 'com.ohav.noted' ; true)
-            v=$(curl -sS $B/i/TestTokenAbcdefgh | grep -c 'invite' ; true)
+            v=$(curl -sS $B/i/TestTokenAbcdefgh | grep -c 'package=com.ohav.noted' ; true)
             echo "home=$a assetlinks=$l invite=$v"
             if [ "$a" = 200 ] && [ "$l" -ge 1 ] && [ "$v" -ge 1 ]; then
               curl -sSI $B/.well-known/assetlinks.json | grep -i '^content-type'
