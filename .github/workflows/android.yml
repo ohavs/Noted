@@ -5,6 +5,7 @@ on:
     branches: [main, 'ccr-*']
     paths:
       - 'app/**'
+      - 'wear/**'
       - 'gradle/**'
       - '*.gradle.kts'
       - 'gradle.properties'
@@ -72,6 +73,7 @@ jobs:
       - name: Build
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+        # assembleRelease builds every module: the phone app, and the watch app when wear/ exists
         run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease -PversionCode=${{ github.run_number }}
 
       - name: Collect APK
@@ -79,6 +81,8 @@ jobs:
         run: |
           V="0.2.${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "noted-$V.apk"
+          # the watch app rides along (installed from the phone / adb; same package + key as the phone)
+          if [ -f wear/build/outputs/apk/release/wear-release.apk ]; then cp wear/build/outputs/apk/release/wear-release.apk "noted-watch-$V.apk"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
@@ -93,4 +97,4 @@ jobs:
         run: |
           V="${{ steps.apk.outputs.version }}"
           git log -1 --pretty=%B | sed '/^Co-Authored-By/d;/^Claude-Session/d' > notes.txt
-          gh release create "v$V" "noted-$V.apk" --title "noted $V" --notes-file notes.txt --target "$GITHUB_SHA"
+          gh release create "v$V" noted-*.apk --title "noted $V" --notes-file notes.txt --target "$GITHUB_SHA"
