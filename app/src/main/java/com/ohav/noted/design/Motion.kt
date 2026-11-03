@@ -16,6 +16,7 @@ import kotlin.math.sqrt
  * The only two springs in the app (same physics as the prototype, mass = 1):
  *  - touch: k=520, c=25 → ζ≈0.55, lively; press feedback, toggles, things under the finger.
  *  - glide: k=230, c=30 → ζ≈0.99, smooth; layout, screens, colors.
+ *  (+ [Paced]: glide behind a soft lead, for the stack's big layout moves.)
  * Springs are interruptible by nature — retargeting keeps velocity.
  */
 object Motion {
@@ -23,6 +24,10 @@ object Motion {
     private const val TOUCH_C = 25f
     internal const val GLIDE_K = 230f
     internal const val GLIDE_C = 30f
+
+    /** Paced's lead into glide (critically damped, ω=30): eases big layout moves in. */
+    internal const val LEAD_K = 900f
+    internal const val LEAD_C = 60f
 
     val touchDamping = TOUCH_C / (2f * sqrt(TOUCH_K))
     val glideDamping = GLIDE_C / (2f * sqrt(GLIDE_K))
@@ -35,12 +40,17 @@ object Motion {
 }
 
 /**
- * The glide spring, stepped frame by frame instead of by the wall clock: a frame never advances
- * the motion by more than one 60 Hz frame. A tap that builds heavy content (an unfolding card)
- * stalls the first frames; a clock-driven spring would already be most of the way there when the
- * next frame shows, so the move reads as a jump. Paced, every bit of the travel is on screen.
- * Velocity survives a cancelled run, so a retarget (or an effect restarted by a re-measure)
- * carries straight on instead of starting from rest.
+ * The glide spring, stepped frame by frame instead of by the wall clock, behind a soft lead.
+ *  - Paced: a frame never advances the motion by more than one 60 Hz frame. A tap that builds
+ *    heavy content (an unfolding card) stalls the first frames; a clock-driven spring would already
+ *    be most of the way there when the next frame shows, so the move reads as a jump.
+ *  - Lead: the glide spring doesn't chase the target itself but a lead point that springs to it
+ *    first ([Motion.LEAD_K], critically damped). A bare spring starts at full acceleration — a
+ *    tall card unfolding kicks off with a jolt; through the lead it eases in, then glides home the
+ *    same way, and a retarget (the open card measuring taller a frame later) bends the curve
+ *    instead of kinking it.
+ * Velocity (of both) survives a cancelled run, so a retarget or an effect restarted by a
+ * re-measure carries straight on instead of starting from rest.
  */
 @Stable
 class Paced(initial: Float, private val eps: Float = .5f) {
@@ -50,23 +60,28 @@ class Paced(initial: Float, private val eps: Float = .5f) {
         private set
     var target = initial
         private set
+    private var lead = initial
+    private var leadV = 0f
     private var stoppedAt = 0L
     private var runs = 0
 
     /** Jump without motion. */
     fun snapTo(v: Float) {
-        value = v; target = v; velocity = 0f
+        value = v; target = v; velocity = 0f; lead = v; leadV = 0f
     }
 
     /** Moves the value but keeps the momentum (the scroll was moved under us). */
     fun follow(v: Float) {
+        lead += v - value
         value = v
     }
 
     suspend fun glideTo(to: Float, onStep: ((Float) -> Unit)? = null) {
         target = to
         // momentum carries over only from a run still going or cut a moment ago
-        if (runs == 0 && System.nanoTime() - stoppedAt > 60_000_000L) velocity = 0f
+        if (runs == 0 && System.nanoTime() - stoppedAt > 60_000_000L) {
+            velocity = 0f; lead = value; leadV = 0f
+        }
         var last = -1L
         runs++
         try {
@@ -74,19 +89,20 @@ class Paced(initial: Float, private val eps: Float = .5f) {
                 val now = withFrameNanos { it }
                 if (last >= 0) {
                     var dt = min((now - last) / 1e9f, MAX_DT)
-                    // semi-implicit Euler in small slices: stable for the glide constants at any dt
+                    // semi-implicit Euler in small slices: stable for these constants at any dt
                     while (dt > 0f) {
                         val h = min(dt, SLICE)
-                        velocity += (-Motion.GLIDE_K * (value - to) - Motion.GLIDE_C * velocity) * h
+                        leadV += (-Motion.LEAD_K * (lead - to) - Motion.LEAD_C * leadV) * h
+                        lead += leadV * h
+                        velocity += (-Motion.GLIDE_K * (value - lead) - Motion.GLIDE_C * velocity) * h
                         value += velocity * h
                         dt -= h
                     }
                     onStep?.invoke(value)
                 }
                 last = now
-                if (abs(value - to) < eps && abs(velocity) < eps * 4f) {
-                    value = to
-                    velocity = 0f
+                if (abs(value - to) < eps && abs(velocity) < eps * 4f && abs(lead - to) < eps) {
+                    snapTo(to)
                     onStep?.invoke(value)
                     return
                 }
@@ -101,7 +117,6 @@ class Paced(initial: Float, private val eps: Float = .5f) {
 
     private companion object {
         const val MAX_DT = 1f / 60f
-        const val SLICE = 1f / 240f
+        const val SLICE = 1f / 480f
     }
 }
-
