@@ -24,6 +24,10 @@ android {
         versionCode = vCode
         versionName = vName
         buildConfigField("String", "UPDATE_REPO", "\"ohavs/Noted\"")
+        // Maps / Places key: a GitHub secret in CI, local.properties or -P locally; empty = radar + platform geocoder
+        val mapsKey = System.getenv("MAPS_API_KEY")?.trim().orEmpty().ifEmpty { (project.findProperty("MAPS_API_KEY") as String?).orEmpty() }
+        manifestPlaceholders["MAPS_API_KEY"] = mapsKey
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
     }
 
     signingConfigs {
@@ -79,6 +83,7 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.mlkit.docscanner)
     implementation(libs.play.location)
+    implementation(libs.maps.compose)
     implementation(libs.coroutines.play)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)

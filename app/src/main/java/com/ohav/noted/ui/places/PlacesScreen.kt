@@ -94,6 +94,13 @@ import com.ohav.noted.design.VSpace
 import com.ohav.noted.design.press
 import com.ohav.noted.places.Found
 import com.ohav.noted.places.Geo
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.AbsoluteAlignment
+import com.ohav.noted.design.softShadow
+import com.ohav.noted.design.Shadows
+import com.ohav.noted.places.PlacesApi
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.maps.android.compose.rememberCameraPositionState
 import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
 import com.ohav.noted.ui.reminders.PlaceWords
@@ -139,20 +146,62 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
         // 0 at peek → 1 fully open; the radar recedes as the sheet rises
         fun openness() = ((peekTop - top.value) / (peekTop - fullTop)).coerceIn(0f, 1f)
 
-        // ---- radar + title
-        Column(
-            Modifier.fillMaxSize().graphicsLayer {
-                val o = openness()
-                alpha = 1f - o * .85f
-                translationY = -o * 40.dp.toPx()
-            },
-        ) {
-            Box(Modifier.statusBarsPadding().padding(top = 14.dp).height(64.dp))
-            Text("מקומות", style = t.cat, color = c.ink, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp))
-            Radar(
-                list, open, me,
-                Modifier.fillMaxWidth().height(with(density) { (peekTop - statusTop).toDp() } - 150.dp),
+        if (PlacesApi.enabled) {
+            // ---- map under everything; the sheet and the title float on it
+            val cam = rememberCameraPositionState { position = CameraPosition.fromLatLngZoom(MapLook.ISRAEL, 7f) }
+            PlacesMap(
+                list, open, me, cam,
+                padding = PaddingValues(
+                    top = with(density) { statusTop.toDp() } + 96.dp,
+                    bottom = with(density) { (h - peekTop).toDp() },
+                ),
+                modifier = Modifier.fillMaxSize(),
             ) { p -> actions.card(p, notes, reminders, me, onOpenNote) }
+            // the map sinks back as the catalog rises
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = openness() * .7f }.background(c.bg))
+            Box(
+                Modifier.fillMaxWidth().height(with(density) { statusTop.toDp() } + 120.dp)
+                    .background(Brush.verticalGradient(0f to c.bg, .55f to c.bg.copy(alpha = .82f), 1f to c.bg.copy(alpha = 0f))),
+            )
+            Column(Modifier.graphicsLayer { translationY = -openness() * 40.dp.toPx() }) {
+                Box(Modifier.statusBarsPadding().padding(top = 14.dp).height(64.dp))
+                Text("מקומות", style = t.cat, color = c.ink, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp))
+            }
+            // back to everything (and you) in one tap, riding just above the sheet
+            Box(
+                Modifier
+                    .align(AbsoluteAlignment.TopRight)
+                    .offset { IntOffset(0, (top.value - 72.dp.toPx()).roundToInt()) }
+                    .padding(end = 16.dp)
+                    .graphicsLayer { alpha = 1f - openness() * 3f }
+                    .press(scale = .88f) {
+                        scope.launch {
+                            if (Geo.hasFine(ctx) || Geo.hasCoarse(ctx)) Geo.current(ctx)?.let { me = it }
+                            frameAll(cam, list, me, with(density) { 56.dp.roundToPx() }, animate = true)
+                        }
+                    }
+                    .size(52.dp)
+                    .softShadow(Shadows.float(c.isDark), 26.dp, c.surface)
+                    .clip(CircleShape)
+                    .background(c.surface),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Ph.Crosshair, "הכל במבט אחד", Modifier.size(24.dp), tint = c.ink) }
+        } else {
+            // ---- radar + title (no Maps key in this build)
+            Column(
+                Modifier.fillMaxSize().graphicsLayer {
+                    val o = openness()
+                    alpha = 1f - o * .85f
+                    translationY = -o * 40.dp.toPx()
+                },
+            ) {
+                Box(Modifier.statusBarsPadding().padding(top = 14.dp).height(64.dp))
+                Text("מקומות", style = t.cat, color = c.ink, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp))
+                Radar(
+                    list, open, me,
+                    Modifier.fillMaxWidth().height(with(density) { (peekTop - statusTop).toDp() } - 150.dp),
+                ) { p -> actions.card(p, notes, reminders, me, onOpenNote) }
+            }
         }
 
         // ---- catalog sheet
@@ -479,13 +528,13 @@ private class PlaceActions(
                         }
                     } else {
                         val kind = remember(ff) {
-                            guessKind(ff.name, all).let { k ->
+                            guessKind(ff.name, all, ff.types).let { k ->
                                 if (k == PlaceKind.Other && autoLocate && all.none { it.kind == PlaceKind.Home.key }) PlaceKind.Home else k
                             }
                         }
                         PlaceForm(
                             name = if (kind == PlaceKind.Home) kind.label else ff.name,
-                            kind = kind, radius = null, address = ff.address, confirm = "שמירת המקום",
+                            kind = kind, radius = null, address = ff.address, confirm = "שמירת המקום", at = ff.lat to ff.lng,
                         ) { name, k, r ->
                             overlays.sheet.close()
                             scope.launch {
@@ -506,6 +555,10 @@ private class PlaceActions(
         overlays.sheet.show(p.name) {
             val c = Noted.colors
             val t = Noted.type
+            if (PlacesApi.enabled) {
+                MiniMap(p.lat, p.lng, p.radius, PlaceKind.of(p.kind), Modifier.fillMaxWidth().height(140.dp))
+                VSpace(16.dp)
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 PlaceBadge(PlaceKind.of(p.kind), 54.dp)
                 Column(Modifier.weight(1f)) {
@@ -542,7 +595,7 @@ private class PlaceActions(
 
     private fun edit(p: PlaceEntity) {
         overlays.sheet.show("עריכת מקום") {
-            PlaceForm(name = p.name, kind = PlaceKind.of(p.kind), radius = p.radius, address = p.address, confirm = "שמירה") { name, k, r ->
+            PlaceForm(name = p.name, kind = PlaceKind.of(p.kind), radius = p.radius, address = p.address, confirm = "שמירה", at = p.lat to p.lng) { name, k, r ->
                 overlays.sheet.close()
                 scope.launch { app.places.update(p.copy(name = name, kind = k.key, radius = r)) }
             }

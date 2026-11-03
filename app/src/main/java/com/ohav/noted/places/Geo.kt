@@ -23,7 +23,16 @@ import java.util.Locale
 import kotlin.coroutines.resume
 
 /** A point found by search, by the current location or by a pasted link. */
-data class Found(val name: String, val address: String, val lat: Double, val lng: Double)
+data class Found(
+    val name: String,
+    val address: String,
+    val lat: Double,
+    val lng: Double,
+    /** Google place types, when it came from Places (a hint for the kind). */
+    val types: List<String> = emptyList(),
+    /** A Places suggestion not looked up yet: [lat]/[lng] are meaningless until it is. */
+    val pending: PlacesApi.Suggestion? = null,
+)
 
 /**
  * Location, permissions and addresses — no API key: the fused provider for "where am I", the

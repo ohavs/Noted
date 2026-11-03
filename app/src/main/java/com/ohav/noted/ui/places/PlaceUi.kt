@@ -66,6 +66,7 @@ import com.ohav.noted.design.VSpace
 import com.ohav.noted.design.press
 import com.ohav.noted.places.Found
 import com.ohav.noted.places.Geo
+import com.ohav.noted.places.PlacesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -97,11 +98,22 @@ fun PlaceBadge(kind: PlaceKind, size: Dp = 44.dp, on: Boolean = false) {
     }
 }
 
-/** A first guess at the kind from the name — the user can always pick another. */
-fun guessKind(name: String, places: List<PlaceEntity>): PlaceKind {
+/** A first guess at the kind from Google's place types, else the name — the user can always pick another. */
+fun guessKind(name: String, places: List<PlaceEntity>, types: List<String> = emptyList()): PlaceKind {
     val n = name.lowercase()
     fun has(vararg w: String) = w.any { it in n }
+    fun type(vararg w: String) = w.any { it in types }
     return when {
+        type("pharmacy", "drugstore") -> PlaceKind.Pharmacy
+        type("supermarket", "grocery_store", "hypermarket", "convenience_store") -> PlaceKind.Super
+        type("cafe", "coffee_shop") -> PlaceKind.Cafe
+        type("restaurant", "meal_takeaway", "fast_food_restaurant", "pizza_restaurant", "bakery", "bar") -> PlaceKind.Food
+        type("gym", "fitness_center", "sports_complex", "swimming_pool", "stadium", "sports_club") -> PlaceKind.Sport
+        type("university", "school", "primary_school", "secondary_school", "preschool") -> PlaceKind.Study
+        type("synagogue", "place_of_worship") -> PlaceKind.Pray
+        type("park", "national_park", "playground", "dog_park") -> PlaceKind.Park
+        type("shopping_mall", "store", "clothing_store", "department_store", "electronics_store", "home_goods_store", "book_store") -> PlaceKind.Shop
+        type("locality", "administrative_area_level_1", "administrative_area_level_2", "sublocality") -> PlaceKind.City
         has("סופר-פארם", "סופר פארם", "superpharm", "בית מרקחת", "פארם", "pharm") -> PlaceKind.Pharmacy
         has("סופר", "שופרסל", "רמי לוי", "יוחננוף", "ויקטורי", "טיב טעם", "אושר עד", "מגה", "חצי חינם", "יינות ביתן", "carrefour", "קרפור", "market", "מרקט", "מכולת") -> PlaceKind.Super
         has("קפה", "cafe", "coffee", "ארומה", "קופיקס", "גרג") -> PlaceKind.Cafe
@@ -138,6 +150,24 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
     var searching by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     var locating by remember { mutableStateOf(false) }
+    // one Places session per typing run, closed by the lookup of the chosen suggestion
+    var session by remember { mutableStateOf(PlacesApi.session()) }
+    var resolving by remember { mutableStateOf<String?>(null) }
+
+    fun pick(f: Found) {
+        val s = f.pending
+        if (s == null) { fm.clearFocus(); haptics.light(); onFound(f); return }
+        if (resolving != null) return
+        fm.clearFocus()
+        haptics.light()
+        resolving = s.id
+        scope.launch {
+            val hit = PlacesApi.details(ctx, s, session)
+            session = PlacesApi.session()
+            resolving = null
+            if (hit != null) onFound(hit) else { haptics.reject(); note = "לא הצלחנו לפתוח את המקום. בדקו את החיבור ונסו שוב." }
+        }
+    }
 
     fun locate() {
         if (!Geo.locationOn(ctx)) { haptics.reject(); note = "המיקום כבוי בטלפון — מדליקים אותו מהגדרות מהירות"; return }
@@ -169,7 +199,7 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
     }
     LaunchedEffect(Unit) { if (autoLocate) tapLocate() }
 
-    // search as you type: a link / coordinates resolve directly, words go to the geocoder
+    // search as you type: a link / coordinates resolve directly, words go to Places (the geocoder without a key)
     LaunchedEffect(q) {
         val text = q.trim()
         note = null
@@ -194,7 +224,10 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
             searching = false
             return@LaunchedEffect
         }
-        results = Geo.search(ctx, text, Geo.last(ctx)).take(6)
+        val near = Geo.last(ctx)
+        val hints = if (PlacesApi.enabled) PlacesApi.autocomplete(ctx, text, near, session) else null
+        results = hints?.take(6)?.map { Found(it.name, it.address, Double.NaN, Double.NaN, pending = it) }
+            ?: Geo.search(ctx, text, near).take(6)
         searching = false
         if (results.isEmpty()) note = "לא נמצא. כתובת מלאה עובדת הכי טוב — רחוב, מספר ועיר."
     }
@@ -246,7 +279,7 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
                 busy -> Text("מחפש…", style = t.caption, color = c.ink3, modifier = Modifier.padding(start = 4.dp, top = 10.dp))
                 msg != null -> Text(msg, style = t.caption, color = c.ink2, modifier = Modifier.padding(start = 4.dp, top = 10.dp))
                 else -> list.forEachIndexed { i, f ->
-                    FoundRow(f, last = i == list.lastIndex) { fm.clearFocus(); haptics.light(); onFound(f) }
+                    FoundRow(f, last = i == list.lastIndex, busy = f.pending != null && f.pending.id == resolving) { pick(f) }
                 }
             }
         }
@@ -254,7 +287,7 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
 }
 
 @Composable
-private fun FoundRow(f: Found, last: Boolean, onClick: () -> Unit) {
+private fun FoundRow(f: Found, last: Boolean, busy: Boolean = false, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     Column(Modifier.fillMaxWidth().press(scale = .97f, haptic = false, onClick = onClick)) {
@@ -264,6 +297,9 @@ private fun FoundRow(f: Found, last: Boolean, onClick: () -> Unit) {
                 Text(f.name, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (f.address.isNotEmpty()) Text(f.address, style = t.caption, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            val m = f.pending?.meters
+            if (busy) Text("פותח…", style = t.caption, color = c.ink3)
+            else if (m != null) Text(Geo.fmtDistance(m.toFloat()), style = t.caption, color = c.ink3)
         }
         if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))
     }
@@ -282,6 +318,7 @@ fun ColumnScope.PlaceForm(
     radius: Int?,
     address: String,
     confirm: String,
+    at: Pair<Double, Double>? = null,
     onSave: (name: String, kind: PlaceKind, radius: Int) -> Unit,
 ) {
     val c = Noted.colors
@@ -300,6 +337,11 @@ fun ColumnScope.PlaceForm(
         onSave(text.trim(), k, rad)
     }
 
+    // where it is and how far the radius reaches, so a wrong pin is caught before saving
+    if (at != null && PlacesApi.enabled) {
+        MiniMap(at.first, at.second, rad, k, Modifier.fillMaxWidth().height(150.dp))
+        VSpace(14.dp)
+    }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         PlaceBadge(k, 58.dp)
         Box(

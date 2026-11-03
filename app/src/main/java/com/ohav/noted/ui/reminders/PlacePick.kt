@@ -149,14 +149,14 @@ internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSe
                     BackRow("חיפוש אחר") { m.step = PlacePickModel.Step.Find }
                     if (f != null) {
                         val kind = remember(f) {
-                            guessKind(f.name, list).let { k ->
+                            guessKind(f.name, list, f.types).let { k ->
                                 // the first place saved from where you stand is most likely home
                                 if (k == PlaceKind.Other && list.none { it.kind == PlaceKind.Home.key } && f.address.isNotEmpty()) PlaceKind.Home else k
                             }
                         }
                         PlaceForm(
                             name = if (kind == PlaceKind.Other) f.name else kind.label.takeIf { kind == PlaceKind.Home } ?: f.name,
-                            kind = kind, radius = null, address = f.address, confirm = "שמירת המקום",
+                            kind = kind, radius = null, address = f.address, confirm = "שמירת המקום", at = f.lat to f.lng,
                         ) { name, k, r ->
                             scope.launch {
                                 val p = app.places.create(name, k.key, f.lat, f.lng, r, f.address)
