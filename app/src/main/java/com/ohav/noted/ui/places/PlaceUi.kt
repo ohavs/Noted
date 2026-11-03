@@ -225,7 +225,7 @@ fun ColumnScope.PlaceFinder(autoLocate: Boolean = false, onFound: (Found) -> Uni
             return@LaunchedEffect
         }
         val near = Geo.last(ctx)
-        val hints = if (PlacesApi.enabled) PlacesApi.autocomplete(ctx, text, near, session) else null
+        val hints = PlacesApi.autocomplete(ctx, text, near, session)
         results = hints?.take(6)?.map { Found(it.name, it.address, Double.NaN, Double.NaN, pending = it) }
             ?: Geo.search(ctx, text, near).take(6)
         searching = false

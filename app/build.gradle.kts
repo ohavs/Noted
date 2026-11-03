@@ -24,7 +24,7 @@ android {
         versionCode = vCode
         versionName = vName
         buildConfigField("String", "UPDATE_REPO", "\"ohavs/Noted\"")
-        // Maps / Places key: a GitHub secret in CI, local.properties or -P locally; empty = radar + platform geocoder
+        // Maps SDK key (Places search goes through the server): a GitHub secret in CI, local.properties or -P locally; empty = radar + platform geocoder
         val mapsKey = System.getenv("MAPS_API_KEY")?.trim().orEmpty().ifEmpty { (project.findProperty("MAPS_API_KEY") as String?).orEmpty() }
         manifestPlaceholders["MAPS_API_KEY"] = mapsKey
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
@@ -90,6 +90,7 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.storage)
     implementation(libs.firebase.messaging)
+    implementation(libs.firebase.functions)
     implementation(libs.credentials)
     implementation(libs.credentials.play)
     implementation(libs.googleid)
