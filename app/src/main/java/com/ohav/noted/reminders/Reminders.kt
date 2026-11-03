@@ -256,8 +256,7 @@ object Notifier {
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setColor(0xFFE0542C.toInt())
             .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .apply { if (body.isNotBlank()) setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)) }
             .setWhen(r.dueAt ?: System.currentTimeMillis())
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
@@ -296,7 +295,8 @@ object Notifier {
             if (open.isEmpty()) return "הכל סומן ✓"
             return open.take(4).joinToString(" · ") + if (open.size > 4) " ועוד ${open.size - 4}" else ""
         }
-        return blocks.firstOrNull { it.text.isNotBlank() }?.text?.trim()?.take(160) ?: "תזכורת"
+        // nothing written but the title: no second line at all, the title carries the notification
+        return blocks.firstOrNull { it.text.replace("\u200B", "").isNotBlank() }?.text?.replace("\u200B", "")?.trim()?.take(160).orEmpty()
     }
 }
 

@@ -329,7 +329,8 @@ object PlaceNotifier {
         Notifier.ensureChannel(ctx)
         val m = com.ohav.noted.data.Privacy.mask((ctx.applicationContext as? com.ohav.noted.NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
         val title = m.head
-        val where = (if (r.leave) "יציאה · " else "הגעה · ") + p.name
+        // the reminder is the notification; the place is only the small header line
+        val where = if (r.leave) "ביציאה מ${p.name}" else p.name
         val body = when {
             m.locked -> "יש לך תזכורת — פותחים עם הקוד"
             line != null -> m.note
@@ -353,9 +354,8 @@ object PlaceNotifier {
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setColor(0xFFE0542C.toInt())
             .setContentTitle(title)
-            .setContentText("$where — $body")
             .setSubText(where)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .apply { if (body.isNotBlank()) setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)) }
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
