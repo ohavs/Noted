@@ -1,5 +1,12 @@
 package com.ohav.noted.wear.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.ohav.noted.wear.PlaceRem
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -200,7 +207,7 @@ fun NoteCard(n: Note, onClick: () -> Unit) {
     }
 }
 
-private val media = setOf("Images", "Voice", "Link", "Draw")
+private val media = setOf("Images", "Voice", "Link", "Draw", "Place")
 
 /** No state yet: three paper strips breathing, and what to do. */
 @Composable
@@ -341,11 +348,38 @@ private fun LineView(l: Line, num: Int, tint: Color, enabled: Boolean, onToggle:
             BasicText(l.text, style = body(14.sp))
         }
         "Divider" -> Box(Modifier.padding(vertical = 4.dp).width(48.dp).height(1.dp).background(C.ink3))
-        "Images" -> MediaLine(Ph.Image, tint, if (l.text == "1") "תמונה" else "${l.text} תמונות", null)
+        "Images" -> if (l.files.isEmpty()) MediaLine(Ph.Image, tint, if (l.text == "1") "תמונה" else "${l.text} תמונות", null) else PicsLine(l)
+        "Place" -> MediaLine(Ph.MapPin, tint, l.text.ifBlank { "מקום" }, null)
         "Voice" -> MediaLine(Ph.Waveform, tint, "הקלטה · ${mmss(l.ms)}", l.text.ifBlank { null })
         "Link" -> MediaLine(Ph.Link, tint, l.text.ifBlank { "קישור" }, null)
         "Draw" -> MediaLine(Ph.ScribbleLoop, tint, "ציור", null)
         else -> BasicText(l.text, m, style = body(14.sp))
+    }
+}
+
+/** Up to three pictures as squares; each thumbnail is asked from the phone the first time it's shown. */
+@Composable
+private fun PicsLine(l: Line) {
+    val ctx = LocalContext.current
+    val have by ctx.store.pics.collectAsState()
+    val more = (l.text.toIntOrNull() ?: l.files.size) - l.files.size
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        l.files.forEachIndexed { i, f ->
+            LaunchedEffect(f) { ctx.store.pic(f) }
+            val bmp = remember(f, f in have) {
+                if (f in have) runCatching { BitmapFactory.decodeFile(ctx.store.picFile(f).path)?.asImageBitmap() }.getOrNull() else null
+            }
+            val shown by animateFloatAsState(if (bmp != null) 1f else 0f, Motion.glide(), label = "pic")
+            Box(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(C.surface), contentAlignment = Alignment.Center) {
+                if (bmp == null) Icon(Ph.Image, C.ink3, 18.dp)
+                else Image(bmp, null, Modifier.matchParentSize().graphicsLayer { alpha = shown }, contentScale = ContentScale.Crop)
+                if (more > 0 && i == l.files.lastIndex) {
+                    Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = .45f)), contentAlignment = Alignment.Center) {
+                        BasicText("+$more", style = display(18.sp, Color.White))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -398,9 +432,10 @@ fun RemindersScreen(a: Actions) {
     val onAccent = Color(Palette.onAccent(s?.accent))
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     val rems = s?.rems.orEmpty()
+    val places = s?.places.orEmpty()
     ListScreen {
         item { BasicText("תזכורות", style = display(28.sp)) }
-        if (rems.isEmpty()) item {
+        if (rems.isEmpty() && places.isEmpty()) item {
             Column(Modifier.padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.size(48.dp).clip(CircleShape).background(C.surface2), contentAlignment = Alignment.Center) { Icon(Ph.Bell, C.ink2, 22.dp) }
                 Spacer(Modifier.height(8.dp))
@@ -420,6 +455,42 @@ fun RemindersScreen(a: Actions) {
                     }
                 }
             }
+        }
+        if (places.isNotEmpty()) item {
+            BasicText("במקומות", Modifier.padding(top = 10.dp, bottom = 2.dp), style = body(12.sp, C.ink3, 700, TextAlign.Center))
+        }
+        items(places, key = { "p:" + it.id }) { r ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PlaceRow(r, accent) { open = if (open == "p:" + r.id) null else "p:" + r.id }
+                AnimatedVisibility(open == "p:" + r.id, enter = fadeIn(Motion.glide()) + expandVertically(Motion.glide()), exit = fadeOut(Motion.glide()) + shrinkVertically(Motion.glide())) {
+                    Row(Modifier.padding(top = 8.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                        RoundAction(Ph.Check, accent, onAccent, 44.dp, "בוצע") {
+                            ctx.store.placeDone(r); open = null; a.flash.show("סומן כבוצע")
+                        }
+                        RoundAction(Ph.Notepad, C.surface2, C.ink, 44.dp, "לפתק") { open = null; a.openNote(r.noteId) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** A note waiting for a place: what, and where — arriving or leaving. */
+@Composable
+fun PlaceRow(r: PlaceRem, accent: Color, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().press(onClick = onClick).clip(RoundedCornerShape(20.dp)).background(C.surface)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Ph.MapPinFill, accent, 16.dp)
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            BasicText(r.title, style = body(13.sp, C.ink, 500), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            BasicText(
+                (if (r.leave) "ביציאה מ" else "בהגעה ל") + r.place + if (r.always) " · תמיד" else "",
+                style = body(11.sp, C.ink3), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

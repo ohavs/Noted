@@ -39,7 +39,11 @@ val Context.store: Store get() = (applicationContext as WatchApp).store
 
 // ---- what the phone sends (see app/.../wear/WearLink.kt) ----
 
-data class Line(val id: String, val kind: String, val text: String, val done: Boolean, val indent: Int, val ms: Long) {
+data class Line(
+    val id: String, val kind: String, val text: String, val done: Boolean, val indent: Int, val ms: Long,
+    /** Pictures: up to 3 file names the phone will send as thumbnails ([Store.pic]). */
+    val files: List<String> = emptyList(),
+) {
     val isCheck get() = kind == "Check"
 }
 
@@ -61,7 +65,18 @@ data class Rem(
     val title get() = text.ifBlank { noteTitle }.ifBlank { "פתק בלי כותרת" }
 }
 
-data class WState(val accent: String, val cats: List<Cat>, val notes: List<Note>, val rems: List<Rem>, val at: Long) {
+/** A note waiting for a place: arriving at / leaving [place]. */
+data class PlaceRem(
+    val id: String, val noteId: String, val blockId: String, val place: String, val kind: String,
+    val leave: Boolean, val always: Boolean, val text: String, val noteTitle: String,
+) {
+    val title get() = text.ifBlank { noteTitle }.ifBlank { "פתק בלי כותרת" }
+}
+
+data class WState(
+    val accent: String, val cats: List<Cat>, val notes: List<Note>, val rems: List<Rem>, val at: Long,
+    val places: List<PlaceRem> = emptyList(),
+) {
     fun note(id: String) = notes.firstOrNull { it.id == id }
     fun cat(id: String) = cats.firstOrNull { it.id == id }
 }
@@ -143,6 +158,42 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
     fun reminderDone(r: Rem) {
         _state.value = _state.value?.let { s -> s.copy(rems = s.rems.filterNot { it.id == r.id }) }
         scope.launch { send(DONE, JSONObject().put("r", r.id).put("due", r.due)) }
+    }
+
+    /** A place reminder done from the watch: its line gets checked on the phone and it goes away. */
+    fun placeDone(r: PlaceRem) {
+        _state.value = _state.value?.let { s -> s.copy(places = s.places.filterNot { it.id == r.id }) }
+        if (r.blockId.isNotEmpty()) toggle(r.noteId, r.blockId, true)
+        scope.launch { send(PLACE_DONE, JSONObject().put("r", r.id)) }
+    }
+
+    // ---- pictures ----
+
+    private val picDir = File(ctx.filesDir, "pics").apply { mkdirs() }
+    private val asked = HashSet<String>()
+    /** Thumbnails that are here; a view waiting on one recomposes when it lands. */
+    private val _pics = MutableStateFlow(picDir.list()?.toSet().orEmpty())
+    val pics: StateFlow<Set<String>> = _pics
+
+    fun picFile(f: String) = File(picDir, f)
+
+    /** Asks the phone for [f] once per run, unless it's already here. */
+    fun pic(f: String) {
+        if (f in _pics.value || !asked.add(f)) return
+        scope.launch { if (!send(PIC, JSONObject().put("f", f), queue = false)) asked.remove(f) }
+    }
+
+    /** The phone's answer: [name length][name][webp]. Keeps the 60 newest. */
+    fun picArrived(data: ByteArray) {
+        runCatching {
+            val b = java.nio.ByteBuffer.wrap(data)
+            val name = ByteArray(b.int.coerceIn(1, 200)).also { b.get(it) }.decodeToString()
+            if (!Regex("[A-Za-z0-9_.-]{1,80}").matches(name)) return
+            val bytes = ByteArray(b.remaining()).also { b.get(it) }
+            picFile(name).writeBytes(bytes)
+            picDir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(60)?.forEach { it.delete() }
+            _pics.value = picDir.list()?.toSet().orEmpty()
+        }
     }
 
     fun reminderLater(r: Rem, ms: Long) {
@@ -250,6 +301,8 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
         const val DONE = "/noted/done"
         const val LATER = "/noted/later"
         const val VOICE = "/noted/voice"
+        const val PIC = "/noted/pic"
+        const val PLACE_DONE = "/noted/pdone"
         const val CAP_PHONE = "noted_phone"
 
         fun parse(json: String): WState? = runCatching {
@@ -264,7 +317,10 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
                         pinned = n.optBoolean("pin"), favorite = n.optBoolean("fav"), at = n.optLong("at"), readOnly = n.optBoolean("ro"),
                         locked = n.optBoolean("lock"), blurTitle = n.optBoolean("bt"), blurBody = n.optBoolean("bb"),
                         lines = n.optJSONArray("b").list { b ->
-                            Line(b.optString("id"), b.optString("k"), b.optString("x"), b.optBoolean("d"), b.optInt("i"), b.optLong("ms"))
+                            Line(
+                                b.optString("id"), b.optString("k"), b.optString("x"), b.optBoolean("d"), b.optInt("i"), b.optLong("ms"),
+                                b.optJSONArray("f")?.let { a -> List(a.length()) { a.optString(it) } }.orEmpty(),
+                            )
                         },
                     )
                 },
@@ -275,6 +331,12 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
                     )
                 },
                 at = System.currentTimeMillis(),
+                places = o.optJSONArray("prem").list { r ->
+                    PlaceRem(
+                        r.optString("id"), r.optString("n"), r.optString("b"), r.optString("p"), r.optString("k"),
+                        r.optBoolean("leave"), r.optBoolean("always"), r.optString("t"), r.optString("nt"),
+                    )
+                },
             )
         }.getOrNull()
     }

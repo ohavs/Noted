@@ -20,11 +20,16 @@ import com.google.common.util.concurrent.ListenableFuture
 /**
  * The tile: up to three pinned notes (the newest notes when nothing is pinned) as paper strips
  * with their checklist progress, and the two quick ways in — dictate a note / record one.
- * Everything opens the app; the tile itself only reads the stored state, so it draws at once.
+ * Under the first note with open checklist rows, the next ones can be ticked right here (the
+ * tile reloads, the row goes, the next comes up). Everything else opens the app; the tile only
+ * reads the stored state, so it draws at once.
  */
 class NotedTile : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> =
         CallbackToFutureAdapter.getFuture { c ->
+            // a row ticked on the tile: "t:<note>|<line>" (checked here at once, sent to the phone)
+            requestParams.currentState.lastClickableId.takeIf { it.startsWith("t:") }?.removePrefix("t:")?.split('|', limit = 2)
+                ?.takeIf { it.size == 2 }?.let { (n, l) -> store.toggle(n, l, true) }
             c.set(tile(requestParams.deviceConfiguration.screenWidthDp.toFloat()))
             "tile"
         }
@@ -49,7 +54,11 @@ class NotedTile : TileService() {
     private fun tile(width: Float): TileBuilders.Tile {
         val s = store.state.value
         val accent = Palette.accent(s?.accent)
-        val notes = s?.notes.orEmpty().let { all -> all.filter { it.pinned }.ifEmpty { all.sortedByDescending { it.at } } }.take(if (width >= 210) 3 else 2)
+        val all = s?.notes.orEmpty().let { all -> all.filter { it.pinned }.ifEmpty { all.sortedByDescending { it.at } } }
+        // the first of them with something left to tick; the strips make room for its rows
+        val focus = all.take(3).firstOrNull { n -> !n.locked && !n.blurBody && !n.readOnly && n.checks.any { !it.done && it.text.isNotBlank() } }
+        val rows = focus?.checks?.filter { !it.done && it.text.isNotBlank() }?.take(if (width >= 210) 2 else 1).orEmpty()
+        val notes = if (focus == null) all.take(if (width >= 210) 3 else 2) else (listOf(focus) + all.filter { it.id != focus.id }).take(if (width >= 210) 2 else 1)
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
@@ -61,6 +70,10 @@ class NotedTile : TileService() {
             notes.forEachIndexed { i, n ->
                 if (i > 0) col.addContent(space(5f))
                 col.addContent(strip(n, width))
+                if (n.id == focus?.id) rows.forEach { l ->
+                    col.addContent(space(3f))
+                    col.addContent(checkRow(n, l, width))
+                }
             }
         }
         col.addContent(space(10f))
@@ -108,6 +121,44 @@ class NotedTile : TileService() {
                     .build(),
             )
             .addContent(text(label, 14f, Palette.NOTE_INK, bold = true))
+            .build()
+    }
+
+    /** An open checklist row: an empty box in the note's colour and the text; tap = ticked. */
+    private fun checkRow(n: Note, l: Line, width: Float): LayoutElement {
+        val box = LayoutElementBuilders.Box.Builder()
+            .setWidth(dp(16f)).setHeight(dp(16f))
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBorder(ModifiersBuilders.Border.Builder().setWidth(dp(2f)).setColor(argb(Palette.note(n.color))).build())
+                    .setBackground(ModifiersBuilders.Background.Builder().setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(5f)).build()).build())
+                    .build(),
+            )
+            .build()
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(dp(width * .72f)).setHeight(dp(30f))
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder().setColor(argb(Palette.SURFACE))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(12f)).build()).build(),
+                    )
+                    .setPadding(ModifiersBuilders.Padding.Builder().setStart(dp(10f)).setEnd(dp(10f)).setRtlAware(true).build())
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder().setId("t:${n.id}|${l.id}")
+                            .setOnClick(ActionBuilders.LoadAction.Builder().build()).build(),
+                    )
+                    .build(),
+            )
+            .addContent(
+                LayoutElementBuilders.Row.Builder()
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                    .addContent(box)
+                    .addContent(LayoutElementBuilders.Spacer.Builder().setWidth(dp(8f)).build())
+                    .addContent(text(l.text.trim(), 13f, Palette.INK))
+                    .build(),
+            )
             .build()
     }
 

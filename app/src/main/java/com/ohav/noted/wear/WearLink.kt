@@ -1,5 +1,12 @@
 package com.ohav.noted.wear
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import java.nio.ByteBuffer
+import com.ohav.noted.data.PlaceReminderEntity
+import com.ohav.noted.data.PlaceEntity
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.MessageEvent
@@ -13,6 +20,7 @@ import com.ohav.noted.data.Blocks
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.Media
 import com.ohav.noted.data.MediaExtra
+import com.ohav.noted.ui.media.FileTranscriber
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.Privacy
 import com.ohav.noted.data.ReminderEntity
@@ -47,15 +55,20 @@ class WearLink(private val app: NotedApp) {
     @OptIn(FlowPreview::class)
     fun start() {
         app.scope.launch {
-            combine(app.notes.notes, app.notes.categories, app.reminders.all, app.privacy.flags, app.settings.settings) { n, c, r, p, s ->
-                build(n, c, r, p, s)
+            val base = combine(app.notes.notes, app.notes.categories) { n, c -> n to c }
+            val where = combine(app.places.places, app.places.reminders) { p, r -> p to r }
+            combine(base, app.reminders.all, app.privacy.flags, app.settings.settings, where) { (n, c), r, p, s, w ->
+                build(n, c, r, p, s, w)
             }.debounce(800).collect { publish(it, force = false) }
         }
     }
 
     /** The watch asked (it just opened): the current state again, even if nothing changed. */
     suspend fun publishNow() {
-        val s = build(app.notes.notes.first(), app.notes.categories.first(), app.reminders.all.first(), app.privacy.flags.value, app.settings.settings.first())
+        val s = build(
+            app.notes.notes.first(), app.notes.categories.first(), app.reminders.all.first(), app.privacy.flags.value, app.settings.settings.first(),
+            app.places.places.first() to app.places.reminders.first(),
+        )
         publish(s, force = true)
     }
 
@@ -74,7 +87,10 @@ class WearLink(private val app: NotedApp) {
         // no Wear OS on this phone (the API is missing): nothing to do, nothing to report
     }
 
-    private fun build(notes: List<NoteEntity>, cats: List<CategoryEntity>, rems: List<ReminderEntity>, flags: Map<String, Int>, s: AppSettings): String {
+    private fun build(
+        notes: List<NoteEntity>, cats: List<CategoryEntity>, rems: List<ReminderEntity>, flags: Map<String, Int>, s: AppSettings,
+        where: Pair<List<PlaceEntity>, List<PlaceReminderEntity>>,
+    ): String {
         val byId = notes.associateBy { it.id }
         val o = JSONObject()
             .put("v", 1)
@@ -92,7 +108,8 @@ class WearLink(private val app: NotedApp) {
             else {
                 if (f and Privacy.BLUR_TITLE != 0) j.put("bt", true)
                 if (f and Privacy.BLUR_BODY != 0) j.put("bb", true)
-                j.put("b", JSONArray().apply { Blocks.parse(n.blocks).take(MAX_BLOCKS).mapNotNull(::line).forEach { put(it) } })
+                val pics = f and Privacy.BLUR_BODY == 0
+                j.put("b", JSONArray().apply { Blocks.parse(n.blocks).take(MAX_BLOCKS).mapNotNull { line(it, pics) }.forEach { put(it) } })
             }
             arr.put(j)
         }
@@ -112,14 +129,31 @@ class WearLink(private val app: NotedApp) {
                     )
                 }
         })
+        // place reminders still waiting (a one-shot that rang is done with)
+        val placeById = where.first.associateBy { it.id }
+        o.put("prem", JSONArray().apply {
+            where.second.filter { !it.fired && byId[it.noteId]?.trashedAt == null && byId[it.noteId] != null }.take(MAX_REMINDERS).forEach { r ->
+                val n = byId[r.noteId]!!
+                val p = placeById[r.placeId] ?: return@forEach
+                val m = Privacy.mask(flags[n.id] ?: 0, n.title, if (r.blockId.isEmpty()) null else Blocks.parse(n.blocks).firstOrNull { it.id == r.blockId }?.text)
+                put(
+                    JSONObject().put("id", r.id).put("n", r.noteId).put("b", r.blockId)
+                        .put("p", p.name).put("k", p.kind).put("leave", r.leave).put("always", r.always)
+                        .put("t", m.head).put("nt", m.note),
+                )
+            }
+        })
         return o.toString()
     }
 
-    /** One block as the watch draws it; media becomes a short line. */
-    private fun line(b: Block): JSONObject? {
+    /** One block as the watch draws it; media becomes a short line. Pictures name up to 3 files the watch can ask for. */
+    private fun line(b: Block, pics: Boolean): JSONObject? {
         val j = JSONObject().put("id", b.id).put("k", b.type.name)
         when (b.type) {
-            BlockType.Images -> j.put("x", MediaExtra.pics(b.extra).size.toString())
+            BlockType.Images -> MediaExtra.pics(b.extra).let { ps ->
+                j.put("x", ps.size.toString())
+                if (pics) j.put("f", JSONArray().apply { ps.take(3).forEach { put(it.f) } })
+            }
             BlockType.Voice -> MediaExtra.voice(b.extra)?.let { v -> j.put("x", v.text.take(MAX_TEXT)).put("ms", v.ms) } ?: return null
             BlockType.Link -> MediaExtra.link(b.extra)?.let { l -> j.put("x", l.title.ifBlank { l.site.ifBlank { l.url } }.take(120)) } ?: return null
             BlockType.Place -> MediaExtra.place(b.extra)?.let { p -> j.put("x", p.name.ifBlank { p.address }.take(120)) } ?: return null
@@ -171,13 +205,53 @@ class WearLink(private val app: NotedApp) {
     suspend fun voice(file: String, ms: Long, wave: List<Int>, noteId: String?) {
         val v = Block(id(), BlockType.Voice, extra = MediaExtra.ofVoice(Voice(file, ms, wave)))
         val n = noteId?.let { app.notes.get(it) }?.takeIf { it.trashedAt == null && !it.shareInfo.readOnly && !app.privacy.locked(it.id) }
-        if (n != null) {
+        val target = if (n != null) {
             val stored = Blocks.parse(n.blocks).dropLastWhile { it.type == BlockType.P && it.text.replace("​", "").isBlank() }
             app.notes.save(n.id, n.title, stored + v)
+            n.id
         } else {
             val cat = app.notes.categoriesFirst() ?: return
-            app.notes.create(cat, randomColor(), title = "הקלטה מהשעון", blocks = listOf(v, Block(id(), BlockType.P, "")))
+            app.notes.create(cat, randomColor(), title = "הקלטה מהשעון", blocks = listOf(v, Block(id(), BlockType.P, ""))).id
         }
+        // nothing listened on the watch: the words are worked out here, then written under the recording
+        app.scope.launch {
+            val text = runCatching { FileTranscriber.transcribe(app, Media.file(app, file), ms) }.getOrNull()?.trim().orEmpty()
+            if (text.isEmpty()) return@launch
+            val cur = app.notes.get(target) ?: return@launch
+            val blocks = Blocks.parse(cur.blocks)
+            if (blocks.none { it.id == v.id }) return@launch
+            app.notes.save(target, cur.title, blocks.map { b ->
+                if (b.id != v.id) b else MediaExtra.voice(b.extra)?.let { b.copy(extra = MediaExtra.ofVoice(it.copy(text = text))) } ?: b
+            })
+        }
+    }
+
+    /**
+     * A picture the watch asked for, as a small WebP sent back to it: only one that a visible note
+     * here shows (never from a locked or hidden one), at most [PIC_PX] on its long side.
+     */
+    suspend fun sendPic(node: String, f: String) {
+        if (!Regex("[A-Za-z0-9_-]{1,60}\\.[a-z0-9]{2,5}").matches(f)) return
+        val flags = app.privacy.flags.value
+        val shown = app.notes.notes.first().any { n ->
+            n.trashedAt == null && ((flags[n.id] ?: 0) and (Privacy.LOCK or Privacy.BLUR_BODY)) == 0 &&
+                Blocks.parse(n.blocks).any { it.type == BlockType.Images && MediaExtra.pics(it.extra).any { p -> p.f == f } }
+        }
+        if (!shown) return
+        val src = Media.file(app, f)
+        val bytes = withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(src.path, bounds)
+                val bmp = BitmapFactory.decodeFile(src.path, Media.scaledOptions(bounds.outWidth, bounds.outHeight, PIC_PX)) ?: return@runCatching null
+                val k = (PIC_PX.toFloat() / maxOf(bmp.width, bmp.height)).coerceAtMost(1f)
+                val out = if (k < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * k).toInt().coerceAtLeast(1), (bmp.height * k).toInt().coerceAtLeast(1), true) else bmp
+                ByteArrayOutputStream().also { @Suppress("DEPRECATION") out.compress(Bitmap.CompressFormat.WEBP, 72, it) }.toByteArray()
+            }.getOrNull()
+        } ?: return
+        val name = f.toByteArray()
+        val msg = ByteBuffer.allocate(4 + name.size + bytes.size).putInt(name.size).put(name).put(bytes).array()
+        runCatching { Wearable.getMessageClient(app).sendMessage(node, PIC, msg).await() }
     }
 
     private fun randomColor() = NoteColor.entries[((System.currentTimeMillis() / 1000) % NoteColor.entries.size).toInt()]
@@ -192,11 +266,14 @@ class WearLink(private val app: NotedApp) {
         const val DONE = "/noted/done"
         const val LATER = "/noted/later"
         const val VOICE = "/noted/voice"
+        const val PIC = "/noted/pic"
+        const val PLACE_DONE = "/noted/pdone"
 
         private const val MAX_NOTES = 120
         private const val MAX_BLOCKS = 80
         private const val MAX_TEXT = 400
         private const val MAX_REMINDERS = 12
+        private const val PIC_PX = 320
     }
 }
 
@@ -217,6 +294,8 @@ class WearService : WearableListenerService() {
                 // ringing now = "done" like on the phone's notification; still ahead = ✓ like on the widget
                 WearLink.DONE -> j.optString("r").let { r -> if (j.optBoolean("due")) app.reminders.done(r) else app.reminders.skip(r); app.reminders.schedule() }
                 WearLink.LATER -> { app.reminders.later(j.optString("r"), j.optLong("ms", 10 * 60_000L)); app.reminders.schedule() }
+                WearLink.PLACE_DONE -> app.places.done(j.optString("r"))
+                WearLink.PIC -> link.sendPic(e.sourceNodeId, j.optString("f"))
             }
         }
     }
