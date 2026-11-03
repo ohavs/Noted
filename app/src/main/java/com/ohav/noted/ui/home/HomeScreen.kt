@@ -846,7 +846,7 @@ private fun Avatar(letter: String, photo: androidx.compose.ui.graphics.ImageBitm
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             )
         } else {
-            Text(letter, style = Noted.type.button.copy(fontFamily = Noted.type.pair.display, fontSize = 17.sp), color = Color(0xFF2A1A10))
+            Text(letter, style = Noted.type.button.copy(fontFamily = com.ohav.noted.design.NotedFonts.display, fontSize = 17.sp), color = Color(0xFF2A1A10))
         }
     }
 }

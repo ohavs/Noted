@@ -13,35 +13,28 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.ohav.noted.R
 
-private fun variable(res: Int, vararg weights: Int) = FontFamily(
-    weights.map { w -> Font(res, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w))) }
-)
-
-private object Families {
-    val fredoka by lazy { variable(R.font.fredoka, 400, 500, 600, 700) }
-    val assistant by lazy { variable(R.font.assistant, 400, 500, 600, 700, 800) }
-    val frank by lazy { variable(R.font.frank_ruhl_libre, 500, 700, 800, 900) }
-    val rubik by lazy { variable(R.font.rubik, 400, 500, 600, 700, 800) }
-    val heebo by lazy { variable(R.font.heebo, 400, 500, 600, 700, 800) }
-    val karantina by lazy {
+/**
+ * The app's one type pairing ("דחוס"): Karantina for display, Heebo for text. Both SIL Open Font License 1.1
+ * (google/fonts ofl/karantina, ofl/heebo) — free for any use, bundling included; see assets/licenses/.
+ */
+object NotedFonts {
+    val display: FontFamily by lazy {
         FontFamily(Font(R.font.karantina_regular, FontWeight.Normal), Font(R.font.karantina_bold, FontWeight.Bold))
     }
-}
-
-/** The three pairs offered in the prototype. `scale` compensates condensed display faces. */
-enum class FontPair(val label: String, val desc: String, val displayWeight: FontWeight, val scale: Float, val trackingEm: Float) {
-    Soft("רך", "Fredoka + Assistant · עגול וחם", FontWeight.SemiBold, 1f, -0.01f),
-    Editorial("עיתונאי", "Frank Ruhl Libre + Rubik · קלאסי וחד", FontWeight.ExtraBold, 1f, -0.02f),
-    Condensed("דחוס", "Karantina + Heebo · צפוף ונועז", FontWeight.Bold, 1.38f, 0f);
-
-    val display: FontFamily
-        get() = when (this) { Soft -> Families.fredoka; Editorial -> Families.frank; Condensed -> Families.karantina }
-    val body: FontFamily
-        get() = when (this) { Soft -> Families.assistant; Editorial -> Families.rubik; Condensed -> Families.heebo }
+    val body: FontFamily by lazy {
+        FontFamily(listOf(400, 500, 600, 700, 800).map { w ->
+            Font(R.font.heebo, FontWeight(w), variationSettings = FontVariation.Settings(FontVariation.weight(w)))
+        })
+    }
+    val displayWeight = FontWeight.Bold
+    /** Karantina is condensed: display sizes scale up to sit level with the text face. */
+    const val scale = 1.38f
+    const val trackingEm = 0f
 }
 
 @Immutable
-class NotedType(val pair: FontPair) {
+class NotedType {
+    private val pair = NotedFonts
     private fun display(size: Float, line: Float = 1.1f) = TextStyle(
         fontFamily = pair.display, fontWeight = pair.displayWeight,
         fontSize = (size * pair.scale).sp, lineHeight = (size * pair.scale * line).sp,

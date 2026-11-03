@@ -89,7 +89,7 @@ fun Face(m: Member, size: Dp, modifier: Modifier = Modifier, ring: Color? = null
     ) {
         val pic = img
         if (pic != null) Image(pic, m.name, Modifier.fillMaxSize().clip(CircleShape).border(ringW, ring ?: Color.Transparent, CircleShape), contentScale = ContentScale.Crop)
-        else Text(m.letter.ifEmpty { "?" }, style = Noted.type.button.copy(fontFamily = Noted.type.pair.display, fontSize = (size.value / 2.4f).sp), color = Color.White)
+        else Text(m.letter.ifEmpty { "?" }, style = Noted.type.button.copy(fontFamily = com.ohav.noted.design.NotedFonts.display, fontSize = (size.value / 2.4f).sp), color = Color.White)
     }
 }
 

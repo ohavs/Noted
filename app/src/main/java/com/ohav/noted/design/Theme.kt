@@ -22,7 +22,7 @@ import androidx.core.view.WindowCompat
 import com.ohav.noted.settings.AppSettings
 
 val LocalNotedColors = staticCompositionLocalOf { notedColors(false, Accent.Fire) }
-val LocalNotedType = staticCompositionLocalOf { NotedType(FontPair.Soft) }
+val LocalNotedType = staticCompositionLocalOf { NotedType() }
 val LocalHaptics = staticCompositionLocalOf<Haptics> { error("Haptics not provided") }
 
 object Noted {
@@ -53,7 +53,7 @@ fun NotedTheme(settings: AppSettings, content: @Composable () -> Unit) {
         ThemeMode.Dark -> true
     }
     val colors = notedColors(dark, settings.accent).animated()
-    val type = remember(settings.fontPair) { NotedType(settings.fontPair) }
+    val type = remember { NotedType() }
     val view = LocalView.current
     val haptics = remember(view) { Haptics(view) }
     haptics.enabled = settings.haptics

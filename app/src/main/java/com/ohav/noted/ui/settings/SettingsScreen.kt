@@ -1,5 +1,7 @@
 package com.ohav.noted.ui.settings
 
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -35,17 +37,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ohav.noted.NotedApp
 import com.ohav.noted.design.Accent
-import com.ohav.noted.design.FontPair
 import com.ohav.noted.design.IconButton
 import com.ohav.noted.design.Motion
 import com.ohav.noted.design.NoteColor
@@ -60,6 +61,7 @@ import com.ohav.noted.design.VSpace
 import com.ohav.noted.design.press
 import com.ohav.noted.settings.AppSettings
 import com.ohav.noted.update.Updater
+import com.ohav.noted.widget.NotedWidgetReceiver
 import kotlinx.coroutines.launch
 
 @Composable
@@ -112,13 +114,7 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
                 }
             }
         }
-        Section("צמד פונטים") {
-            Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                FontPair.entries.forEach { f ->
-                    FontOption(f, s.fontPair == f) { scope.launch { app.settings.setFont(f) } }
-                }
-            }
-        }
+        Section("וידג'טים") { WidgetCard(toasts) }
         Section("תחושה") {
             Row(
                 Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)
@@ -193,20 +189,44 @@ private fun AccentOption(a: Accent, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
+/** Pins the home-screen widget straight from here (the launcher shows its own placement sheet). */
 @Composable
-private fun FontOption(f: FontPair, selected: Boolean, onClick: () -> Unit) {
+private fun WidgetCard(toasts: ToastState) {
     val c = Noted.colors
-    val ring by animateColorAsState(if (selected) c.accent else Color.Transparent, Motion.glide(), label = "ring")
-    Row(
-        Modifier.fillMaxWidth().clip(Shapes.lg).background(c.surface).border(2.dp, ring, Shapes.lg).press(scale = .98f, onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("אב", style = TextStyle(fontFamily = f.display, fontWeight = f.displayWeight, fontSize = (34 * f.scale).sp), color = c.ink)
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text("${f.label} — הפתקים שלי", style = TextStyle(fontFamily = f.display, fontWeight = f.displayWeight, fontSize = (20 * f.scale).sp), color = c.ink)
-            Text(f.desc, style = TextStyle(fontFamily = f.body, fontSize = 13.sp), color = c.ink2)
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val context = LocalContext.current
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface).padding(18.dp)) {
+        // A small likeness of the widget: title, + and two notes, in the current theme.
+        Box(Modifier.fillMaxWidth().clip(Shapes.md).background(c.bg2).padding(14.dp)) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("הפתקים שלי", style = t.barTitle, color = c.ink, modifier = Modifier.weight(1f))
+                    Box(Modifier.size(30.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
+                        Icon(Ph.Plus, null, Modifier.size(16.dp), tint = c.accentInk)
+                    }
+                }
+                VSpace(10.dp)
+                listOf(NoteColor.Butter to .92f, NoteColor.Mint to .68f).forEach { (col, w) ->
+                    Box(
+                        Modifier.fillMaxWidth().height(30.dp).padding(bottom = 6.dp).clip(Shapes.sm)
+                            .background(if (c.isDark) col.dark else col.light),
+                    ) {
+                        Box(Modifier.padding(horizontal = 10.dp).fillMaxWidth(w * .6f).height(6.dp).align(Alignment.CenterStart).clip(CircleShape).background(c.noteInk.copy(alpha = .22f)))
+                    }
+                }
+            }
+        }
+        VSpace(14.dp)
+        Text("וידג'ט ערימה", style = t.bodyStrong, color = c.ink)
+        Text("קטגוריה אחת על המסך הראשי — סימון משימות במקום, פתק חדש בנגיעה", style = t.caption, color = c.ink2)
+        VSpace(14.dp)
+        ActionButton("הוספה למסך הבית") {
+            val mgr = AppWidgetManager.getInstance(context)
+            val ok = mgr.isRequestPinAppWidgetSupported &&
+                runCatching { mgr.requestPinAppWidget(ComponentName(context, NotedWidgetReceiver::class.java), null, null) }.getOrDefault(false)
+            if (ok) haptics.confirm()
+            else { haptics.reject(); toasts.show("המסך הראשי לא מאפשר — לחיצה ארוכה על המסך ← וידג'טים ← noted", Ph.Info, millis = 4200) }
         }
     }
 }

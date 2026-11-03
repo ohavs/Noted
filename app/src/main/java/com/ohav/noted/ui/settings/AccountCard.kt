@@ -227,6 +227,6 @@ fun AccountAvatar(letter: String, photo: ImageBitmap?, size: Dp) {
     val c = Noted.colors
     Box(Modifier.size(size).clip(CircleShape).background(c.accentSoft), contentAlignment = Alignment.Center) {
         if (photo != null) Image(photo, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        else Text(letter, style = Noted.type.button.copy(fontFamily = Noted.type.pair.display, fontSize = (size.value / 2.6f).sp), color = c.accent)
+        else Text(letter, style = Noted.type.button.copy(fontFamily = com.ohav.noted.design.NotedFonts.display, fontSize = (size.value / 2.6f).sp), color = c.accent)
     }
 }

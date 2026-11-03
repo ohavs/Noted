@@ -13,6 +13,7 @@ import android.text.Spanned
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
+import android.content.res.Resources
 import android.view.View
 import android.widget.RemoteViews
 import androidx.compose.ui.unit.Dp
@@ -59,6 +60,8 @@ import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
+import androidx.glance.layout.RowScope
+import androidx.glance.layout.absolutePadding
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
@@ -83,7 +86,7 @@ import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.Share
 import com.ohav.noted.data.foreign
-import com.ohav.noted.design.FontPair
+import com.ohav.noted.design.NotedFonts
 import com.ohav.noted.design.NoteColor
 import com.ohav.noted.design.ThemeMode
 import com.ohav.noted.reminders.Notifier
@@ -150,29 +153,31 @@ private class WColors(s: AppSettings) {
     val boxOff = pick(Color(0x731D1A15), Color(0x73F4EFE7))
     val accentC = pick(accent.light, accent.dark)
     val accentInk = pick(Color.White, accent.darkInk)
+    val accentSoft = pick(accent.light.copy(alpha = .13f), accent.dark.copy(alpha = .2f))
+    val clear = Tone(Color.Transparent, Color.Transparent)
     fun note(c: NoteColor) = pick(c.light, c.dark)
 }
 
 private const val MAX_ROWS = 5
 
 /*
- * RTL, whatever the device language. RemoteViews lay out by the launcher's locale and Glance's Text
- * pins textDirection="locale", so on an English phone everything flipped. Instead: every row sits in
- * an RTL frame ([Rtl]), all text goes through [RText] (right-aligned, direction from the content),
- * and paddings go through [padRtl] (Glance resolves start/end by the app's locale, not the frame's).
+ * RTL, whatever the device language. RemoteViews lay out by the launcher's (= the device's) direction,
+ * and wrapping rows in an RTL frame nested RemoteViews too deep: the list items silently vanished.
+ * Instead every row is written in RTL order and [RRow] reverses it on an LTR launcher (packing to the
+ * right), paddings are absolute, and text goes through [RText] (right-aligned, direction from the content).
  */
 
-@Composable
-private fun Rtl(modifier: GlanceModifier = GlanceModifier, content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    AndroidRemoteViews(RemoteViews(context.packageName, R.layout.widget_rtl), R.id.wrtl, modifier) { content() }
-}
+private val hostRtl: Boolean
+    get() = Resources.getSystem().configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
 
+/** A row whose slots are given right-to-left; on an LTR launcher they're laid out reversed. */
 @Composable
-private fun GlanceModifier.padRtl(start: Dp = 0.dp, end: Dp = 0.dp, top: Dp = 0.dp, bottom: Dp = 0.dp): GlanceModifier {
-    val ctxRtl = LocalContext.current.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
-    return if (ctxRtl) padding(start = start, end = end, top = top, bottom = bottom)
-    else padding(start = end, end = start, top = top, bottom = bottom)
+private fun RRow(modifier: GlanceModifier = GlanceModifier, vararg slots: @Composable RowScope.() -> Unit) {
+    val rtl = hostRtl
+    Row(modifier, horizontalAlignment = if (rtl) Alignment.Start else Alignment.End, verticalAlignment = Alignment.CenterVertically) {
+        val scope = this
+        (if (rtl) slots.asList() else slots.reversed()).forEach { it(scope) }
+    }
 }
 
 private enum class W { Normal, Medium, Bold }
@@ -227,26 +232,31 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
     Column(
         GlanceModifier.fillMaxSize().background(c.bg.p).cornerRadius(28.dp).padding(start = 12.dp, end = 12.dp, top = 10.dp),
     ) {
-        Rtl(GlanceModifier.fillMaxWidth().padRtl(start = 4.dp, bottom = 8.dp)) {
-            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(
+        RRow(
+            GlanceModifier.fillMaxWidth().absolutePadding(right = 4.dp, bottom = 8.dp),
+            {
+                RRow(
                     GlanceModifier.defaultWeight().let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val title = remember(cat?.name, settings.fontPair) { titleBitmap(context, cat?.name ?: "noted", settings.fontPair) }
-                    Image(ImageProvider(title), contentDescription = cat?.name, colorFilter = ColorFilter.tint(c.ink.p))
-                    Spacer(GlanceModifier.width(8.dp))
-                    Text("${shown.size}", style = TextStyle(color = c.ink3.p, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-                    if (canPick) {
-                        Spacer(GlanceModifier.width(2.dp))
-                        Image(
-                            ImageProvider(if (menu) R.drawable.wg_caret_up else R.drawable.wg_caret_down),
-                            if (menu) "סגירת רשימת הקטגוריות" else "בחירת קטגוריה",
-                            GlanceModifier.size(16.dp),
-                            colorFilter = ColorFilter.tint(if (menu) c.ink.p else c.ink3.p),
-                        )
-                    }
-                }
+                    {
+                        val title = remember(cat?.name) { titleBitmap(context, cat?.name ?: "noted", 26f) }
+                        Image(ImageProvider(title), contentDescription = cat?.name, colorFilter = ColorFilter.tint(c.ink.p))
+                    },
+                    { Spacer(GlanceModifier.width(8.dp)) },
+                    { Text("${shown.size}", style = TextStyle(color = c.ink3.p, fontSize = 14.sp, fontWeight = FontWeight.Medium)) },
+                    {
+                        if (canPick) {
+                            Spacer(GlanceModifier.width(2.dp))
+                            Image(
+                                ImageProvider(if (menu) R.drawable.wg_caret_up else R.drawable.wg_caret_down),
+                                if (menu) "סגירת רשימת הקטגוריות" else "בחירת קטגוריה",
+                                GlanceModifier.size(16.dp),
+                                colorFilter = ColorFilter.tint(if (menu) c.ink.p else c.ink3.p),
+                            )
+                        }
+                    },
+                )
+            },
+            {
                 Box(
                     GlanceModifier.size(44.dp).cornerRadius(22.dp).background(c.accentC.p)
                         .clickable(actionStartActivity(newNoteIntent(context, cat?.id))),
@@ -254,44 +264,58 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
                 ) {
                     Image(ImageProvider(R.drawable.wg_plus), "פתק חדש", GlanceModifier.size(22.dp), colorFilter = ColorFilter.tint(c.accentInk.p))
                 }
-            }
-        }
+            },
+        )
 
         when {
-            menu -> Menu(tops, notes, tree, cat?.id, c)
+            menu -> Menu(tops, notes, tree, cat?.id, c, context)
             shown.isEmpty() -> Empty(c, context, cat?.id)
             else -> LazyColumn(GlanceModifier.fillMaxSize()) {
                 items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
-                    Rtl(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
+                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
                 }
             }
         }
     }
 }
 
-/** The category dropdown: drops open under the title, in place of the stack. */
+/**
+ * The category dropdown, in place of the stack: a sheet of names in the display face, the open one
+ * on a soft accent wash with a tick, each with its note count. A row picks it and folds the list.
+ */
 @Composable
-private fun Menu(tops: List<CategoryEntity>, notes: List<NoteEntity>, tree: CatTree, current: String?, c: WColors) {
+private fun Menu(tops: List<CategoryEntity>, notes: List<NoteEntity>, tree: CatTree, current: String?, c: WColors, context: Context) {
     val counts = remember(notes, tops) { tops.associate { t -> tree.family(t.id).let { f -> t.id to notes.count { it.categoryId in f } } } }
-    Column(GlanceModifier.fillMaxSize().padding(bottom = 12.dp)) {
-        LazyColumn(GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.surface.p).padding(vertical = 6.dp)) {
+    Box(GlanceModifier.fillMaxSize().padding(bottom = 12.dp)) {
+        LazyColumn(GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.surface.p).padding(6.dp)) {
             items(tops, itemId = { it.id.hashCode().toLong() }) { t ->
                 val sel = t.id == current
-                Rtl(GlanceModifier.fillMaxWidth()) {
-                    Row(
-                        GlanceModifier.fillMaxWidth().height(46.dp).padding(horizontal = 16.dp)
-                            .clickable(actionRunCallback<SelectCategory>(actionParametersOf(CAT_P to t.id))),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RText(t.name, if (sel) c.ink else c.ink2, 15.5f, GlanceModifier.defaultWeight(), weight = if (sel) W.Bold else W.Medium, maxLines = 1)
-                        Spacer(GlanceModifier.width(10.dp))
-                        Text("${counts[t.id] ?: 0}", style = TextStyle(color = c.ink3.p, fontSize = 13.sp, fontWeight = FontWeight.Medium))
-                        Spacer(GlanceModifier.width(10.dp))
-                        Box(GlanceModifier.size(18.dp), contentAlignment = Alignment.Center) {
-                            if (sel) Image(ImageProvider(R.drawable.wg_check), "נבחרה", GlanceModifier.size(18.dp), colorFilter = ColorFilter.tint(c.accentC.p))
+                val name = remember(t.name) { titleBitmap(context, t.name, 19f) }
+                RRow(
+                    GlanceModifier.fillMaxWidth().height(50.dp).cornerRadius(16.dp)
+                        .background(if (sel) c.accentSoft.p else c.clear.p)
+                        .absolutePadding(left = 14.dp, right = 16.dp)
+                        .clickable(actionRunCallback<SelectCategory>(actionParametersOf(CAT_P to t.id))),
+                    {
+                        Image(
+                            ImageProvider(name), t.name,
+                            colorFilter = ColorFilter.tint(if (sel) c.ink.p else c.ink2.p),
+                        )
+                    },
+                    { Spacer(GlanceModifier.width(8.dp)) },
+                    {
+                        Text(
+                            "${counts[t.id] ?: 0}",
+                            style = TextStyle(color = if (sel) c.accentC.p else c.ink3.p, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        )
+                    },
+                    { Spacer(GlanceModifier.defaultWeight()) },
+                    {
+                        Box(GlanceModifier.size(20.dp), contentAlignment = Alignment.Center) {
+                            if (sel) Image(ImageProvider(R.drawable.wg_check), "נבחרה", GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.accentC.p))
                         }
-                    }
-                }
+                    },
+                )
             }
         }
     }
@@ -327,17 +351,19 @@ private fun Card(n: NoteEntity, c: WColors, context: Context) {
             .clickable(actionStartActivity(openNoteIntent(context, n.id))),
     ) {
         if (n.title.isNotBlank() || n.pinned) {
-            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                RText(n.title.ifBlank { "ללא כותרת" }, c.noteInk, 15f, GlanceModifier.defaultWeight(), weight = W.Bold, maxLines = 2)
-                if (n.pinned) Image(ImageProvider(R.drawable.wg_push_pin_fill), "נעוץ", GlanceModifier.size(14.dp), colorFilter = ColorFilter.tint(c.noteInk2.p))
-            }
+            RRow(
+                GlanceModifier.fillMaxWidth(),
+                { RText(n.title.ifBlank { "ללא כותרת" }, c.noteInk, 15f, GlanceModifier.defaultWeight(), weight = W.Bold, maxLines = 2) },
+                { if (n.pinned) Image(ImageProvider(R.drawable.wg_push_pin_fill), "נעוץ", GlanceModifier.size(14.dp), colorFilter = ColorFilter.tint(c.noteInk2.p)) },
+            )
         }
         n.reminderAt?.let { at ->
-            Row(GlanceModifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Image(ImageProvider(R.drawable.wg_bell), null, GlanceModifier.size(12.dp), colorFilter = ColorFilter.tint(c.noteInk2.p))
-                Spacer(GlanceModifier.width(4.dp))
-                RText(fmtRel(at), c.noteInk2, 12f, GlanceModifier.defaultWeight(), weight = W.Medium, maxLines = 1)
-            }
+            RRow(
+                GlanceModifier.fillMaxWidth().padding(top = 4.dp),
+                { Image(ImageProvider(R.drawable.wg_bell), null, GlanceModifier.size(12.dp), colorFilter = ColorFilter.tint(c.noteInk2.p)) },
+                { Spacer(GlanceModifier.width(4.dp)) },
+                { RText(fmtRel(at), c.noteInk2, 12f, GlanceModifier.defaultWeight(), weight = W.Medium, maxLines = 1) },
+            )
         }
         rows.forEachIndexed { i, b ->
             Spacer(GlanceModifier.height(if (i == 0 && n.title.isNotBlank()) 6.dp else 3.dp))
@@ -359,30 +385,32 @@ private fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
     val text = clean(b.text)
     val indent = (b.indent.coerceIn(0, 3) * 12).dp
     when (b.type) {
-        BlockType.Check -> Row(
-            GlanceModifier.fillMaxWidth().padRtl(start = indent).let {
+        BlockType.Check -> RRow(
+            GlanceModifier.fillMaxWidth().absolutePadding(right = indent).let {
                 if (canTick) it.clickable(actionRunCallback<ToggleCheck>(actionParametersOf(NOTE to n.id, BLOCK to b.id))) else it
             },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(GlanceModifier.size(20.dp), contentAlignment = Alignment.Center) {
-                if (b.done) {
-                    Image(ImageProvider(R.drawable.wg_box_fill), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.noteInk.p))
-                    Image(ImageProvider(R.drawable.wg_tick), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.note(NoteColor.of(n.color)).p))
-                } else {
-                    Image(ImageProvider(R.drawable.wg_box), "לסמן", GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.boxOff.p))
+            {
+                Box(GlanceModifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    if (b.done) {
+                        Image(ImageProvider(R.drawable.wg_box_fill), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.noteInk.p))
+                        Image(ImageProvider(R.drawable.wg_tick), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.note(NoteColor.of(n.color)).p))
+                    } else {
+                        Image(ImageProvider(R.drawable.wg_box), "לסמן", GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.boxOff.p))
+                    }
                 }
-            }
-            Spacer(GlanceModifier.width(9.dp))
-            RText(
-                text, if (b.done) c.noteInk2 else c.noteInk, 14f,
-                GlanceModifier.defaultWeight().padding(vertical = 2.dp),
-                maxLines = 2, strike = b.done,
-            )
-        }
+            },
+            { Spacer(GlanceModifier.width(9.dp)) },
+            {
+                RText(
+                    text, if (b.done) c.noteInk2 else c.noteInk, 14f,
+                    GlanceModifier.defaultWeight().padding(vertical = 2.dp),
+                    maxLines = 2, strike = b.done,
+                )
+            },
+        )
         BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link -> RText(
             when (b.type) { BlockType.Images -> "תמונה"; BlockType.Voice -> "הקלטה"; BlockType.Draw -> "ציור"; else -> "קישור" },
-            c.noteInk2, 13f, GlanceModifier.fillMaxWidth().padRtl(start = indent), weight = W.Medium, maxLines = 1,
+            c.noteInk2, 13f, GlanceModifier.fillMaxWidth().absolutePadding(right = indent), weight = W.Medium, maxLines = 1,
         )
         else -> {
             val h = b.type == BlockType.H1 || b.type == BlockType.H2 || b.type == BlockType.H3
@@ -391,7 +419,7 @@ private fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
                 lead + text,
                 if (b.type == BlockType.Quote) c.noteInk2 else c.noteInk,
                 if (h) 14.5f else 13.5f,
-                GlanceModifier.fillMaxWidth().padRtl(start = indent),
+                GlanceModifier.fillMaxWidth().absolutePadding(right = indent),
                 weight = if (h) W.Bold else W.Normal,
                 maxLines = if (h) 1 else 3,
             )
@@ -445,23 +473,17 @@ class SelectCategory : ActionCallback {
 }
 
 /**
- * The category name in the app's display font. RemoteViews can't take a custom typeface, so the
- * title is drawn into a white-on-clear bitmap and tinted with the ink colour (day/night safe).
+ * A name in the app's display face (Karantina). RemoteViews can't take a custom typeface, so it's drawn
+ * into a white-on-clear bitmap and tinted with the ink colour (day/night safe).
  */
-private fun titleBitmap(context: Context, text: String, pair: FontPair): Bitmap {
+private fun titleBitmap(context: Context, text: String, sizeSp: Float): Bitmap {
     val dm = context.resources.displayMetrics
-    val (res, wght) = when (pair) {
-        FontPair.Soft -> R.font.fredoka to 600
-        FontPair.Editorial -> R.font.frank_ruhl_libre to 800
-        FontPair.Condensed -> R.font.karantina_bold to 0
-    }
-    val tf = runCatching { ResourcesCompat.getFont(context, res) }.getOrNull() ?: Typeface.DEFAULT_BOLD
+    val tf = runCatching { ResourcesCompat.getFont(context, R.font.karantina_bold) }.getOrNull() ?: Typeface.DEFAULT_BOLD
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = tf
         color = Color.White.toArgb()
-        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 26f * pair.scale, dm)
-        if (wght > 0) fontVariationSettings = "'wght' $wght"
-        letterSpacing = pair.trackingEm
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp * NotedFonts.scale, dm)
+        letterSpacing = NotedFonts.trackingEm
     }
     val maxW = 210f * dm.density
     val s = TextUtils.ellipsize(text, paint, maxW, TextUtils.TruncateAt.END).toString().ifEmpty { text.take(1) }
