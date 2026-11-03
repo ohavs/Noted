@@ -70,6 +70,8 @@ jobs:
           scripts/firebase-android.sh || { echo "::warning::Firebase config failed — building without Firebase"; rm -f app/google-services.json; }
 
       - name: Build
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease -PversionCode=${{ github.run_number }}
 
       - name: Collect APK
