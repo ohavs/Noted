@@ -173,10 +173,25 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
     val config = LocalConfiguration.current
     BackHandler(enabled = tab != Tab.Home) { tab = Tab.Home }
 
+    fun midRect() = with(density) {
+        val w = config.screenWidthDp.dp.toPx()
+        val h = config.screenHeightDp.dp.toPx()
+        Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
+    }
     // open a note from a notification: from its card when home shows it, else from mid-screen
     LaunchedEffect(openNote.value) {
         val id = openNote.value ?: return@LaunchedEffect
         openNote.value = null
+        if (id.startsWith(com.ohav.noted.MainActivity.NEW_PREFIX)) {
+            // the widget's +: a fresh note in that category, opened mid-screen with home showing its category
+            val want = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
+            val cat = want.takeIf { w -> w.isNotEmpty() && app.notes.categoriesNow().any { it.id == w } } ?: app.notes.categoriesFirst() ?: return@LaunchedEffect
+            tab = Tab.Home
+            chrome.showCat = cat
+            val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()])
+            chrome.editor.open(n, midRect(), fresh = true)
+            return@LaunchedEffect
+        }
         val n = app.notes.get(id)?.takeIf { it.trashedAt == null } ?: run { toasts.show("הפתק כבר לא קיים", Ph.Info); return@LaunchedEffect }
         chrome.editor.note?.let { if (it.id == id) return@LaunchedEffect }
         val rect = chrome.editor.cardRect?.invoke(id) ?: with(density) {
@@ -187,11 +202,6 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         chrome.editor.open(n, rect)
     }
     val overlays = LocalOverlays.current
-    fun midRect() = with(density) {
-        val w = config.screenWidthDp.dp.toPx()
-        val h = config.screenHeightDp.dp.toPx()
-        Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
-    }
     // an invite link was opened: join, then the note opens from the shared tab
     LaunchedEffect(invite.value) {
         val token = invite.value ?: return@LaunchedEffect

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget checklist box (empty): the app's squircle-ish box outline; tinted at runtime -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp" android:height="22dp" android:viewportWidth="26" android:viewportHeight="26">
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.2"
+        android:pathData="M9,1.1H17A7.9,7.9 0,0 1,24.9 9V17A7.9,7.9 0,0 1,17 24.9H9A7.9,7.9 0,0 1,1.1 17V9A7.9,7.9 0,0 1,9 1.1Z" />
+</vector>

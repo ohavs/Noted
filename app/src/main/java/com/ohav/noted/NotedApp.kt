@@ -11,10 +11,13 @@ import com.ohav.noted.sync.Account
 import com.ohav.noted.sync.Sharing
 import com.ohav.noted.sync.Sync
 import com.ohav.noted.update.Updater
+import com.ohav.noted.widget.NotedWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 class NotedApp : Application() {
@@ -50,5 +53,10 @@ class NotedApp : Application() {
         }
         // fences follow every change to places / place reminders / notes (throttled inside)
         scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
+        // home-screen widgets follow notes, categories and the look (a no-op without widgets)
+        scope.launch {
+            combine(notes.notes, notes.categories, settings.settings) { _, _, _ -> }.drop(1).debounce(500)
+                .collect { NotedWidget.refresh(this@NotedApp) }
+        }
     }
 }

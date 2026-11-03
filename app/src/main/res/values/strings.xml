@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">noted</string>
+    <string name="widget_main_label">הפתקים שלי</string>
+    <string name="widget_main_desc">הערימה של קטגוריה אחת על המסך — סימון שורות, מעבר קטגוריה ופתק חדש</string>
+    <string name="widget_preview_cat">קניות</string>
+    <string name="widget_preview_note1">לסופר</string>
+    <string name="widget_preview_line1">חלב · ביצים · לחם</string>
+    <string name="widget_preview_note2">מתנה לדנה</string>
 </resources>

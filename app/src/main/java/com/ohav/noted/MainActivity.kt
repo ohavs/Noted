@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     private fun takeOpen(intent: Intent?) {
         intent?.getStringExtra(com.ohav.noted.reminders.Notifier.EXTRA_NOTE)?.let { openNote.value = it }
+        intent?.getStringExtra(EXTRA_NEW_IN)?.let { openNote.value = NEW_PREFIX + it }
         if (intent?.action == Intent.ACTION_VIEW) com.ohav.noted.sync.Sharing.tokenOf(intent.dataString)?.let { invite.value = it }
     }
 
@@ -71,5 +72,12 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         com.ohav.noted.sync.Push.foreground = false
+    }
+
+    companion object {
+        /** From the widget's +: a new note in this category ("" = the first one). */
+        const val EXTRA_NEW_IN = "new_in"
+        /** [openNote] value meaning "create one in <category>" rather than an id. */
+        const val NEW_PREFIX = "new:"
     }
 }

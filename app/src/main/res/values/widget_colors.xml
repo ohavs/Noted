@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- widget picker preview only; the live widget takes the app's palette in code -->
+    <color name="wg_bg">#FFF5F1EA</color>
+    <color name="wg_ink">#FF1B1915</color>
+    <color name="wg_note_ink">#FF1D1A15</color>
+    <color name="wg_butter">#FFFAE5A0</color>
+    <color name="wg_mint">#FFC6EAD5</color>
+</resources>
