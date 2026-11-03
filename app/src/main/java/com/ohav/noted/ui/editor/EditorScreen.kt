@@ -377,6 +377,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     }
     DisposableEffect(state) {
         onDispose {
+            if (!state.discarded) state.flushSink()
             if (state.version > 0 && !state.discarded) {
                 val (title, blocks) = state.content()
                 val base = state.base
@@ -403,7 +404,10 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                     app.notes.saveMerged(n.id, state.base, title, blocks)
                 } else app.sync.discard(n.id)
             }
-        } else if (state.version > 0) {
+        } else {
+            state.flushSink()
+        }
+        if (!discard && state.version > 0) {
             val (title, blocks) = state.content()
             val base = state.base
             app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }

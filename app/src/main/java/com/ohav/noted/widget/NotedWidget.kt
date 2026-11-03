@@ -247,7 +247,7 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
             .clickable(actionStartActivity(openAppIntent(context))),
     ) {
         RRow(
-            GlanceModifier.fillMaxWidth().absolutePadding(right = 4.dp, bottom = 8.dp),
+            GlanceModifier.fillMaxWidth().absolutePadding(right = 4.dp, bottom = 8.dp).clickable(actionStartActivity(openAppIntent(context))),
             {
                 RRow(
                     GlanceModifier.defaultWeight().let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
@@ -284,11 +284,18 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
         when {
             menu -> Menu(tops, notes, tree, cat.id, c, context)
             shown.isEmpty() -> Empty(c, context, cat.id.takeUnless { all })
-            // wraps its cards, so the space under a short stack belongs to the widget (→ the app)
-            else -> LazyColumn(GlanceModifier.fillMaxWidth()) {
-                items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
-                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp).clickable(actionStartActivity(openAppIntent(context)))) {
-                        Card(n, c, context, priv[n.id] ?: 0)
+            // every blank spot is its own tap target (a list swallows taps on its empty part, and a
+            // parent's tap doesn't reach through it): the gap under each card, a tail under the last
+            // one, and the box around the list for the space under a short stack
+            else -> Box(GlanceModifier.fillMaxWidth().defaultWeight().clickable(actionStartActivity(openAppIntent(context)))) {
+                LazyColumn(GlanceModifier.fillMaxWidth()) {
+                    items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
+                        Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp).clickable(actionStartActivity(openAppIntent(context)))) {
+                            Card(n, c, context, priv[n.id] ?: 0)
+                        }
+                    }
+                    item(itemId = TAIL_ID) {
+                        Box(GlanceModifier.fillMaxWidth().height(72.dp).clickable(actionStartActivity(openAppIntent(context)))) {}
                     }
                 }
             }
@@ -475,10 +482,11 @@ internal fun openNoteIntent(context: Context, id: String) = Intent(context, Main
 
 /** The app as the launcher opens it (its own data, so the PendingIntent doesn't merge with another). */
 internal fun openAppIntent(context: Context) = Intent(context, MainActivity::class.java)
-    .setAction(Intent.ACTION_MAIN)
-    .addCategory(Intent.CATEGORY_LAUNCHER)
     .setData(Uri.parse("noted-widget://home"))
-    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+// outside the card ids (Int hash codes) and Glance's reserved negative range
+private const val TAIL_ID = 1L shl 40
 
 /** A new note, opened straight in the editor; [mode] = how it starts (ui.editor.Start). */
 internal fun newNoteIntent(context: Context, cat: String?, mode: String = "text") = Intent(context, MainActivity::class.java)

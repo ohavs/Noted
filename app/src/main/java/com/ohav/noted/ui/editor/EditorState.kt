@@ -77,7 +77,7 @@ private data class Snap(val title: String, val blocks: List<Block>, val focus: S
 class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     var title by mutableStateOf(TextFieldValue(title, TextRange(title.length)))
     val blocks = mutableStateListOf<EdBlock>().apply {
-        addAll(blocks.map(EdBlock::of))
+        addAll(blocks.map(EdBlock::of).let { l -> com.ohav.noted.data.settleChecked(l, { it.type == BlockType.Check }, { it.indent }, { it.done }) })
         if (none { it.type in TEXT_TYPES }) add(EdBlock.new())
     }
     val titleFocus = FocusRequester()
@@ -105,6 +105,11 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     /** Bumped on every content change — autosave and the undo buttons watch it. */
     var version by mutableStateOf(0)
         private set
+
+    init {
+        // ticked rows that sat above open ones were just settled: saved like any edit
+        if (this.blocks.take(blocks.size).map { it.id } != blocks.map { it.id }) version = 1
+    }
 
     private val original = snap()
     private val undo = ArrayList<Snap>()
@@ -338,7 +343,11 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
 
     // ---- toolbar actions ------------------------------------------------------------------
 
-    fun toggleCheck(b: EdBlock) { record(true); b.done = !b.done; changed(); sinking = b.id to ++sinks }
+    fun toggleCheck(b: EdBlock) { record(true); b.done = !b.done; changed(); sinking = b.id to ++sinks; unsunk = b.id }
+
+    /** A tick whose sink hasn't played yet (the editor closing within the pause): applied before the last save. */
+    private var unsunk: String? = null
+    fun flushSink() { unsunk?.let { sink(it) } }
 
     /** A row just ticked / unticked: [BlockList] lets the tick play, then calls [sink]. */
     var sinking by mutableStateOf<Pair<String, Int>?>(null)
@@ -347,6 +356,7 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
 
     /** Moves row [id] to the bottom of its checklist (done) or back above the done rows; false if it stays. Part of the tick's undo step. */
     fun sink(id: String): Boolean {
+        if (unsunk == id) unsunk = null
         val now = blocks.toList()
         val out = com.ohav.noted.data.sinkChecked(now, indexOf(id), { it.type == BlockType.Check }, { it.indent }, { it.done })
         if (out === now) return false

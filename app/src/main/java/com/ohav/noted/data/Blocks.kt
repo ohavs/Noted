@@ -86,6 +86,15 @@ fun <T> sinkChecked(list: List<T>, i: Int, isCheck: (T) -> Boolean, indent: (T) 
     return list.subList(0, s) + head.map { list[it] } + ordered.flatMap { r -> r.map { list[it] } } + list.subList(e + 1, list.size)
 }
 
+/** Every ticked row below the open ones in its list (rows ticked before sinking existed, or while it was cut short). Stable. */
+fun <T> settleChecked(list: List<T>, isCheck: (T) -> Boolean, indent: (T) -> Int, done: (T) -> Boolean): List<T> {
+    var out = list
+    for (x in list.filter { isCheck(it) && done(it) }) out = sinkChecked(out, out.indexOfFirst { it === x }, isCheck, indent, done)
+    return out
+}
+
+fun List<Block>.settleChecked(): List<Block> = settleChecked(this, { it.type == BlockType.Check }, { it.indent }, { it.done })
+
 fun List<Block>.sinkChecked(id: String): List<Block> =
     sinkChecked(this, indexOfFirst { it.id == id }, { it.type == BlockType.Check }, { it.indent }, { it.done })
 
