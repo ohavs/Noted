@@ -85,7 +85,6 @@ import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.Share
-import com.ohav.noted.data.foreign
 import com.ohav.noted.design.NotedFonts
 import com.ohav.noted.design.NoteColor
 import com.ohav.noted.design.ThemeMode
@@ -96,7 +95,7 @@ import kotlinx.coroutines.flow.first
 
 /**
  * The big home-screen widget: one category's stack, as cards in the note colours.
- * Tap the title → a dropdown of the categories; tick a row in place; tap a card → that note in the editor;
+ * Tap the title → a dropdown: all notes, then the categories; tick a row in place; tap a card → that note in the editor;
  * + → a new note in this category. Light/dark and accent follow the app's settings.
  */
 class NotedWidget : GlanceAppWidget() {
@@ -160,6 +159,10 @@ private class WColors(s: AppSettings) {
 
 private const val MAX_ROWS = 5
 
+/** The widget's own "every note" entry (same key home uses); + there files into my first category. */
+private const val ALL = "all"
+private const val ALL_NAME = "כל הפתקים"
+
 /*
  * RTL, whatever the device language. RemoteViews lay out by the launcher's (= the device's) direction,
  * and wrapping rows in an RTL frame nested RemoteViews too deep: the list items silently vanished.
@@ -222,10 +225,12 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
     val context = LocalContext.current
     val c = remember(settings.theme, settings.accent) { WColors(settings) }
     val tree = remember(cats) { CatTree(cats) }
-    val tops = tree.tops
-    val cat = tops.firstOrNull { it.id == chosen } ?: tops.firstOrNull { !it.foreign } ?: tops.firstOrNull()
-    val family = cat?.let { tree.family(it.id) }.orEmpty()
-    val shown = notes.filter { it.categoryId in family }
+    // "all notes" first, like home; a note shared with me shows only once I've placed it in a category
+    val tops = remember(tree) { listOf(CategoryEntity(ALL, ALL_NAME, -1)) + tree.tops }
+    val cat = tops.firstOrNull { it.id == chosen } ?: tops.first()
+    val all = cat.id == ALL
+    val family = remember(tree, cat.id) { if (all) emptySet() else tree.family(cat.id) }
+    val shown = notes.filter { if (all) it.categoryId.isNotEmpty() else it.categoryId in family }
     val canPick = tops.size > 1
     val menu = open && canPick
 
@@ -238,8 +243,8 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
                 RRow(
                     GlanceModifier.defaultWeight().let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
                     {
-                        val title = remember(cat?.name) { titleBitmap(context, cat?.name ?: "noted", 26f) }
-                        Image(ImageProvider(title), contentDescription = cat?.name, colorFilter = ColorFilter.tint(c.ink.p))
+                        val title = remember(cat.name) { titleBitmap(context, cat.name, 26f) }
+                        Image(ImageProvider(title), contentDescription = cat.name, colorFilter = ColorFilter.tint(c.ink.p))
                     },
                     { Spacer(GlanceModifier.width(8.dp)) },
                     { Text("${shown.size}", style = TextStyle(color = c.ink3.p, fontSize = 14.sp, fontWeight = FontWeight.Medium)) },
@@ -259,7 +264,7 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
             {
                 Box(
                     GlanceModifier.size(44.dp).cornerRadius(22.dp).background(c.accentC.p)
-                        .clickable(actionStartActivity(newNoteIntent(context, cat?.id))),
+                        .clickable(actionStartActivity(newNoteIntent(context, cat.id.takeUnless { all }))),
                     contentAlignment = Alignment.Center,
                 ) {
                     Image(ImageProvider(R.drawable.wg_plus), "פתק חדש", GlanceModifier.size(22.dp), colorFilter = ColorFilter.tint(c.accentInk.p))
@@ -268,8 +273,8 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
         )
 
         when {
-            menu -> Menu(tops, notes, tree, cat?.id, c, context)
-            shown.isEmpty() -> Empty(c, context, cat?.id)
+            menu -> Menu(tops, notes, tree, cat.id, c, context)
+            shown.isEmpty() -> Empty(c, context, cat.id.takeUnless { all })
             else -> LazyColumn(GlanceModifier.fillMaxSize()) {
                 items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
                     Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
@@ -285,7 +290,12 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
  */
 @Composable
 private fun Menu(tops: List<CategoryEntity>, notes: List<NoteEntity>, tree: CatTree, current: String?, c: WColors, context: Context) {
-    val counts = remember(notes, tops) { tops.associate { t -> tree.family(t.id).let { f -> t.id to notes.count { it.categoryId in f } } } }
+    val counts = remember(notes, tops) {
+        tops.associate { t ->
+            if (t.id == ALL) t.id to notes.count { it.categoryId.isNotEmpty() }
+            else tree.family(t.id).let { f -> t.id to notes.count { it.categoryId in f } }
+        }
+    }
     Box(GlanceModifier.fillMaxSize().padding(bottom = 12.dp)) {
         LazyColumn(GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.surface.p).padding(6.dp)) {
             items(tops, itemId = { it.id.hashCode().toLong() }) { t ->

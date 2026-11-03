@@ -81,6 +81,9 @@ import com.ohav.noted.ui.reminders.PlaceWords
 import com.ohav.noted.ui.reminders.Agenda
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -178,38 +181,47 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         val h = config.screenHeightDp.dp.toPx()
         Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
     }
-    // open a note from a notification: from its card when home shows it, else from mid-screen
-    LaunchedEffect(openNote.value) {
-        val id = openNote.value ?: return@LaunchedEffect
-        openNote.value = null
-        if (id.startsWith(com.ohav.noted.MainActivity.NEW_PREFIX)) {
-            // the widget's +: a fresh note in that category, opened mid-screen with home showing its category
-            val want = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
-            val cat = want.takeIf { w -> w.isNotEmpty() && app.notes.categoriesNow().any { it.id == w } } ?: app.notes.categoriesFirst() ?: return@LaunchedEffect
-            tab = Tab.Home
-            chrome.showCat = cat
-            val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()])
-            chrome.editor.open(n, midRect(), fresh = true)
-            return@LaunchedEffect
+    // The editor is taken by another note: let a closing one land, or put an open one away (it saves
+    // on dispose), so a notification / the widget always gets to show its note.
+    suspend fun freeEditor() {
+        val ed = chrome.editor
+        if (ed.closing) snapshotFlow { ed.note }.first { it == null }
+        else if (ed.note != null) ed.finish()
+    }
+    // Open a note from a notification (from its card when home shows it, else mid-screen) or the
+    // widget's + (a fresh note). Collected, not keyed on the value: clearing it must not cancel the
+    // open halfway through the database work — that left a new note created but never shown.
+    LaunchedEffect(Unit) {
+        snapshotFlow { openNote.value }.filterNotNull().collect { id ->
+            openNote.value = null
+            if (id.startsWith(com.ohav.noted.MainActivity.NEW_PREFIX)) {
+                // the widget's +: a fresh note in that category ("" = all notes → my first one)
+                val want = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
+                val known = want.isNotEmpty() && app.notes.categoriesNow().any { it.id == want }
+                val cat = (if (known) want else app.notes.categoriesFirst()) ?: return@collect
+                tab = Tab.Home
+                if (known) chrome.showCat = cat
+                val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()])
+                freeEditor()
+                chrome.editor.open(n, midRect(), fresh = true)
+                return@collect
+            }
+            val n = app.notes.get(id)?.takeIf { it.trashedAt == null } ?: run { toasts.show("הפתק כבר לא קיים", Ph.Info); return@collect }
+            if (chrome.editor.note?.id == id && !chrome.editor.closing) return@collect
+            freeEditor()
+            chrome.editor.open(n, chrome.editor.cardRect?.invoke(id) ?: midRect())
         }
-        val n = app.notes.get(id)?.takeIf { it.trashedAt == null } ?: run { toasts.show("הפתק כבר לא קיים", Ph.Info); return@LaunchedEffect }
-        chrome.editor.note?.let { if (it.id == id) return@LaunchedEffect }
-        val rect = chrome.editor.cardRect?.invoke(id) ?: with(density) {
-            val w = config.screenWidthDp.dp.toPx()
-            val h = config.screenHeightDp.dp.toPx()
-            Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
-        }
-        chrome.editor.open(n, rect)
     }
     val overlays = LocalOverlays.current
     // an invite link was opened: join, then the note opens from the shared tab
-    LaunchedEffect(invite.value) {
-        val token = invite.value ?: return@LaunchedEffect
+    LaunchedEffect(Unit) {
+        snapshotFlow { invite.value }.filterNotNull().collect { token ->
         invite.value = null
         openJoinSheet(app, overlays, toasts, token, onFolder = { id -> tab = Tab.Home; chrome.showCat = id }) { n ->
             tab = Tab.Shared
             sharedSeen = true
             chrome.editor.open(n, midRect())
+        }
         }
     }
     val notes by app.notes.notes.collectAsStateWithLifecycle(initialValue = emptyList())
