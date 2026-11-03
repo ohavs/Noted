@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import com.ohav.noted.wear.PlaceRem
@@ -371,8 +372,9 @@ private fun PicsLine(l: Line) {
             }
             val shown by animateFloatAsState(if (bmp != null) 1f else 0f, Motion.glide(), label = "pic")
             Box(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(12.dp)).background(C.surface), contentAlignment = Alignment.Center) {
-                if (bmp == null) Icon(Ph.Image, C.ink3, 18.dp)
-                else Image(bmp, null, Modifier.matchParentSize().graphicsLayer { alpha = shown }, contentScale = ContentScale.Crop)
+                val b: ImageBitmap? = bmp
+                if (b == null) Icon(Ph.Image, C.ink3, 18.dp)
+                else Image(bitmap = b, contentDescription = null, modifier = Modifier.matchParentSize().graphicsLayer { alpha = shown }, contentScale = ContentScale.Crop)
                 if (more > 0 && i == l.files.lastIndex) {
                     Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = .45f)), contentAlignment = Alignment.Center) {
                         BasicText("+$more", style = display(18.sp, Color.White))
