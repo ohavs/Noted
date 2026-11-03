@@ -87,7 +87,12 @@
   - `scripts/places-guard.sh` (ב-`firebase-backend.yml`, עם `FIREBASE_TOKEN` — אין צורך ב-`GCP_SA_KEY`): prep (APIs, מפתח שרת, סוד, `serviceUsageAdmin` ל-compute SA) / after (תקציב + topic, מפתח ה-APK) / report (מצב Places, הגבלות מפתחות, מכסות, תקציבים).
   - מפתח ה-APK (`noted-maps`) **לא היה נעול לאפליקציה** בפועל — עכשיו Maps SDK בלבד + `com.ohav.noted`/SHA-1, נאכף בכל ריצה.
   - פתוח: App Check (Play Integrity) — אחרי Google Play (שלב 11). חיפוש Places רק למחוברים.
-- **הבא**: שלב 9 (וידג'טים). החלטות ברירת מחדל אם הבעלים לא ענה — ראשי גדול קודם, מראה כמו כרטיסי האפליקציה (צבע פתק, squircle, פונט), בהיר/כהה לפי הגדרת האפליקציה.
+- **2026-11-03 — אבטחת מפתחות (אומת ב-CI)**: ב-APK יש רק מפתחות ציבוריים מטבעם: `noted-maps` (Maps SDK בלבד + חבילה/SHA-1; מפות חינם) ומפתח Firebase האוטומטי (ב-`google-services.json`). מפתחות Firebase (Android + Browser) צומצמו ב-`places-guard.sh after` ל-API שהאפליקציה משתמשת בהם בלבד (Auth, Firestore, Storage, FCM, App Check) — בלי Vertex AI/ML/SQL וכו'. אין ב-APK: keystore, `FIREBASE_TOKEN`, מפתח השרת של Places.
+  - **תקרת מדיה**: תקציב "noted media cap" (40 ILS לחודש, הפרויקט) → `budgetGuard` מכבה את `firebasestorage.googleapis.com` (הפתקים ממשיכים להסתנכרן; מדיה מחכה). ה-CI כבר לא מדליק Storage אוטומטית. הדלקה מחדש — ידנית. `[kill-test-media]` בהודעת commit = בדיקה מקצה לקצה (כולל וידוא שה-bucket עדיין מקושר) — עבר.
+  - סיכון שנשאר: כל חשבון Google מחובר יכול להעלות עד 40MB לקובץ לתיקייה שלו / להוריד שוב ושוב — חסום כספית ע"י התקרה; הפתרון המלא App Check (שלב 11).
+- **שלב 9a — וידג'ט ראשי (Glance 1.1.1, לא נבדק במכשיר)** `widget/NotedWidget.kt`: קטגוריה ראשית אחת (שם בפונט התצוגה של האפליקציה כ-bitmap צבוע ב-ink, מונה, חץ) — נגיעה בכותרת = הקטגוריה הבאה (נשמר לכל וידג'ט ב-Glance state). כרטיסים בצבעי הפתק (כותרת, נעוץ, תזכורת `fmtRel`, עד 5 שורות + "ועוד N"), צ'קבוקס נסמן במקום (לא לצופה בפתק משותף), נגיעה בכרטיס = העורך, `+` accent = פתק חדש בקטגוריה (`MainActivity.EXTRA_NEW_IN` → `openNote` עם `new:`). בהיר/כהה/accent לפי ההגדרות (מערכת = day/night). מתעדכן מ-`NotedApp` (notes/categories/settings, debounce 500ms). תצוגה מקדימה בבורר = `layout/widget_main_preview.xml`.
+  - מגבלה: כיוון ה-RTL בוידג'ט לפי שפת המכשיר (RemoteViews) — במכשיר באנגלית הסדר יתהפך.
+- **הבא**: 9b — פתק בודד (בחירת פתק בהגדרת הוידג'ט), יצירה מהירה, ערימה, תזכורות קרובות.
   - במקביל הבעלים בודק 7b + 8a+8b+8c במכשירים.
 - **מכסות Places (New) שהבעלים הגדיר ב-2026-11-03** (אין מכסה יומית ב-New, רק לדקה): `AutocompletePlacesRequest per minute` 30, `... per minute per user` 30, `GetPlaceRequest per minute` 10, `... per minute per user` 10. פרויקט `noted-ce451`.
 - (ל-token בסשן אין הרשאת actions:write → הרצה מחדש של CI רק דרך push.)
