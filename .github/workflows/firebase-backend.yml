@@ -25,7 +25,8 @@ jobs:
         run: |
           AT=$(node -e "require('$(npm root -g)/firebase-tools/lib/auth').getAccessToken(process.env.FIREBASE_TOKEN, []).then(t => console.log(t.access_token))")
           echo "::add-mask::$AT"
-          for api in firestore.googleapis.com firebaserules.googleapis.com firebasestorage.googleapis.com \
+          # firebasestorage is left out on purpose: the media cap may have turned it off (turn it back on by hand)
+          for api in firestore.googleapis.com firebaserules.googleapis.com \
             cloudfunctions.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com run.googleapis.com \
             eventarc.googleapis.com pubsub.googleapis.com cloudscheduler.googleapis.com fcm.googleapis.com; do
             curl -fsS -X POST -H "Authorization: Bearer $AT" -H "Content-Length: 0" \
@@ -68,13 +69,16 @@ jobs:
             echo "retrying in 90s"; sleep 90
           done
           exit 1
-      - name: Kill-switch budget + APK key to Maps SDK only
+      - name: Budgets (Places kill switch, media cap) + API keys narrowed
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: bash scripts/places-guard.sh after || echo "::warning::places after-deploy incomplete"
       - name: Kill-switch end-to-end test (commit message has [kill-test])
         if: contains(github.event.head_commit.message, '[kill-test]')
         run: bash scripts/places-guard.sh killtest
+      - name: Media-cap end-to-end test (commit message has [kill-test-media])
+        if: contains(github.event.head_commit.message, '[kill-test-media]')
+        run: bash scripts/places-guard.sh killtest "noted media cap" firebasestorage.googleapis.com
       - name: Report
         if: always()
         run: bash scripts/places-guard.sh report
