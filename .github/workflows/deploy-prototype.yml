@@ -33,7 +33,12 @@ jobs:
         if: steps.tok.outputs.ok == 'true'
         run: |
           for i in 1 2 3 4 5 6; do
-            if curl -fsS https://noted-ce451.web.app/ | grep -q 'noted'; then echo "live ok"; exit 0; fi
+            if curl -fsS https://noted-ce451.web.app/ | grep -q 'noted' \
+              && curl -fsS https://noted-ce451.web.app/.well-known/assetlinks.json | grep -q 'com.ohav.noted' \
+              && curl -fsS https://noted-ce451.web.app/i/TestTokenAbcdefgh | grep -q 'הוזמנת לפתק'; then
+              curl -sSI https://noted-ce451.web.app/.well-known/assetlinks.json | grep -i '^content-type'
+              echo "live ok"; exit 0
+            fi
             sleep 5
           done
           echo "::error::site not reachable after deploy"; exit 1
