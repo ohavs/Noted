@@ -28,7 +28,13 @@ fb apps:sdkconfig ANDROID "$ID" -o app/google-services.json >/dev/null
 jq -e . app/google-services.json >/dev/null
 if ! jq -e '[.client[].oauth_client[]? | select(.client_type == 3)] | length > 0' app/google-services.json >/dev/null; then
   echo "::warning::No web OAuth client in google-services.json — enable Google sign-in in Firebase Authentication."
+else
+  echo "Google sign-in: web OAuth client present"
 fi
 
 # Storage rules follow as soon as the owner has set up Storage in the console.
-(cd "$(dirname "$0")/.." && fb deploy --only storage >/dev/null 2>&1 && echo "storage rules deployed") || echo "storage not set up yet"
+if out=$(cd "$(dirname "$0")/.." && fb deploy --only storage 2>&1); then
+  echo "storage rules deployed"
+else
+  echo "::warning::storage rules not deployed:"; tail -n 5 <<<"$out"
+fi
