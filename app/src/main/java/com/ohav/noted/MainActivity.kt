@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ohav.noted.design.NotedTheme
 import com.ohav.noted.ui.NotedRoot
+import com.ohav.noted.ui.intro.IntroHost
 
 class MainActivity : ComponentActivity() {
     /** A note to open, from a reminder notification; consumed by the UI. */
@@ -29,9 +30,14 @@ class MainActivity : ComponentActivity() {
         preferHighRefreshRate()
         val app = application as NotedApp
         if (savedInstanceState == null) takeOpen(intent)
+        // the splash plays on a fresh launch only — not when a notification / the widget / a link
+        // brought the app up for one thing, and not when the activity is just recreated
+        val splash = savedInstanceState == null && openNote.value == null && invite.value == null
         setContent {
             val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = null)
-            settings?.let { NotedTheme(it) { NotedRoot(app, openNote, invite) } }
+            settings?.let {
+                NotedTheme(it) { IntroHost(app, it.onboarded, splash) { NotedRoot(app, openNote, invite) } }
+            }
         }
         warmMaps()
     }
