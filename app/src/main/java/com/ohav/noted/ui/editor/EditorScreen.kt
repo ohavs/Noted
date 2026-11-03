@@ -172,6 +172,8 @@ object Start {
     const val VOICE = "voice"
     const val CAMERA = "camera"
     const val REMIND = "remind"
+    /** A note from a template: the cursor waits in its first empty row. */
+    const val TEMPLATE = "template"
 }
 
 class EditorNav {
@@ -179,6 +181,10 @@ class EditorNav {
         private set
     var from by mutableStateOf(Rect.Zero)
     var fresh = false
+        private set
+
+    /** The new note came from a template: left as it came, it goes away like an empty one. */
+    var template = false
         private set
     var closing by mutableStateOf(false)
     val p = Animatable(0f)
@@ -221,6 +227,7 @@ class EditorNav {
         from = rect ?: Rect.Zero
         rectNow = from
         this.fresh = fresh
+        template = fresh && start == Start.TEMPLATE
         this.held = held
         closing = false
         toCard = true
@@ -296,6 +303,8 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         when (start) {
             // a new list: straight into its first row
             Start.LIST -> state.blocks.firstOrNull()?.let { state.pendingFocus = it.id to 0 }
+            Start.TEMPLATE -> state.blocks.firstOrNull { it.type in LIST_TYPES + BlockType.P && it.text.isBlank() }
+                ?.let { state.pendingFocus = it.id to 0 } ?: runCatching { state.titleFocus.requestFocus() }
             // recording / camera / reminder take the screen: no keyboard under them
             Start.VOICE, Start.CAMERA, Start.REMIND -> Unit
             else -> if (nav.fresh || state.isEmpty) runCatching { state.titleFocus.requestFocus() }
@@ -382,7 +391,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         focus.clearFocus(force = true)
         // a new note left empty isn't kept: it shrinks away instead of landing on a card
         val sh = live?.shareInfo
-        val discard = nav.fresh && state.isEmpty && (sh == null || sh.isOwner && (!sh.shared || sh.folder.isNotEmpty()))
+        val discard = nav.fresh && (state.isEmpty || nav.template && !state.changedSinceOpen) && (sh == null || sh.isOwner && (!sh.shared || sh.folder.isNotEmpty()))
         val changed = state.changedSinceOpen && !discard
         if (discard) {
             nav.toCard = false
@@ -461,6 +470,15 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                             row.updatedAt,
                         )
                     }
+                }
+            }
+            SheetRow(Ph.Cards, "שמירה כתבנית") {
+                overlays.sheet.close()
+                scope.launch {
+                    delay(180)
+                    val (title, blocks) = state.content()
+                    val row = live ?: n
+                    com.ohav.noted.ui.templates.openSaveTemplate(app, overlays, toasts, title, blocks, NoteColor.of(row.color), row.categoryId)
                 }
             }
             SheetRow(Ph.ArrowCounterClockwise, "ביטול כל השינויים מהפתיחה") {

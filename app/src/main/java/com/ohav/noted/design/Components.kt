@@ -14,6 +14,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -73,6 +74,30 @@ fun Modifier.press(
         .graphicsLayer { scaleX = s; scaleY = s }
         .clickable(interactionSource = source, indication = null, enabled = enabled) {
             if (haptic) haptics.light()
+            onClick()
+        }
+}
+
+/** [press] with a long press too: a firmer haptic when it lands. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun Modifier.pressLong(
+    enabled: Boolean = true,
+    scale: Float = 0.94f,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+): Modifier {
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) scale else 1f, Motion.touch(), label = "pressLong")
+    val haptics = Noted.haptics
+    return this
+        .graphicsLayer { scaleX = s; scaleY = s }
+        .combinedClickable(
+            interactionSource = source, indication = null, enabled = enabled,
+            onLongClick = { haptics.medium(); onLongClick() },
+        ) {
+            haptics.light()
             onClick()
         }
 }

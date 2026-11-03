@@ -7,12 +7,13 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class, ShadowEntity::class, MediaSyncEntity::class], version = 8, exportSchema = true)
+@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class, ShadowEntity::class, MediaSyncEntity::class, TemplateEntity::class], version = 9, exportSchema = true)
 abstract class NotedDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun reminders(): ReminderDao
     abstract fun places(): PlaceDao
     abstract fun sync(): SyncDao
+    abstract fun templates(): TemplateDao
 
     companion object {
         /** v2: categories get an icon; the seeded ones keep the icons they always showed. */
@@ -83,7 +84,18 @@ abstract class NotedDatabase : RoomDatabase() {
             }
         }
 
+        /** v9: templates of my own (stage 10). */
+        private val M8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `templates` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `title` TEXT NOT NULL, " +
+                        "`blocks` TEXT NOT NULL, `color` TEXT NOT NULL, `categoryId` TEXT NOT NULL, `position` REAL NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
         fun create(context: Context): NotedDatabase =
-            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4, M4_5, M5_6, M6_7, M7_8).build()
+            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4, M4_5, M5_6, M6_7, M7_8, M8_9).build()
     }
 }

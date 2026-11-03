@@ -15,6 +15,7 @@ import com.ohav.noted.data.PlaceReminderEntity
 import com.ohav.noted.data.Privacy
 import com.ohav.noted.data.ReminderEntity
 import com.ohav.noted.data.Share
+import com.ohav.noted.data.TemplateEntity
 import com.ohav.noted.sync.Sync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -74,6 +75,7 @@ class Backup(private val app: NotedApp) {
             .put("reminders", JSONArray().apply { reminders.forEach { put(reminder(it)) } })
             .put("places", JSONArray().apply { places.forEach { put(place(it)) } })
             .put("placeReminders", JSONArray().apply { placeReminders.forEach { put(placeReminder(it)) } })
+            .put("templates", JSONArray().apply { db.templates().all().filter { !it.deleted }.forEach { put(template(it)) } })
             .put("privacy", JSONObject().apply { app.privacy.flags.value.forEach { (id, f) -> if (f != 0) put(id, f) } })
             .put("files", files.size)
         ZipOutputStream(out.buffered()).use { zip ->
@@ -252,6 +254,14 @@ class Backup(private val app: NotedApp) {
                 db.places().upsertReminder(r.copy(id = id, noteId = nid))
             }
         }
+        // templates: missing ones are added, a newer copy replaces mine (a deleted one comes back)
+        root.optJSONArray("templates")?.let { a ->
+            for (i in 0 until a.length()) {
+                val t = templateOf(a.getJSONObject(i)) ?: continue
+                val l = db.templates().get(t.id)
+                if (l == null || l.deleted || t.updatedAt > l.updatedAt) db.templates().upsert(t.copy(updatedAt = maxOf(t.updatedAt, (l?.updatedAt ?: 0L) + 1)))
+            }
+        }
         // blur marks come back as they were; a lock only where this phone has a code to open it
         restoredIds.forEach { nid ->
             val src = noteMap.entries.firstOrNull { it.value == nid }?.key ?: nid
@@ -340,6 +350,17 @@ class Backup(private val app: NotedApp) {
             id = o.getString("id"), noteId = o.getString("noteId"), blockId = o.optString("blockId"), placeId = o.getString("placeId"),
             leave = o.optBoolean("leave"), always = o.optBoolean("always"), days = o.optString("days"),
             fromMin = o.optIntOrNull("fromMin"), toMin = o.optIntOrNull("toMin"), fired = o.optBoolean("fired"), createdAt = o.optLong("createdAt"),
+        )
+    }.getOrNull()
+
+    private fun template(t: TemplateEntity) = JSONObject()
+        .put("id", t.id).put("name", t.name).put("title", t.title).put("blocks", t.blocks).put("color", t.color)
+        .put("categoryId", t.categoryId).put("position", t.position).put("updatedAt", t.updatedAt)
+
+    private fun templateOf(o: JSONObject): TemplateEntity? = runCatching {
+        TemplateEntity(
+            o.getString("id"), o.optString("name"), o.optString("title"), o.optString("blocks", "[]"), o.optString("color", "Sand"),
+            o.optString("categoryId"), o.optDouble("position", 0.0), o.optLong("updatedAt"),
         )
     }.getOrNull()
 

@@ -78,6 +78,8 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
     val s by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
     val archived by app.notes.archived.collectAsStateWithLifecycle(initialValue = emptyList())
     val trashed by app.notes.trashed.collectAsStateWithLifecycle(initialValue = emptyList())
+    val templates by app.templates.mine.collectAsStateWithLifecycle(initialValue = emptyList())
+    val overlays = com.ohav.noted.design.LocalOverlays.current
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()
@@ -93,6 +95,9 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
         Section("ארגון") {
             Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)) {
                 NavRow(Ph.FolderSimple, "קטגוריות", "שם, אייקון, סדר", onClick = onCategories)
+                NavRow(Ph.Cards, "תבניות", if (templates.isEmpty()) "4 מוכנות" else "${templates.size} שלי + 4") {
+                    com.ohav.noted.ui.templates.openTemplateList(app, overlays, toasts)
+                }
                 NavRow(Ph.Archive, "ארכיון", if (archived.isEmpty()) "ריק" else "${archived.size}") { onShelf(Shelf.Archive) }
                 NavRow(Ph.Trash, "סל מחזור", if (trashed.isEmpty()) "ריק" else "${trashed.size} · ${Bin.DAYS} יום", last = true) { onShelf(Shelf.Trash) }
             }

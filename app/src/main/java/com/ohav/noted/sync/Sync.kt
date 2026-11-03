@@ -22,6 +22,7 @@ import com.ohav.noted.data.MediaSyncEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.ShadowEntity
+import com.ohav.noted.data.TemplateEntity
 import com.ohav.noted.data.Share
 import com.ohav.noted.data.Member
 import com.ohav.noted.data.shareInfo
@@ -86,6 +87,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     /** Notes [discard]ed: a push already holding the older list must not send them back up. */
     private val discarded = HashSet<String>()
     private val catShadows = HashMap<String, CatShadow>()
+    /** My templates as the cloud has them: id → `at` (last write wins, see [pullTemplates]). */
+    private val tplCloud = HashMap<String, Long>()
+    /** The templates listener has delivered once: only then is it known what the cloud lacks. */
+    private var tplSeen = false
     /** Shared folders I'm on, as the cloud last had them (`folders/{id}`, same id as the owner's category). */
     private val folders = HashMap<String, FolderShadow>()
     /** The folders listener has heard from the server: only then may a missing folder be created. */
@@ -135,6 +140,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('c' to s) else failed(e) },
             fs.collection("folders").whereArrayContains("memberIds", uid)
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('f' to s) else failed(e) },
+            fs.collection("users").document(uid).collection("templates")
+                .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('t' to s) else failed(e) },
         )
         launch { runCatching { Push.register(ctx, uid) } }
         // nothing is pushed before this device has seen the cloud once, so a second phone merges instead of duplicating
@@ -148,12 +155,14 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                         when (k) {
                             'n' -> pullNotes(s, uid)
                             'c' -> pullCats(s, uid)
+                            't' -> pullTemplates(s)
                             else -> pullFolders(s, uid)
                         }
                     }
                     if (!s.metadata.isFromCache) when (k) {
                         'n' -> serverNotes = true
                         'c' -> serverCats = true
+                        't' -> Unit
                         else -> foldersSeen = true
                     }
                     if (!primed.value && serverNotes && serverCats) {
@@ -179,13 +188,14 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             }
             launch {
                 primed.first { it }
-                combine(notes.observeAll(), notes.observeCategories(), repush) { a, b, _ -> a to b }
+                combine(notes.observeAll(), notes.observeCategories(), db.templates().observeAll(), repush) { a, b, t, _ -> Triple(a, b, t) }
                     .debounce(700)
-                    .collect { (ns, cs) ->
+                    .collect { (ns, cs, ts) ->
                         mutex.withLock {
                             pushCats(fs, uid, cs)
                             pushFolders(fs, u, cs)
                             pushNotes(fs, u, ns, cs)
+                            pushTemplates(fs, uid, ts)
                         }
                         kick()
                     }
@@ -220,6 +230,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             prefs.edit().putString("uid", uid).apply()
         }
         noteShadows.clear(); catShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
+        tplCloud.clear(); tplSeen = false
         dao.shadows().forEach { s ->
             when {
                 s.id.startsWith("n:") -> NoteShadow.decode(s.json)?.let { noteShadows[s.id.drop(2)] = it }
@@ -482,6 +493,49 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             val gone = sh.copy(deleted = true)
             catShadows[id] = gone
             dao.putShadow(ShadowEntity("c:$id", gone.encode()))
+        }
+    }
+
+    // ------------------------------------------------------------------ templates
+
+    /**
+     * `users/{uid}/templates/{id}`: whole documents, newest `at` wins. A template is small and
+     * only mine, so a per-field merge would buy nothing; a deletion is a tombstone (`deleted`).
+     */
+    private suspend fun pullTemplates(s: QuerySnapshot) {
+        val tpl = db.templates()
+        for (d in s.documents) {
+            if (d.metadata.hasPendingWrites()) continue
+            val at = d.getLong("at") ?: continue
+            tplCloud[d.id] = at
+            val local = tpl.get(d.id)
+            if (local != null && local.updatedAt >= at) continue
+            tpl.upsert(
+                TemplateEntity(
+                    id = d.id, name = d.getString("name").orEmpty(), title = d.getString("title").orEmpty(),
+                    blocks = d.getString("blocks") ?: "[]", color = d.getString("color") ?: "Sand",
+                    categoryId = d.getString("cat").orEmpty(), position = d.getDouble("pos") ?: 0.0,
+                    updatedAt = at, deleted = d.getBoolean("deleted") == true,
+                )
+            )
+        }
+        if (!s.metadata.isFromCache) tplSeen = true
+    }
+
+    private fun pushTemplates(fs: FirebaseFirestore, uid: String, rows: List<TemplateEntity>) {
+        if (!tplSeen) return
+        val col = fs.collection("users").document(uid).collection("templates")
+        for (t in rows) {
+            if (t.updatedAt <= (tplCloud[t.id] ?: -1L)) continue
+            if (t.deleted && t.id !in tplCloud) continue // never reached the cloud: nothing to bury
+            col.document(t.id).set(
+                if (t.deleted) mapOf("deleted" to true, "at" to t.updatedAt)
+                else mapOf(
+                    "name" to t.name, "title" to t.title, "blocks" to t.blocks, "color" to t.color,
+                    "cat" to t.categoryId, "pos" to t.position, "at" to t.updatedAt, "deleted" to false,
+                )
+            )
+            tplCloud[t.id] = t.updatedAt
         }
     }
 

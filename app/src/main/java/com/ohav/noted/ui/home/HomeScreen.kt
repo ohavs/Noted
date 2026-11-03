@@ -107,6 +107,7 @@ import com.ohav.noted.design.Shapes
 import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.ToastState
 import com.ohav.noted.design.press
+import com.ohav.noted.design.pressLong
 import com.ohav.noted.design.softShadow
 import com.ohav.noted.design.SoftShadow
 import com.ohav.noted.ui.Chrome
@@ -548,6 +549,25 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             chrome.editor.open(n, fabRect, fresh = true)
         }
     }
+    /** Long press on + : a note from a template, in the template's category when it still has one. */
+    fun addFromTemplate(t: com.ohav.noted.data.Template) {
+        val here = dbCats.firstOrNull { it.id == (tree.parentOf[cat] ?: cat) }
+        val writable = dbCats.filter { !(it.foreign && it.shareInfo.readOnly) }.map { it.id }.toSet()
+        val own = t.categoryId.takeIf { it in writable }
+        if (own == null && here != null && here.foreign && here.shareInfo.readOnly) {
+            haptics.reject()
+            toasts.show("ב״${here.name}״ יש לך הרשאת צפייה בלבד", Ph.Eye)
+            return
+        }
+        val target = own ?: if (cat == "all") (tree.tops.firstOrNull { !it.foreign } ?: tree.tops.firstOrNull())?.id ?: "home" else cat
+        scope.launch {
+            val n = app.notes.create(target, t.color, title = t.title, blocks = com.ohav.noted.data.Templates.rowsFor(t))
+            if (shownCat != "all" && target !in tree.family(shownCat)) cat = "all"
+            focusNew = n.id
+            haptics.confirm()
+            chrome.editor.open(n, fabRect, fresh = true, start = com.ohav.noted.ui.editor.Start.TEMPLATE)
+        }
+    }
     DisposableEffect(chrome.editor) {
         chrome.editor.cardRect = { id -> cardRect(id) }
         onDispose { chrome.editor.cardRect = null }
@@ -727,7 +747,10 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 }
                 .size(66.dp)
                 .onGloballyPositioned { fabRect = it.boundsInRoot() }
-                .press(enabled = !searching && !selecting, scale = .9f) { addNote() }
+                .pressLong(
+                    enabled = !searching && !selecting, scale = .9f,
+                    onLongClick = { com.ohav.noted.ui.templates.openTemplatePicker(app, overlays, toasts, ::addFromTemplate) },
+                ) { addNote() }
                 .softShadow(fabShadow, 24.dp, c.accent)
                 .clip(Squircle(24.dp))
                 .background(c.accent),

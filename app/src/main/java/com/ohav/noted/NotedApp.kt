@@ -34,12 +34,14 @@ class NotedApp : Application() {
     lateinit var bin: com.ohav.noted.sync.Bin private set
     lateinit var privacy: com.ohav.noted.data.Privacy private set
     lateinit var backup: com.ohav.noted.backup.Backup private set
+    lateinit var templates: com.ohav.noted.data.Templates private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
         super.onCreate()
         db = NotedDatabase.create(this)
         notes = NotesRepository(db)
+        templates = com.ohav.noted.data.Templates(db)
         privacy = com.ohav.noted.data.Privacy(this)
         reminders = Reminders(this, db)
         places = Places(this, db)
