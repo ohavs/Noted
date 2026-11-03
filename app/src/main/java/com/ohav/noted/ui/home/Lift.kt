@@ -249,16 +249,19 @@ private fun ActionMenu(
             .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 14.dp),
     ) {
         // swatches
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        // each swatch takes an equal share of the width, so 8 never overflow on a narrow card
+        Row(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
             NoteColor.entries.forEach { col ->
                 val on = NoteColor.of(n.color) == col
                 Box(
                     Modifier
-                        .size(42.dp)
+                        .weight(1f)
+                        .height(42.dp)
                         .press(scale = .82f) { onColor(col) }
                         .drawBehind {
-                            if (on) drawCircle(c.inverseInk, 21.dp.toPx() - 1.dp.toPx(), style = Stroke(2.dp.toPx()))
-                            drawCircle(c.note(col), 16.dp.toPx())
+                            val ring = minOf(20.dp.toPx(), size.width / 2f - 1.dp.toPx())
+                            if (on) drawCircle(c.inverseInk, ring, style = Stroke(2.dp.toPx()))
+                            drawCircle(c.note(col), ring - 4.5.dp.toPx())
                         },
                 )
             }
