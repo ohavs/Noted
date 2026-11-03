@@ -934,6 +934,9 @@ private fun CategoryTrack(
     }
 }
 
+private fun nearestItem(state: LazyListState): Int =
+    state.layoutInfo.visibleItemsInfo.minByOrNull { abs(it.offset) }?.index ?: state.firstVisibleItemIndex
+
 /** Brings item [i] to the start edge (glides there if it's on screen). */
 private suspend fun LazyListState.alignTo(i: Int) {
     if (isScrollInProgress) return
