@@ -81,6 +81,7 @@ import com.ohav.noted.R
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.data.MediaExtra
 import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
