@@ -195,15 +195,19 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         snapshotFlow { openNote.value }.filterNotNull().collect { id ->
             openNote.value = null
             if (id.startsWith(com.ohav.noted.MainActivity.NEW_PREFIX)) {
-                // the widget's +: a fresh note in that category ("" = all notes → my first one)
-                val want = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
+                // the widget's + / quick create: a fresh note ("<mode>:<category>", "" = my first category)
+                val spec = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
+                val mode = spec.substringBefore(':')
+                val want = spec.substringAfter(':', "")
                 val known = want.isNotEmpty() && app.notes.categoriesNow().any { it.id == want }
                 val cat = (if (known) want else app.notes.categoriesFirst()) ?: return@collect
                 tab = Tab.Home
                 if (known) chrome.showCat = cat
-                val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()])
+                val first = if (mode == com.ohav.noted.ui.editor.Start.LIST)
+                    listOf(com.ohav.noted.data.Block(java.util.UUID.randomUUID().toString(), com.ohav.noted.data.BlockType.Check)) else emptyList()
+                val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()], blocks = first)
                 freeEditor()
-                chrome.editor.open(n, midRect(), fresh = true)
+                chrome.editor.open(n, midRect(), fresh = true, start = mode)
                 return@collect
             }
             val n = app.notes.get(id)?.takeIf { it.trashedAt == null } ?: run { toasts.show("הפתק כבר לא קיים", Ph.Info); return@collect }

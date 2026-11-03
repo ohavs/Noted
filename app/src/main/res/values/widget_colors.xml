@@ -6,4 +6,7 @@
     <color name="wg_note_ink">#FF1D1A15</color>
     <color name="wg_butter">#FFFAE5A0</color>
     <color name="wg_mint">#FFC6EAD5</color>
+    <color name="wg_surface">#FFFFFDF9</color>
+    <color name="wg_ink2">#FF6B655C</color>
+    <color name="wg_accent">#FFE0542C</color>
 </resources>

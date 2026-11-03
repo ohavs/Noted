@@ -165,6 +165,15 @@ import kotlin.math.min
  * top — and is released with the finger's velocity.
  */
 @Stable
+/** Quick-create modes: how a new note from the widget opens (MainActivity.EXTRA_NEW_MODE). */
+object Start {
+    const val TEXT = "text"
+    const val LIST = "list"
+    const val VOICE = "voice"
+    const val CAMERA = "camera"
+    const val REMIND = "remind"
+}
+
 class EditorNav {
     var note by mutableStateOf<NoteEntity?>(null)
         private set
@@ -194,9 +203,13 @@ class EditorNav {
 
     val openId: String? get() = note?.id
 
-    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false): Boolean {
+    /** What to start once the page is up (the quick-create widget): see [Start]. Consumed by the page. */
+    internal var start: String? = null
+
+    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false, start: String? = null): Boolean {
         if (note != null) return false
         note = n
+        this.start = start
         from = rect ?: Rect.Zero
         rectNow = from
         this.fresh = fresh
@@ -261,9 +274,17 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         nav.p.animateTo(1f, Motion.glide())
     }
     LaunchedEffect(n.id) {
+        val start = nav.start
         snapshotFlow { nav.held }.first { !it }
         delay(260)
-        if (!nav.closing && (nav.fresh || state.isEmpty)) runCatching { state.titleFocus.requestFocus() }
+        if (nav.closing) return@LaunchedEffect
+        when (start) {
+            // a new list: straight into its first row
+            Start.LIST -> state.blocks.firstOrNull()?.let { state.pendingFocus = it.id to 0 }
+            // recording / camera / reminder take the screen: no keyboard under them
+            Start.VOICE, Start.CAMERA, Start.REMIND -> Unit
+            else -> if (nav.fresh || state.isEmpty) runCatching { state.titleFocus.requestFocus() }
+        }
     }
     fun remindAt(blockId: String, line: String?, place: Boolean) {
         keyboard?.hide()
@@ -596,6 +617,18 @@ private fun EditorPage(
     val overlays = LocalOverlays.current
     val density = LocalDensity.current
     val remindNow = LocalRemind.current
+    // opened from the quick-create widget: start what was asked for once the page has grown in
+    LaunchedEffect(state) {
+        val start = nav.start ?: return@LaunchedEffect
+        delay(380)
+        nav.start = null
+        if (nav.closing) return@LaunchedEffect
+        when (start) {
+            Start.VOICE -> media.record()
+            Start.CAMERA -> media.camera()
+            Start.REMIND -> remindNow("", null)
+        }
+    }
 
     // Pull down from the top of the page → the page folds back into its card. Only a drag that
     // starts with the page already at its top counts; a scroll that reaches the top just stops.

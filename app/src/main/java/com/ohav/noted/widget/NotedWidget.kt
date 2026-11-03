@@ -118,7 +118,12 @@ class NotedWidget : GlanceAppWidget() {
     companion object {
         val CAT = stringPreferencesKey("cat")
         val OPEN = booleanPreferencesKey("open")
-        suspend fun refresh(context: Context) = runCatching { NotedWidget().updateAll(context) }
+        /** Every noted widget on the home screen (main, single note, quick create). */
+        suspend fun refresh(context: Context) {
+            runCatching { NotedWidget().updateAll(context) }
+            runCatching { NoteWidget().updateAll(context) }
+            runCatching { QuickWidget().updateAll(context) }
+        }
     }
 }
 
@@ -127,14 +132,14 @@ class NotedWidgetReceiver : GlanceAppWidgetReceiver() {
 }
 
 /** One colour, day and night (equal when the app forces light or dark). */
-private class Tone(val day: Color, val night: Color) {
+internal class Tone(val day: Color, val night: Color) {
     val p: ColorProvider = if (day == night) ColorProvider(day) else androidx.glance.color.ColorProvider(day = day, night = night)
     fun now(context: Context): Color =
         if ((context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES) night else day
 }
 
 /** The palette the widget draws with: fixed by the app setting, or day/night when it follows the system. */
-private class WColors(s: AppSettings) {
+internal class WColors(s: AppSettings) {
     private val mode = s.theme
     private val accent = s.accent
     private fun pick(light: Color, dark: Color): Tone = when (mode) {
@@ -157,7 +162,7 @@ private class WColors(s: AppSettings) {
     fun note(c: NoteColor) = pick(c.light, c.dark)
 }
 
-private const val MAX_ROWS = 5
+internal const val MAX_ROWS = 5
 
 /** The widget's own "every note" entry (same key home uses); + there files into my first category. */
 private const val ALL = "all"
@@ -170,12 +175,12 @@ private const val ALL_NAME = "כל הפתקים"
  * right), paddings are absolute, and text goes through [RText] (right-aligned, direction from the content).
  */
 
-private val hostRtl: Boolean
+internal val hostRtl: Boolean
     get() = Resources.getSystem().configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
 
 /** A row whose slots are given right-to-left; on an LTR launcher they're laid out reversed. */
 @Composable
-private fun RRow(modifier: GlanceModifier = GlanceModifier, vararg slots: @Composable RowScope.() -> Unit) {
+internal fun RRow(modifier: GlanceModifier = GlanceModifier, vararg slots: @Composable RowScope.() -> Unit) {
     val rtl = hostRtl
     Row(modifier, horizontalAlignment = if (rtl) Alignment.Start else Alignment.End, verticalAlignment = Alignment.CenterVertically) {
         val scope = this
@@ -183,10 +188,10 @@ private fun RRow(modifier: GlanceModifier = GlanceModifier, vararg slots: @Compo
     }
 }
 
-private enum class W { Normal, Medium, Bold }
+internal enum class W { Normal, Medium, Bold }
 
 @Composable
-private fun RText(
+internal fun RText(
     text: String,
     color: Tone,
     size: Float,
@@ -349,7 +354,7 @@ private fun Empty(c: WColors, context: Context, cat: String?) {
 }
 
 @Composable
-private fun Card(n: NoteEntity, c: WColors, context: Context) {
+internal fun Card(n: NoteEntity, c: WColors, context: Context) {
     val blocks = remember(n.blocks) { Blocks.parse(n.blocks) }
     val canTick = remember(n.share) { Share.parse(n.share).role != Share.ROLE_VIEWER }
     val lines = blocks.filter { it.type != BlockType.Divider && (it.type !in TEXT || clean(it.text).isNotBlank()) }
@@ -386,12 +391,12 @@ private fun Card(n: NoteEntity, c: WColors, context: Context) {
     }
 }
 
-private val TEXT = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
+internal val TEXT = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 
-private fun clean(s: String) = s.replace("​", "").trim()
+internal fun clean(s: String) = s.replace("​", "").trim()
 
 @Composable
-private fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
+internal fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
     val text = clean(b.text)
     val indent = (b.indent.coerceIn(0, 3) * 12).dp
     when (b.type) {
@@ -437,18 +442,20 @@ private fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
     }
 }
 
-private val NOTE = ActionParameters.Key<String>("note")
-private val BLOCK = ActionParameters.Key<String>("block")
+internal val NOTE = ActionParameters.Key<String>("note")
+internal val BLOCK = ActionParameters.Key<String>("block")
 
-private fun openNoteIntent(context: Context, id: String) = Intent(context, MainActivity::class.java)
+internal fun openNoteIntent(context: Context, id: String) = Intent(context, MainActivity::class.java)
     .setData(Uri.parse("noted-widget://note/$id"))
     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     .putExtra(Notifier.EXTRA_NOTE, id)
 
-private fun newNoteIntent(context: Context, cat: String?) = Intent(context, MainActivity::class.java)
-    .setData(Uri.parse("noted-widget://new/${cat.orEmpty()}"))
+/** A new note, opened straight in the editor; [mode] = how it starts (ui.editor.Start). */
+internal fun newNoteIntent(context: Context, cat: String?, mode: String = "text") = Intent(context, MainActivity::class.java)
+    .setData(Uri.parse("noted-widget://new/$mode/${cat.orEmpty()}"))
     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     .putExtra(MainActivity.EXTRA_NEW_IN, cat.orEmpty())
+    .putExtra(MainActivity.EXTRA_NEW_MODE, mode)
 
 /** Ticks one checklist row from the home screen. */
 class ToggleCheck : ActionCallback {
@@ -456,7 +463,8 @@ class ToggleCheck : ActionCallback {
         val note = parameters[NOTE] ?: return
         val block = parameters[BLOCK] ?: return
         (context.applicationContext as NotedApp).notes.toggleCheck(note, block)
-        NotedWidget().update(context, glanceId)
+        // the row may show on several widgets (the stack and a single-note one)
+        NotedWidget.refresh(context)
     }
 }
 
@@ -486,7 +494,7 @@ class SelectCategory : ActionCallback {
  * A name in the app's display face (Karantina). RemoteViews can't take a custom typeface, so it's drawn
  * into a white-on-clear bitmap and tinted with the ink colour (day/night safe).
  */
-private fun titleBitmap(context: Context, text: String, sizeSp: Float): Bitmap {
+internal fun titleBitmap(context: Context, text: String, sizeSp: Float): Bitmap {
     val dm = context.resources.displayMetrics
     val tf = runCatching { ResourcesCompat.getFont(context, R.font.karantina_bold) }.getOrNull() ?: Typeface.DEFAULT_BOLD
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {

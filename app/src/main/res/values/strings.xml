@@ -6,5 +6,17 @@
     <string name="widget_preview_cat">קניות</string>
     <string name="widget_preview_note1">לסופר</string>
     <string name="widget_preview_line1">חלב · ביצים · לחם</string>
+    <string name="widget_note_label">פתק בודד</string>
+    <string name="widget_note_desc">פתק אחד שלם על המסך — סימון שורות ישר מהוידג'ט</string>
+    <string name="widget_note_preview_1">○  חלב</string>
+    <string name="widget_note_preview_2">○  ביצים</string>
+    <string name="widget_note_preview_3">✓  לחם</string>
+    <string name="widget_quick_label">יצירה מהירה</string>
+    <string name="widget_quick_desc">פתק, רשימה, הקלטה, צילום או תזכורת — בנגיעה אחת</string>
+    <string name="quick_note">פתק</string>
+    <string name="quick_list">רשימה</string>
+    <string name="quick_voice">הקלטה</string>
+    <string name="quick_camera">צילום</string>
+    <string name="quick_remind">תזכורת</string>
     <string name="widget_preview_note2">מתנה לדנה</string>
 </resources>

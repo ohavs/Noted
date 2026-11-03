@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal" android:padding="4dp" android:layoutDirection="rtl"
+    android:background="@drawable/wg_preview_bg">
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_marginStart="3dp" android:layout_marginEnd="3dp"
+        android:orientation="vertical" android:gravity="center"
+        android:background="@drawable/wg_preview_accent">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/wg_note_pencil"
+            android:tint="#FFFFFFFF" android:importantForAccessibility="no" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingTop="4dp"
+            android:text="@string/quick_note" android:textSize="11.5sp" android:textColor="#FFFFFFFF" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_marginStart="3dp" android:layout_marginEnd="3dp"
+        android:orientation="vertical" android:gravity="center"
+        android:background="@drawable/wg_preview_surface">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/wg_check_square"
+            android:tint="@color/wg_ink" android:importantForAccessibility="no" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingTop="4dp"
+            android:text="@string/quick_list" android:textSize="11.5sp" android:textColor="@color/wg_ink2" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_marginStart="3dp" android:layout_marginEnd="3dp"
+        android:orientation="vertical" android:gravity="center"
+        android:background="@drawable/wg_preview_surface">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/wg_microphone"
+            android:tint="@color/wg_ink" android:importantForAccessibility="no" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingTop="4dp"
+            android:text="@string/quick_voice" android:textSize="11.5sp" android:textColor="@color/wg_ink2" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_marginStart="3dp" android:layout_marginEnd="3dp"
+        android:orientation="vertical" android:gravity="center"
+        android:background="@drawable/wg_preview_surface">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/wg_camera"
+            android:tint="@color/wg_ink" android:importantForAccessibility="no" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingTop="4dp"
+            android:text="@string/quick_camera" android:textSize="11.5sp" android:textColor="@color/wg_ink2" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+        android:layout_marginStart="3dp" android:layout_marginEnd="3dp"
+        android:orientation="vertical" android:gravity="center"
+        android:background="@drawable/wg_preview_surface">
+        <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/wg_bell"
+            android:tint="@color/wg_ink" android:importantForAccessibility="no" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:paddingTop="4dp"
+            android:text="@string/quick_remind" android:textSize="11.5sp" android:textColor="@color/wg_ink2" />
+    </LinearLayout>
+</LinearLayout>

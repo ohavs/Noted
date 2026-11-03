@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
 
     private fun takeOpen(intent: Intent?) {
         intent?.getStringExtra(com.ohav.noted.reminders.Notifier.EXTRA_NOTE)?.let { openNote.value = it }
-        intent?.getStringExtra(EXTRA_NEW_IN)?.let { openNote.value = NEW_PREFIX + it }
+        intent?.getStringExtra(EXTRA_NEW_IN)?.let { openNote.value = NEW_PREFIX + (intent.getStringExtra(EXTRA_NEW_MODE) ?: "text") + ":" + it }
         if (intent?.action == Intent.ACTION_VIEW) com.ohav.noted.sync.Sharing.tokenOf(intent.dataString)?.let { invite.value = it }
     }
 
@@ -77,7 +77,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** From the widget's +: a new note in this category ("" = the first one). */
         const val EXTRA_NEW_IN = "new_in"
-        /** [openNote] value meaning "create one in <category>" rather than an id. */
+        /** How the new note opens: text / list / voice / camera / remind (see ui.editor.Start). */
+        const val EXTRA_NEW_MODE = "new_mode"
+        /** [openNote] value meaning "create one: <mode>:<category>" rather than an id. */
         const val NEW_PREFIX = "new:"
     }
 }
