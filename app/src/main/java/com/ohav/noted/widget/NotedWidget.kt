@@ -249,8 +249,9 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
         RRow(
             GlanceModifier.fillMaxWidth().absolutePadding(right = 4.dp, bottom = 8.dp).clickable(actionStartActivity(openAppIntent(context))),
             {
+                // only the name, count and caret open the list; the blank run up to + opens the app
                 RRow(
-                    GlanceModifier.defaultWeight().let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
+                    GlanceModifier.let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
                     {
                         val title = remember(cat.name) { titleBitmap(context, cat.name, 26f) }
                         Image(ImageProvider(title), contentDescription = cat.name, colorFilter = ColorFilter.tint(c.ink.p))
@@ -270,6 +271,7 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
                     },
                 )
             },
+            { Spacer(GlanceModifier.defaultWeight()) },
             {
                 Box(
                     GlanceModifier.size(44.dp).cornerRadius(22.dp).background(c.accentC.p)

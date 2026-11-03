@@ -1,7 +1,6 @@
 package com.ohav.noted.ui.home
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
@@ -23,6 +22,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.design.Motion
+import com.ohav.noted.design.Paced
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -43,9 +43,10 @@ object StackDims {
 /** Per-card motion: layout slot, height, depth behind the open card, staggered entrance. */
 @Stable
 class CardAnim(top: Float, height: Float, enter: Float) {
-    val top = Animatable(top)
-    val height = Animatable(height)
-    val depth = Animatable(0f)
+    // frame-paced: the first frames of an unfold are heavy and must not swallow the move
+    val top = Paced(top)
+    val height = Paced(height)
+    val depth = Paced(0f, .001f)
     val enter = Animatable(enter)
 }
 
@@ -98,23 +99,21 @@ class StackState {
         used
     }
 
-    private val glide = Animatable(0f)
+    private val glide = Paced(0f)
 
     /**
-     * Programmatic scroll on the glide spring. A new target while one is still running picks up
-     * the current velocity instead of restarting from rest, so retargets (an open card that
-     * measures taller a frame later, a second tap) stay one continuous motion.
+     * Programmatic scroll on the glide spring, paced like the cards so the two stay in step. A new
+     * target while one is still running picks up the current velocity instead of restarting from
+     * rest, so retargets (an open card that measures taller a frame later, a second tap) stay one
+     * continuous motion.
      */
-    suspend fun animateTo(target: Float, spec: AnimationSpec<Float> = Motion.glide()) {
-        val v0 = if (glide.isRunning) glide.velocity else 0f
+    suspend fun animateTo(target: Float) {
         try {
             scrollable.scroll {
                 // set inside: the run this one interrupts clears the flag on its way out
                 auto = true
-                glide.snapTo(value)
-                glide.animateTo(target.coerceIn(0f, maxValue), spec, initialVelocity = v0) {
-                    scrollBy(this.value - this@StackState.value)
-                }
+                glide.follow(value)
+                glide.glideTo(target.coerceIn(0f, maxValue)) { scrollBy(it - this@StackState.value) }
             }
         } finally {
             auto = false
@@ -205,9 +204,9 @@ fun NoteStack(
     // existing cards glide to their new slots; new ones were created in place
     LaunchedEffect(tops, heights, ei) {
         holders.forEachIndexed { i, h ->
-            launch { h.top.animateTo(tops[i], Motion.glide()) }
-            launch { h.height.animateTo(heights[i], Motion.glide()) }
-            launch { h.depth.animateTo(if (ei >= 0 && i < ei) (ei - i).toFloat() else 0f, Motion.glide()) }
+            launch { h.top.glideTo(tops[i]) }
+            launch { h.height.glideTo(heights[i]) }
+            launch { h.depth.glideTo(if (ei >= 0 && i < ei) (ei - i).toFloat() else 0f) }
         }
     }
     LaunchedEffect(state.enterGen) {
