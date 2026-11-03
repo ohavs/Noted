@@ -3,7 +3,7 @@ name: Firebase backend (Firestore, Storage rules, Functions)
 on:
   push:
     branches: [main, 'ccr-*']
-    paths: ['functions/**', 'firestore.rules', 'firestore.indexes.json', 'storage.rules', 'firebase.json', '.github/workflows/firebase-backend.yml']
+    paths: ['functions/**', 'firestore.rules', 'firestore.indexes.json', 'storage.rules', 'firebase.json', 'scripts/places-guard.sh', '.github/workflows/firebase-backend.yml']
   workflow_dispatch:
 
 concurrency:
@@ -57,7 +57,9 @@ jobs:
           if ! firebase deploy --only storage --project noted-ce451 --non-interactive; then
             echo "::warning::Storage not set up yet (needs Blaze + 'Get started' in the console) — media sync stays off."
           fi
-      - name: Functions (sharing fan-out + notifications)
+      - name: Places server key + kill-switch permissions
+        run: bash scripts/places-guard.sh prep || echo "::warning::places prep incomplete"
+      - name: Functions (sharing fan-out, notifications, Places, kill switch)
         run: |
           npm ci --prefix functions --silent
           # the first deploy can race Eventarc/Cloud Build permissions that are still propagating
@@ -66,3 +68,10 @@ jobs:
             echo "retrying in 90s"; sleep 90
           done
           exit 1
+      - name: Kill-switch budget + APK key to Maps SDK only
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
+        run: bash scripts/places-guard.sh after || echo "::warning::places after-deploy incomplete"
+      - name: Report
+        if: always()
+        run: bash scripts/places-guard.sh report

@@ -262,3 +262,6 @@ exports.flush = onSchedule({ schedule: 'every 1 minutes', timeZone: 'Asia/Jerusa
     try { await deliver(d.id, d.data()); } catch (e) { logger.error('deliver', d.id, e); }
   }
 });
+
+// ------------------------------------------------------------------ places search + kill switch
+Object.assign(exports, require('./places'));
