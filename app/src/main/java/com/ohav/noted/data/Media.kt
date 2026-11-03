@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.os.Build
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -100,17 +101,20 @@ object Media {
     fun file(ctx: Context, name: String) = File(dir(ctx), name)
     fun newName(ext: String) = UUID.randomUUID().toString().replace("-", "").take(20) + "." + ext
 
-    /** Copies an image into the app, upright and at most [maxPx] on its long side. */
-    suspend fun importImage(ctx: Context, uri: Uri, doc: Boolean = false, maxPx: Int = 2048): Pic? = withContext(Dispatchers.IO) {
+    /**
+     * Copies an image into the app as lossy WebP: upright, at most [maxPx] on its long side
+     * (photos 1920, scanned pages 2048 so small print stays sharp). Decoding already lands
+     * near the target size (power-of-two sample + exact density scale), so a 50MP shot never
+     * sits in memory at full size.
+     */
+    suspend fun importImage(ctx: Context, uri: Uri, doc: Boolean = false, maxPx: Int = if (doc) 2048 else 1920): Pic? = withContext(Dispatchers.IO) {
         runCatching {
             val cr = ctx.contentResolver
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
-            var sample = 1
-            while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxPx) sample *= 2
             val src = cr.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                BitmapFactory.decodeStream(it, null, scaledOptions(bounds.outWidth, bounds.outHeight, maxPx))
             } ?: return@runCatching null
             val rot = runCatching {
                 cr.openInputStream(uri)?.use {
@@ -125,16 +129,31 @@ object Media {
             val k = (maxPx.toFloat() / max(src.width, src.height)).coerceAtMost(1f)
             val m = Matrix().apply { if (k < 1f) postScale(k, k); if (rot != 0f) postRotate(rot) }
             val out = if (m.isIdentity) src else Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
-            val name = newName("jpg")
-            FileOutputStream(file(ctx, name)).use { out.compress(Bitmap.CompressFormat.JPEG, 88, it) }
-            Pic(name, out.width.toFloat() / out.height, doc)
+            if (out !== src) src.recycle()
+            val name = newName("webp")
+            FileOutputStream(file(ctx, name)).use { out.compress(webp, if (doc) 82 else 78, it) }
+            Pic(name, out.width.toFloat() / out.height, doc).also { out.recycle() }
         }.getOrNull()
     }
 
-    /** Saves a rendered bitmap (drawings) as PNG. */
-    suspend fun savePng(ctx: Context, bmp: Bitmap, name: String = newName("png")): String = withContext(Dispatchers.IO) {
-        FileOutputStream(file(ctx, name)).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        name
+    /** Lossy WebP (API 30 split the format; before it, WEBP below quality 100 is lossy). */
+    @Suppress("DEPRECATION")
+    private val webp: Bitmap.CompressFormat =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+
+    /**
+     * Decode options that land a [w]×[h] image at (or just under) [maxPx] on its long side:
+     * the largest power-of-two sample that stays above it, then an exact density scale.
+     */
+    fun scaledOptions(w: Int, h: Int, maxPx: Int): BitmapFactory.Options {
+        val long = max(w, h)
+        var sample = 1
+        while (long / (sample * 2) >= maxPx) sample *= 2
+        return BitmapFactory.Options().apply {
+            inSampleSize = sample
+            val sampled = long / sample
+            if (sampled > maxPx) { inScaled = true; inDensity = sampled; inTargetDensity = maxPx }
+        }
     }
 
     fun fmtMs(ms: Long): String {

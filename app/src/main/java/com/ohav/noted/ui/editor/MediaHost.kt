@@ -198,7 +198,8 @@ fun rememberMediaHost(state: EditorState, toasts: ToastState): MediaHost {
     host.launchGallery = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     host.launchCamera = {
         runCatching {
-            val dir = File(ctx.cacheDir, "camera").apply { mkdirs() }
+            // earlier full-size shots were already copied in as WebP — don't keep them in cache
+            val dir = File(ctx.cacheDir, "camera").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
             val f = File(dir, "shot-${System.currentTimeMillis()}.jpg")
             val u = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
             shot = u

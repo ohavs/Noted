@@ -78,9 +78,8 @@ private object BitmapCache {
         if (!f.exists()) return null
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.path, o)
-        var s = 1
-        while (max(o.outWidth, o.outHeight) / (s * 2) >= maxPx) s *= 2
-        return BitmapFactory.decodeFile(f.path, BitmapFactory.Options().apply { inSampleSize = s })?.asImageBitmap()
+        if (o.outWidth <= 0 || o.outHeight <= 0) return null
+        return BitmapFactory.decodeFile(f.path, Media.scaledOptions(o.outWidth, o.outHeight, maxPx))?.apply { prepareToDraw() }?.asImageBitmap()
     }
 }
 
