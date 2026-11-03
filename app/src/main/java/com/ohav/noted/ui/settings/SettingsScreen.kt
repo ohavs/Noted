@@ -2,9 +2,6 @@ package com.ohav.noted.ui.settings
 
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -30,7 +27,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -194,139 +190,50 @@ private fun AccentOption(a: Accent, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** The home-screen widgets, each with a small likeness in the current theme; pinned straight from here. */
-private enum class WKind(val title: String, val desc: String) {
-    Stack("ראשי", "קטגוריה אחת (או כל הפתקים) על המסך — סימון משימות במקום, פתק חדש בנגיעה"),
-    Deck("ערימה", "הערימה כמו באפליקציה: פסי הכותרות מעל, הפתק העליון פתוח. נגיעה בפס מעלה אותו לראש. בוחרים בהוספה: הכל, נעוצים, מועדפים או קטגוריה"),
-    Agenda("תזכורות קרובות", "שבעה ימים קדימה — היום, מחר, השבוע — ותזכורות המקום שמחכות. ✓ ו״עוד שעה״ ישר מהמסך"),
-    Note("פתק בודד", "פתק אחד שלם על המסך, נבחר בהוספה — השורות שלו מסומנות ישר מהוידג'ט"),
-    Quick("יצירה מהירה", "פתק, רשימה, הקלטה, צילום או תזכורת — כל כפתור פותח פתק חדש שכבר עושה את זה"),
-}
-
+/** The home-screen widget: a small likeness in the current theme, pinned straight from here. */
 @Composable
 private fun WidgetCard(toasts: ToastState) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
     val context = LocalContext.current
-    var kind by rememberSaveable { mutableStateOf(WKind.Stack) }
     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface).padding(18.dp)) {
-        // five likenesses: they scroll sideways, each wide enough to read
-        Row(
-            Modifier.fillMaxWidth().height(116.dp).horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            WKind.entries.forEach { k ->
-                val on = k == kind
-                val ring by androidx.compose.animation.animateColorAsState(if (on) c.ink else Color.Transparent, Motion.glide(), label = "wring")
-                Box(
-                    Modifier.width(96.dp).fillMaxHeight()
-                        .press(scale = .95f) { kind = k }
-                        .border(2.dp, ring, Shapes.md)
-                        .padding(4.dp)
-                        .clip(Shapes.sm).background(c.bg2).padding(8.dp),
-                ) { Likeness(k) }
-            }
-        }
-        VSpace(14.dp)
-        androidx.compose.animation.AnimatedContent(
-            targetState = kind,
-            transitionSpec = { androidx.compose.animation.fadeIn(Motion.glide()) togetherWith androidx.compose.animation.fadeOut(Motion.glide()) },
-            label = "wkind",
-        ) { k ->
-            Column {
-                Text("וידג'ט ${k.title}", style = t.bodyStrong, color = c.ink)
-                Text(k.desc, style = t.caption, color = c.ink2)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(96.dp).height(116.dp).clip(Shapes.sm).background(c.bg2).padding(8.dp)) { Likeness() }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text("הפתקים שלי", style = t.bodyStrong, color = c.ink)
+                Text("קטגוריה אחת (או כל הפתקים) על המסך — סימון משימות במקום, פתק חדש בנגיעה", style = t.caption, color = c.ink2)
             }
         }
         VSpace(14.dp)
         ActionButton("הוספה למסך הבית") {
             val mgr = AppWidgetManager.getInstance(context)
-            val receiver = when (kind) {
-                WKind.Stack -> NotedWidgetReceiver::class.java
-                WKind.Note -> com.ohav.noted.widget.NoteWidgetReceiver::class.java
-                WKind.Quick -> com.ohav.noted.widget.QuickWidgetReceiver::class.java
-                WKind.Deck -> com.ohav.noted.widget.DeckWidgetReceiver::class.java
-                WKind.Agenda -> com.ohav.noted.widget.AgendaWidgetReceiver::class.java
-            }
             val ok = mgr.isRequestPinAppWidgetSupported &&
-                runCatching { mgr.requestPinAppWidget(ComponentName(context, receiver), null, null) }.getOrDefault(false)
+                runCatching { mgr.requestPinAppWidget(ComponentName(context, NotedWidgetReceiver::class.java), null, null) }.getOrDefault(false)
             if (ok) haptics.confirm()
             else { haptics.reject(); toasts.show("המסך הראשי לא מאפשר — לחיצה ארוכה על המסך ← וידג'טים ← noted", Ph.Info, millis = 4200) }
         }
     }
 }
 
-/** A tiny drawing of each widget, in the app's colours. */
+/** A tiny drawing of the widget, in the app's colours. */
 @Composable
-private fun Likeness(k: WKind) {
+private fun Likeness() {
     val c = Noted.colors
     fun note(col: NoteColor) = if (c.isDark) col.dark else col.light
     val bar = c.noteInk.copy(alpha = .22f)
-    when (k) {
-        WKind.Stack -> Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { Box(Modifier.fillMaxWidth(.6f).height(8.dp).clip(CircleShape).background(c.ink)) }
-                Box(Modifier.size(16.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
-                    Icon(Ph.Plus, null, Modifier.size(10.dp), tint = c.accentInk)
-                }
-            }
-            VSpace(8.dp)
-            listOf(NoteColor.Butter to .8f, NoteColor.Mint to .55f, NoteColor.Sky to .7f).forEach { (col, w) ->
-                Box(Modifier.fillMaxWidth().height(20.dp).padding(bottom = 4.dp).clip(Shapes.sm).background(note(col))) {
-                    Box(Modifier.padding(horizontal = 6.dp).fillMaxWidth(w).height(4.dp).align(Alignment.CenterStart).clip(CircleShape).background(bar))
-                }
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) { Box(Modifier.fillMaxWidth(.6f).height(8.dp).clip(CircleShape).background(c.ink)) }
+            Box(Modifier.size(16.dp).clip(CircleShape).background(c.accent), contentAlignment = Alignment.Center) {
+                Icon(Ph.Plus, null, Modifier.size(10.dp), tint = c.accentInk)
             }
         }
-        WKind.Note -> Column(Modifier.fillMaxSize().clip(Shapes.sm).background(note(NoteColor.Peach)).padding(9.dp)) {
-            Box(Modifier.fillMaxWidth(.55f).height(8.dp).clip(CircleShape).background(c.noteInk))
-            VSpace(9.dp)
-            listOf(.8f, .6f, .7f, .45f).forEachIndexed { i, w ->
-                Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).let { if (i == 2) it.background(c.noteInk) else it.border(1.2.dp, c.noteInk.copy(alpha = .45f), RoundedCornerShape(2.dp)) })
-                    Spacer(Modifier.width(5.dp))
-                    Box(Modifier.fillMaxWidth(w).height(4.dp).clip(CircleShape).background(bar))
-                }
-            }
-        }
-        WKind.Deck -> Box(Modifier.fillMaxSize()) {
-            // title strips peeking over the open front note
-            listOf(NoteColor.Mint, NoteColor.Sky).forEachIndexed { i, col ->
-                Box(Modifier.padding(top = (i * 14).dp).fillMaxSize().clip(Shapes.sm).background(note(col))) {
-                    Box(Modifier.padding(start = 7.dp, top = 5.dp).fillMaxWidth(.5f).height(4.dp).clip(CircleShape).background(bar))
-                }
-            }
-            Column(Modifier.padding(top = 28.dp).fillMaxSize().clip(Shapes.sm).background(note(NoteColor.Butter)).padding(7.dp)) {
-                Box(Modifier.fillMaxWidth(.55f).height(7.dp).clip(CircleShape).background(c.noteInk))
-                VSpace(7.dp)
-                listOf(.8f, .6f, .7f).forEach { w ->
-                    Box(Modifier.padding(bottom = 5.dp).fillMaxWidth(w).height(4.dp).clip(CircleShape).background(bar))
-                }
-            }
-        }
-        WKind.Agenda -> Column(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxWidth(.4f).height(8.dp).clip(CircleShape).background(c.ink))
-            VSpace(8.dp)
-            listOf(NoteColor.Butter, NoteColor.Peach, NoteColor.Mint).forEach { col ->
-                Row(
-                    Modifier.fillMaxWidth().height(20.dp).padding(bottom = 4.dp).clip(Shapes.sm).background(note(col)).padding(horizontal = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(Modifier.width(12.dp).height(4.dp).clip(CircleShape).background(c.noteInk))
-                    Spacer(Modifier.width(5.dp))
-                    Box(Modifier.weight(1f)) { Box(Modifier.fillMaxWidth(.7f).height(4.dp).clip(CircleShape).background(bar)) }
-                    Box(Modifier.size(9.dp).clip(CircleShape).background(c.noteInk))
-                }
-            }
-        }
-        WKind.Quick -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-            Row(Modifier.fillMaxWidth().height(34.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                listOf(Ph.NotePencil, Ph.CheckSquare, Ph.Microphone, Ph.Camera, Ph.Bell).forEachIndexed { i, ic ->
-                    Box(
-                        Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(7.dp)).background(if (i == 0) c.accent else c.surface),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(ic, null, Modifier.size(11.dp), tint = if (i == 0) c.accentInk else c.ink) }
-                }
+        VSpace(8.dp)
+        listOf(NoteColor.Butter to .8f, NoteColor.Mint to .55f, NoteColor.Sky to .7f).forEach { (col, w) ->
+            Box(Modifier.fillMaxWidth().height(20.dp).padding(bottom = 4.dp).clip(Shapes.sm).background(note(col))) {
+                Box(Modifier.padding(horizontal = 6.dp).fillMaxWidth(w).height(4.dp).align(Alignment.CenterStart).clip(CircleShape).background(bar))
             }
         }
     }
