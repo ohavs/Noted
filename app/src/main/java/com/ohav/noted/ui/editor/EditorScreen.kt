@@ -352,7 +352,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     }
     DisposableEffect(state) {
         onDispose {
-            if (state.version > 0) {
+            if (state.version > 0 && !state.discarded) {
                 val (title, blocks) = state.content()
                 val base = state.base
                 app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }
@@ -365,13 +365,25 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         nav.closing = true
         keyboard?.hide()
         focus.clearFocus(force = true)
-        val changed = state.changedSinceOpen
-        if (state.version > 0) {
+        // a new note left empty isn't kept: it shrinks away instead of landing on a card
+        val sh = live?.shareInfo
+        val discard = nav.fresh && state.isEmpty && (sh == null || sh.isOwner && (!sh.shared || sh.folder.isNotEmpty()))
+        val changed = state.changedSinceOpen && !discard
+        if (discard) {
+            nav.toCard = false
+            state.discarded = true
+            app.scope.launch {
+                if (app.reminders.get(n.id) != null || app.places.reminder(n.id) != null) {
+                    val (title, blocks) = state.content()
+                    app.notes.saveMerged(n.id, state.base, title, blocks)
+                } else app.sync.discard(n.id)
+            }
+        } else if (state.version > 0) {
             val (title, blocks) = state.content()
             val base = state.base
             app.scope.launch { app.notes.saveMerged(n.id, base, title, blocks) }
         }
-        val t = nav.target()
+        val t = if (discard) null else nav.target()
         if (t != null) nav.from = t else if (nav.fresh) nav.toCard = false
         scope.launch {
             nav.p.animateTo(0f, Motion.glide(0.002f), initialVelocity = velocity)

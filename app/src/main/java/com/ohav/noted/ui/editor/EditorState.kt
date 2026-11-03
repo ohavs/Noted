@@ -121,6 +121,9 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     fun content(): Pair<String, List<Block>> = title.text.trim() to blocks.map { it.toBlock() }
     val isEmpty: Boolean get() = title.text.isBlank() && blocks.all { it.type in TEXT_TYPES && it.text.isBlank() }
 
+    /** A new note closed empty: dropped, so nothing may save it back. */
+    var discarded = false
+
     private fun snap() = Snap(title.text, blocks.map { it.toBlock() }, focused, current?.sel?.max ?: 0)
 
     /** Record the state before a change. Typing coalesces into one step per pause. */

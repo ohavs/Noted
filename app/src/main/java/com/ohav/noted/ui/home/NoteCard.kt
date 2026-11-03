@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.composed
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -100,7 +101,13 @@ class LiftGestures(val onStart: (Offset) -> Unit, val onDrag: (Float) -> Unit, v
  * Pulling the open card up into the editor, under the finger: [start] hands the card to the
  * editor (false = not now), [move] sets the progress 0..1, [end] lets go (open?, velocity in p/s).
  */
-class CardPull(val start: () -> Boolean, val move: (Float) -> Unit, val end: (Boolean, Float) -> Unit)
+class CardPull(
+    val start: () -> Boolean,
+    val move: (Float) -> Unit,
+    val end: (Boolean, Float) -> Unit,
+    /** The stack can't scroll on (it's at its end): an upward drag anywhere on the open card is a pull. */
+    val atEnd: () -> Boolean = { false },
+)
 
 private val TEXTY = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 
@@ -182,6 +189,7 @@ fun NoteCard(
                     ) { ch, d -> ch.consume(); liftNow?.onDrag?.invoke(d.y) }
                 },
             )
+            .then(if (expanded && pull != null) Modifier.pullUp(pull, onOpenEditor, gate = { pull.atEnd() }) else Modifier)
             .softShadow(Shadows.card(c.isDark), 30.dp, note)
             .clip(Shapes.card)
             .background(note)
@@ -352,63 +360,93 @@ private fun ListRow(marker: String?, text: androidx.compose.ui.text.AnnotatedStr
 private fun ExpandHint(onOpenEditor: () -> Unit, pull: CardPull?, more: Boolean = false) {
     val c = Noted.colors
     val openNow by androidx.compose.runtime.rememberUpdatedState(onOpenEditor)
-    val pullNow by androidx.compose.runtime.rememberUpdatedState(pull)
     Column(
         Modifier
             .fillMaxWidth()
             .padding(top = 4.dp)
-            .offset(y = 10.dp)
+            // reaches down into the card's bottom padding: the thumb lands around the handle, rarely on it
+            .offset(y = 12.dp)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { openNow() }
-            .pointerInput(Unit) {
-                // Claimed in the Initial pass: once the finger heads up past the slop, the stack's
-                // scroll (and the card's tap) never see this gesture.
-                val dist = 440.dp.toPx()
-                val slop = viewConfiguration.touchSlop
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    val tracker = VelocityTracker()
-                    tracker.addPosition(down.uptimeMillis, down.position)
-                    var dx = 0f
-                    var dy = 0f
-                    var dragging = false
-                    var held: CardPull? = null
-                    var lifted = false
-                    try {
-                        while (true) {
-                            val ev = awaitPointerEvent(PointerEventPass.Initial)
-                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!ch.pressed) { lifted = true; if (dragging) ch.consume(); break }
-                            val d = ch.position - ch.previousPosition
-                            dx += d.x; dy += d.y
-                            tracker.addPosition(ch.uptimeMillis, ch.position)
-                            if (!dragging) {
-                                // down or sideways belongs to the stack (scroll / category swipe)
-                                if (dy > slop || abs(dx) > slop && abs(dx) > abs(dy)) return@awaitEachGesture
-                                if (dy < -slop) dragging = true else continue
-                            }
-                            ch.consume()
-                            val p = pullNow
-                            if (held == null && p != null && p.start()) held = p
-                            held?.move(((-dy - slop) / dist).coerceIn(0f, 1f))
-                        }
-                    } finally {
-                        val h = held
-                        if (dragging) {
-                            val v = tracker.calculateVelocity().y
-                            val f = ((-dy - slop) / dist).coerceIn(0f, 1f)
-                            val open = lifted && (v < -700f || (f > .16f && v < 500f))
-                            if (h != null) h.end(open, -v / dist)
-                            else if (lifted && -dy > 40.dp.toPx()) openNow()
-                        }
-                    }
-                }
-            }
-            .padding(top = 12.dp, bottom = 16.dp),
+            .pullUp(pull, onOpenEditor)
+            .padding(top = 12.dp, bottom = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Box(Modifier.size(38.dp, 5.dp).clip(RoundedCornerShape(3.dp)).background(c.noteInk.copy(alpha = .25f)))
         Text(if (more) "יש עוד — משיכה למעלה לפתק המלא" else "משיכה למעלה לעריכה", style = Noted.type.caption, color = c.noteInk2)
+    }
+}
+
+/**
+ * Pull up into the editor. Claimed in the Initial pass once the finger heads up past the slop,
+ * so the stack's scroll, the category swipe and the card's tap never see the gesture.
+ *
+ * - Up is anything within ~60° of straight up (a thumb sweeps in an arc, rarely straight);
+ *   clearly sideways or down is left to the stack.
+ * - Opens if the throw would carry it past a quarter of the way: distance plus where the
+ *   velocity is heading, so a short flick counts as much as a long slow drag.
+ * - A tick when the release would open, and again if it drops back under.
+ * - [gate] is asked once the finger moves: false = not a pull this time.
+ */
+private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, gate: () -> Boolean = { true }): Modifier = composed {
+    val haptics = Noted.haptics
+    val pullNow by androidx.compose.runtime.rememberUpdatedState(pull)
+    val openNow by androidx.compose.runtime.rememberUpdatedState(onOpen)
+    val gateNow by androidx.compose.runtime.rememberUpdatedState(gate)
+    pointerInput(Unit) {
+        val dist = 440.dp.toPx()
+        val slop = viewConfiguration.touchSlop
+        val flick = 900.dp.toPx() // px/s that alone opens it
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val tracker = VelocityTracker()
+            tracker.addPosition(down.uptimeMillis, down.position)
+            var dx = 0f
+            var dy = 0f
+            var dragging = false
+            var held: CardPull? = null
+            var lifted = false
+            var armed = false
+            fun fraction() = ((-dy - slop) / dist).coerceIn(0f, 1f)
+            fun opens(v: Float) = v < -flick || (fraction() + (-v / dist) * .18f > .25f && v < 400.dp.toPx())
+            try {
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Initial)
+                    val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!ch.pressed) { lifted = true; if (dragging) ch.consume(); break }
+                    if (ch.isConsumed && !dragging) return@awaitEachGesture
+                    val d = ch.position - ch.previousPosition
+                    dx += d.x; dy += d.y
+                    tracker.addPosition(ch.uptimeMillis, ch.position)
+                    if (!dragging) {
+                        // held still long enough to lift the card: that drag is the reorder's
+                        if (ch.uptimeMillis - down.uptimeMillis > viewConfiguration.longPressTimeoutMillis) return@awaitEachGesture
+                        val up = -dy
+                        // down, or clearly sideways: the stack's
+                        if (dy > slop || abs(dx) > slop * 1.5f && abs(dx) > up * 1.6f) return@awaitEachGesture
+                        if (up <= slop || up < abs(dx) * .6f) continue
+                        if (!gateNow()) return@awaitEachGesture
+                        dragging = true
+                        // start from here: no jump by the slop already travelled
+                        dy = -slop
+                    }
+                    ch.consume()
+                    val p = pullNow
+                    if (held == null && p != null && p.start()) held = p
+                    held?.move(fraction())
+                    val now = opens(tracker.calculateVelocity().y)
+                    if (now != armed) { armed = now; haptics.tick() }
+                }
+            } finally {
+                val h = held
+                if (dragging) {
+                    val v = tracker.calculateVelocity().y
+                    val open = lifted && opens(v)
+                    if (h != null) h.end(open, -v / dist)
+                    else if (open) openNow()
+                }
+            }
+        }
     }
 }
 

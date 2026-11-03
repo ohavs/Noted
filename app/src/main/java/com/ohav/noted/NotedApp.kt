@@ -45,6 +45,13 @@ class NotedApp : Application() {
         sync = Sync(this, db, account, scope).also { it.start() }
         sharing = Sharing(account, sync, notes)
         scope.launch { notes.seedIfEmpty() }
+        // a new note left empty when the app went away with it open: gone, like closing it would have
+        val launched = System.currentTimeMillis()
+        scope.launch {
+            notes.leftovers(before = launched).forEach { id ->
+                if (reminders.get(id) == null && places.reminder(id) == null) sync.discard(id)
+            }
+        }
         scope.launch { updater.check(quiet = true) }
         // anything missed while we weren't running rings now; after that, every change re-arms the alarm
         scope.launch {

@@ -83,6 +83,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     private val prefs = ctx.getSharedPreferences("sync", Context.MODE_PRIVATE)
     private val mutex = Mutex()
     private val noteShadows = HashMap<String, NoteShadow>()
+    /** Notes [discard]ed: a push already holding the older list must not send them back up. */
+    private val discarded = HashSet<String>()
     private val catShadows = HashMap<String, CatShadow>()
     /** Shared folders I'm on, as the cloud last had them (`folders/{id}`, same id as the owner's category). */
     private val folders = HashMap<String, FolderShadow>()
@@ -238,6 +240,22 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     // ------------------------------------------------------------------ notes
 
+    /**
+     * A new note left empty: off this device and out of the cloud for good, no trash and no
+     * tombstone. Only my own note — someone else's never goes from here.
+     */
+    suspend fun discard(id: String): Unit = mutex.withLock {
+        discarded += id
+        // before the session loaded the shadows (launch sweep), the stored one tells
+        val sh = noteShadows.remove(id) ?: dao.shadows().firstOrNull { it.id == "n:$id" }?.let { NoteShadow.decode(it.json) }
+        db.withTransaction { notes.delete(id); dao.dropShadow("n:$id") }
+        val uid = account.user.value?.uid
+        // not awaited: offline, the delete waits in Firestore's queue like any other write
+        if (sh != null && account.available && uid != null && sh.owner == uid) {
+            FirebaseFirestore.getInstance().collection("notes").document(id).delete()
+        }
+    }
+
     /** The cloud already has this note (it can be shared). */
     suspend fun inCloud(id: String): Boolean = mutex.withLock { noteShadows[id]?.let { !it.gone } == true }
 
@@ -250,6 +268,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 noteShadows.remove(d.id)
                 continue
             }
+            if (d.id in discarded) continue // an echo from before it was dropped
             val r = NoteShadow.of(d, uid) ?: continue
             val base = noteShadows[d.id]
             if (base == r) continue
@@ -296,6 +315,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         val uid = u.uid
         val byId = cats.associateBy { it.id }
         for (n in all) {
+            if (n.id in discarded) continue
             val sh = noteShadows[n.id]
             // someone else's note: never recreate it from here, wait for the cloud to hand it over
             if (sh == null && n.shareInfo.owner.let { it.isNotEmpty() && it != uid }) continue

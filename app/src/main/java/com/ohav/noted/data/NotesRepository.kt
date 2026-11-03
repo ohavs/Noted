@@ -52,6 +52,15 @@ class NotesRepository(private val db: NotedDatabase) {
             t to b
         }
 
+    /**
+     * Notes nobody wrote anything in (a new note left empty, e.g. the app was swiped away with
+     * it open) and that are only mine to drop: discarded on launch.
+     */
+    suspend fun leftovers(before: Long): List<String> = dao.all().filter { n ->
+        val sh = n.shareInfo
+        n.createdAt < before && n.trashedAt == null && isBlank(n.title, Blocks.parse(n.blocks)) && sh.isOwner && (!sh.shared || sh.folder.isNotEmpty())
+    }.map { it.id }
+
     /** Flips one checklist row; returns the note's (done, total) afterwards. */
     suspend fun toggleCheck(noteId: String, blockId: String): Pair<Int, Int>? {
         val n = dao.get(noteId) ?: return null
@@ -165,4 +174,11 @@ class NotesRepository(private val db: NotedDatabase) {
             )
         )
     }
+}
+
+/** Nothing written: a blank title and only blank text rows (no media, no divider). */
+fun isBlank(title: String, blocks: List<Block>): Boolean {
+    fun blank(t: String) = t.replace("\u200B", "").isBlank()
+    val text = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
+    return blank(title) && blocks.all { it.type in text && blank(it.text) }
 }
