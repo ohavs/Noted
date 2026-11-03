@@ -64,6 +64,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
@@ -816,9 +818,28 @@ private fun BlockList(state: EditorState, onBlockMenu: (String) -> Unit, toasts:
                 val sh = shiftOf(b.id)
                 // lifted → dropped eases on glide: scale and shadow settle, they don't snap off
                 val up = animateFloatAsState(if (dragging) 1f else 0f, Motion.glide(), label = "blockLift")
+                // a row from someone else unfolds into place, and any outside change glows for a moment
+                val arrival = state.arrivals[b.id]
+                val grow = remember { Animatable(if (arrival?.fresh == true) 0f else 1f) }
+                val glow = remember { Animatable(0f) }
+                val wash = Noted.colors.accent
+                LaunchedEffect(arrival) {
+                    if (arrival == null) return@LaunchedEffect
+                    if (arrival.fresh) launch { grow.animateTo(1f, Motion.glide()) }
+                    glow.animateTo(1f, Motion.glide())
+                    delay(900)
+                    glow.animateTo(0f, Motion.glide())
+                }
                 Box(
                     Modifier
                         .zIndex(if (dragging || up.value > .01f) 1f else 0f)
+                        // only while unfolding: a lifted row's shadow and scale must not be cut
+                        .then(if (grow.value < 1f) Modifier.clipToBounds() else Modifier)
+                        .layout { m, c ->
+                            val p = m.measure(c)
+                            val g = grow.value.coerceIn(0f, 1f)
+                            layout(p.width, (p.height * g).roundToInt()) { p.placeRelativeWithLayer(0, 0) { alpha = g } }
+                        }
                         .onSizeChanged { heights[b.id] = it.height }
                         .graphicsLayer {
                             translationY = if (dragging) dragDy else sh.value
@@ -826,6 +847,10 @@ private fun BlockList(state: EditorState, onBlockMenu: (String) -> Unit, toasts:
                             scaleX = k; scaleY = k
                             shadowElevation = 10.dp.toPx() * up.value.coerceIn(0f, 1f)
                             shape = RoundedCornerShape(14.dp)
+                        }
+                        .drawBehind {
+                            val a = glow.value.coerceIn(0f, 1f)
+                            if (a > 0f) drawRoundRect(wash.copy(alpha = .16f * a), cornerRadius = CornerRadius(14.dp.toPx()))
                         },
                 ) {
                     BlockRow(

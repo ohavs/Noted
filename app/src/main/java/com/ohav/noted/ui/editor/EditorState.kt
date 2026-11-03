@@ -3,6 +3,7 @@ package com.ohav.noted.ui.editor
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
@@ -170,6 +171,12 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         restore(original)
     }
 
+    /** One outside change to a row; a new instance each time, so the row replays its cue. */
+    class Arrival(val fresh: Boolean)
+
+    /** Rows someone else just added ([Arrival.fresh]) or changed, for the row to show it. */
+    val arrivals = mutableStateMapOf<String, Arrival>()
+
     /**
      * Shows a merged version (changes from another device / a notification) without
      * touching what the editor changed itself; not an undo step and not a save.
@@ -177,7 +184,14 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     fun absorb(t: String, list: List<Block>) {
         if (title.text.trim() != t) title = TextFieldValue(t, TextRange(min(title.selection.end, t.length)))
         val byId = blocks.associateBy { it.id }
-        val next = list.map { b -> byId[b.id]?.also { e -> if (e.toBlock() != b) e.update(b) } ?: EdBlock.of(b) }
+        val next = list.map { b ->
+            byId[b.id]?.also { e ->
+                if (e.toBlock() != b) {
+                    if (e.text != b.text || e.done != b.done) arrivals[b.id] = Arrival(fresh = false)
+                    e.update(b)
+                }
+            } ?: EdBlock.of(b).also { arrivals[b.id] = Arrival(fresh = true) }
+        }
         if (next.map { it.id } != blocks.map { it.id }) {
             blocks.clear()
             blocks.addAll(next)

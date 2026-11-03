@@ -244,6 +244,7 @@ class CategoryActions(
             val msg = when {
                 moveTo != null && r.noteIds.isNotEmpty() -> "״${k.name}״ נמחקה, הפתקים ב״${moveTo.name}״"
                 r.children.isNotEmpty() -> "״${k.name}״ נמחקה, תתי-הקטגוריות עלו לרמה הראשית"
+                k.share.isNotEmpty() -> "״${k.name}״ נמחקה, גם אצל המשתתפים"
                 else -> "״${k.name}״ נמחקה"
             }
             toasts.show(msg, Ph.Trash, action = "ביטול", millis = 5000) { scope.launch { repo.undoDeleteCategory(r) } }

@@ -33,6 +33,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -87,6 +89,13 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     /** The folders listener has heard from the server: only then may a missing folder be created. */
     private var foldersSeen = false
     private val mediaKick = Channel<Unit>(Channel.CONFLATED)
+    /**
+     * My shared folders whose category is gone, and since when. The folder outlives it for
+     * [FOLDER_GRACE] so an undo gets back the same folder, members and all.
+     */
+    private val doomed = HashMap<String, Long>()
+    /** Bumped to run a push with no local change (a doomed folder's grace ran out). */
+    private val repush = MutableStateFlow(0)
 
     fun start() {
         if (!account.available) return
@@ -168,7 +177,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             }
             launch {
                 primed.first { it }
-                combine(notes.observeAll(), notes.observeCategories()) { a, b -> a to b }
+                combine(notes.observeAll(), notes.observeCategories(), repush) { a, b, _ -> a to b }
                     .debounce(700)
                     .collect { (ns, cs) ->
                         mutex.withLock {
@@ -208,7 +217,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             dao.clearMedia()
             prefs.edit().putString("uid", uid).apply()
         }
-        noteShadows.clear(); catShadows.clear(); folders.clear(); foldersSeen = false
+        noteShadows.clear(); catShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
         dao.shadows().forEach { s ->
             when {
                 s.id.startsWith("n:") -> NoteShadow.decode(s.json)?.let { noteShadows[s.id.drop(2)] = it }
@@ -507,13 +516,22 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         val uid = u.uid
         val col = fs.collection("folders")
         val byId = cats.associateBy { it.id }
+        val now = System.currentTimeMillis()
         for ((id, f) in folders.toList()) {
             if (f.owner != uid) continue
             val k = byId[id]
             when {
-                // the category is gone (deleted here or on another device of mine): so is the folder
-                k == null -> { col.document(id).delete(); folders.remove(id) }
-                k.share.isEmpty() -> notes.setCategoryShare(id, f.share(uid).encode())
+                // the category is gone (deleted here or on another device of mine): so is the
+                // folder, once an undo is no longer possible
+                k == null -> {
+                    val since = doomed.getOrPut(id) { now }
+                    if (now - since >= FOLDER_GRACE) { col.document(id).delete(); folders.remove(id); doomed.remove(id) }
+                    else scope.launch { delay(FOLDER_GRACE - (now - since) + 50); repush.update { it + 1 } }
+                }
+                else -> {
+                    doomed.remove(id)
+                    if (k.share.isEmpty()) notes.setCategoryShare(id, f.share(uid).encode())
+                }
             }
         }
         val mine = cats.filter { it.share.isNotEmpty() && it.shareInfo.owner == uid && it.id in byId }
@@ -621,6 +639,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     companion object {
         private val MEDIA = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link)
+        /** How long a shared folder outlives its deleted category (longer than the undo toast). */
+        private const val FOLDER_GRACE = 15_000L
 
         /** Fields every member keeps for themselves (the owner's at the top level, others' under `u.<uid>`). */
         val PERSONAL = setOf("categoryId", "pinned", "favorite", "archived", "trashedAt", "position")
