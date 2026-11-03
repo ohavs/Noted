@@ -11,6 +11,9 @@ P=noted-ce451
 TOPIC=budget-alerts
 SERVER_KEY=noted-places-server
 KILL_NAME="noted places kill switch"
+MEDIA_NAME="noted media cap"
+# what the Firebase client SDKs in the app actually call (Auth, Firestore, Storage, FCM, App Check)
+FIREBASE_APIS="identitytoolkit.googleapis.com securetoken.googleapis.com firestore.googleapis.com datastore.googleapis.com firebasestorage.googleapis.com firebaseinstallations.googleapis.com fcmregistrations.googleapis.com firebaseappcheck.googleapis.com firebase.googleapis.com"
 # release keystore (public — it's in every APK)
 APP_SHA1=451f6a595d7aaaf825b1c0f9dfe9cea6c0ce67be
 
@@ -92,9 +95,30 @@ prep() {
   fi
 }
 
+budget() { # billingAccount displayName currency amount — monthly project budget → topic
+  local acct=$1 n=$2 cur=$3 amount=$4 budgets b body
+  budgets=$(api GET "https://billingbudgets.googleapis.com/v1/$acct/budgets?pageSize=100")
+  jq -e '.error' <<<"$budgets" >/dev/null && { fail "budgets: $(jq -c .error <<<"$budgets")"; return 1; }
+  b=$(jq -r --arg n "$n" '.budgets[]? | select(.displayName==$n) | .name' <<<"$budgets" | head -1)
+  body=$(jq -nc --arg n "$n" --arg p "projects/$P" --arg c "$cur" --arg a "$amount" --arg t "projects/$P/topics/$TOPIC" '{
+    displayName: $n,
+    budgetFilter: {projects: [$p], calendarPeriod: "MONTH"},
+    amount: {specifiedAmount: {currencyCode: $c, units: $a}},
+    thresholdRules: [{thresholdPercent: 0.5}, {thresholdPercent: 1.0}],
+    notificationsRule: {pubsubTopic: $t, schemaVersion: "1.0"}
+  }')
+  if [ -z "$b" ]; then
+    echo "creating budget '$n' ($amount $cur)"
+    api POST "https://billingbudgets.googleapis.com/v1/$acct/budgets" "$body" | jq -c '{name, error}'
+  else
+    echo "budget '$n' exists: $b"
+    api PATCH "https://billingbudgets.googleapis.com/v1/$b?updateMask=notificationsRule.pubsubTopic,notificationsRule.schemaVersion" "$body" | jq -c '{name, error}'
+  fi
+}
+
 after() {
   # ---- kill-switch budget on the project's billing account, published to the topic
-  local acct cur amount budgets b body
+  local acct cur amount body
   acct=$(api GET "https://cloudbilling.googleapis.com/v1/projects/$P/billingInfo" | jq -r '.billingAccountName // empty')
   [ -z "$acct" ] && { fail "no billing account visible"; return 1; }
   cur=$(api GET "https://cloudbilling.googleapis.com/v1/$acct" | jq -r '.currencyCode // "USD"')
@@ -110,23 +134,23 @@ after() {
     api POST "$t:setIamPolicy" "$(jq -c '{policy: .}' <<<"$tp")" | jq -c '{etag, error}'
   fi
 
-  budgets=$(api GET "https://billingbudgets.googleapis.com/v1/$acct/budgets?pageSize=100")
-  jq -e '.error' <<<"$budgets" >/dev/null && { fail "budgets: $(jq -c .error <<<"$budgets")"; return 1; }
-  b=$(jq -r --arg n "$KILL_NAME" '.budgets[]? | select(.displayName==$n) | .name' <<<"$budgets" | head -1)
-  body=$(jq -nc --arg n "$KILL_NAME" --arg p "projects/$P" --arg c "$cur" --arg a "$amount" --arg t "projects/$P/topics/$TOPIC" '{
-    displayName: $n,
-    budgetFilter: {projects: [$p], calendarPeriod: "MONTH"},
-    amount: {specifiedAmount: {currencyCode: $c, units: $a}},
-    thresholdRules: [{thresholdPercent: 0.5}, {thresholdPercent: 1.0}],
-    notificationsRule: {pubsubTopic: $t, schemaVersion: "1.0"}
-  }')
-  if [ -z "$b" ]; then
-    echo "creating kill-switch budget ($amount $cur)"
-    api POST "https://billingbudgets.googleapis.com/v1/$acct/budgets" "$body" | jq -c '{name, error}'
-  else
-    echo "kill-switch budget exists: $b"
-    api PATCH "https://billingbudgets.googleapis.com/v1/$b?updateMask=notificationsRule.pubsubTopic,notificationsRule.schemaVersion" "$body" | jq -c '{name, error}'
-  fi
+  budget "$acct" "$KILL_NAME" "$cur" "$amount"
+  # media cap: Storage off (uploads/downloads are the only cost a signed-in stranger controls)
+  case "$cur" in ILS) amount=40 ;; *) amount=12 ;; esac
+  budget "$acct" "$MEDIA_NAME" "$cur" "$amount"
+
+  # ---- Firebase's auto-created keys (the Android one is in every APK): only the APIs the app uses
+  local fk fn want cur_apis
+  want=$(jq -nc --arg s "$FIREBASE_APIS" '$s | split(" ") | map(select(length > 0)) | sort | map({service: .})')
+  api GET "https://apikeys.googleapis.com/v2/projects/$P/locations/global/keys" \
+    | jq -c '.keys[]? | select(.displayName | test("auto created by Firebase"))' | while read -r fk; do
+      fn=$(jq -r .displayName <<<"$fk")
+      cur_apis=$(jq -c '[.restrictions.apiTargets[]?.service] | sort | map({service: .})' <<<"$fk")
+      if [ "$cur_apis" = "$want" ]; then echo "$fn: already narrowed"; continue; fi
+      body=$(jq -c --argjson t "$want" '.restrictions // {} | .apiTargets = $t | {restrictions: .}' <<<"$fk")
+      echo "$fn: narrowing to the app's Firebase APIs"
+      wait_op "$(api PATCH "https://apikeys.googleapis.com/v2/$(jq -r .name <<<"$fk")?updateMask=restrictions" "$body")" | jq -c '{done, error}'
+    done
 
   # ---- the APK's key: Maps SDK for Android only (Places goes through the function now)
   [ -z "${MAPS_API_KEY:-}" ] && { fail "MAPS_API_KEY not available"; return 0; }
@@ -175,18 +199,34 @@ report() {
 }
 
 # End-to-end check of the kill switch: a budget alert over the limit → Places off → back on.
-killtest() {
-  local svc="https://serviceusage.googleapis.com/v1/projects/$P/services/places.googleapis.com" msg i st
-  msg=$(jq -nc --arg n "$KILL_NAME" '{budgetDisplayName: $n, costAmount: 99, budgetAmount: 10, currencyCode: "ILS"}' | base64 -w0)
+killtest() { # [budget name] [api] — defaults to the Places kill switch
+  local n=${1:-$KILL_NAME} a=${2:-places.googleapis.com} msg i st
+  local svc="https://serviceusage.googleapis.com/v1/projects/$P/services/$a" bucket=
+  [ "$a" = firebasestorage.googleapis.com ] && { bucket=$(linked); echo "linked bucket: $bucket"; }
+  msg=$(jq -nc --arg n "$n" '{budgetDisplayName: $n, costAmount: 99, budgetAmount: 10, currencyCode: "ILS"}' | base64 -w0)
   api POST "https://pubsub.googleapis.com/v1/projects/$P/topics/$TOPIC:publish" "{\"messages\":[{\"data\":\"$msg\"}]}" | jq -c .
   for i in $(seq 1 18); do
-    sleep 10; st=$(api GET "$svc" | jq -r .state); echo "places: $st"
+    sleep 10; st=$(api GET "$svc" | jq -r .state); echo "$a: $st"
     [ "$st" = DISABLED ] && break
   done
   api POST "$svc:enable" >/dev/null
   for i in $(seq 1 12); do sleep 5; [ "$(api GET "$svc" | jq -r .state)" = ENABLED ] && break; done
-  echo "places back: $(api GET "$svc" | jq -r .state)"
-  [ "$st" = DISABLED ] && echo "KILL SWITCH OK" || { echo "::error::kill switch did not turn Places off"; return 1; }
+  echo "$a back: $(api GET "$svc" | jq -r .state)"
+  [ -n "$bucket" ] && relink "$bucket"
+  [ "$st" = DISABLED ] && echo "KILL SWITCH OK ($a)" || { echo "::error::kill switch did not turn $a off"; return 1; }
+}
+
+linked() { api GET "https://firebasestorage.googleapis.com/v1beta/projects/$P/buckets" | jq -r '.buckets[]?.name // empty' | head -1; }
+
+relink() { # bucket resource name — after Storage comes back it must still be linked to Firebase
+  local i now
+  for i in $(seq 1 12); do now=$(linked); [ -n "$now" ] && break; sleep 10; done
+  if [ -z "$now" ]; then
+    echo "re-linking $1"
+    api POST "https://firebasestorage.googleapis.com/v1beta/$1:addFirebase" '{}' | jq -c '{name, error}'
+  else
+    echo "bucket still linked: $now"
+  fi
 }
 
 "$@"

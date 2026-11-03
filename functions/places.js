@@ -10,6 +10,10 @@
  * month's cost reaches the budget, `budgetGuard` turns the Places API off for the project
  * (billing stays on, so Firebase keeps working). The app falls back to the phone's geocoder.
  * Turning it back on is a deliberate act (console / CI), never automatic.
+ *
+ * Media cap: the "noted media cap" budget (higher) turns Firebase Storage off the same way —
+ * the only cost a signed-in stranger could run up (uploads to their own folder, downloads of
+ * them). Notes keep syncing through Firestore; media waits until Storage is turned back on.
  */
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onMessagePublished } = require('firebase-functions/v2/pubsub');
@@ -20,7 +24,11 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const PLACES_KEY = defineSecret('PLACES_KEY');
 const BASE = 'https://places.googleapis.com/v1';
 const PROJECT = 'noted-ce451';
-const KILL_BUDGET = 'noted places kill switch';
+// budget display name → the API it turns off
+const GUARDED = {
+  'noted places kill switch': 'places.googleapis.com',
+  'noted media cap': 'firebasestorage.googleapis.com',
+};
 
 // Autocomplete that ends in a details lookup is free; details are 10K free a month.
 // 150 details/day for everyone stays under that; abandoned typing sessions are the only cost.
@@ -118,20 +126,21 @@ exports.places = onCall({ secrets: [PLACES_KEY], timeoutSeconds: 20, maxInstance
   };
 });
 
-/** Budget notification → Places off once the month's cost reaches the kill-switch budget. */
+/** Budget notification → the guarded API off once the month's cost reaches that budget. */
 exports.budgetGuard = onMessagePublished({ topic: 'budget-alerts', retry: false }, async (ev) => {
   const m = ev.data.message.json || {};
-  if (m.budgetDisplayName !== KILL_BUDGET) return;
+  const api = GUARDED[m.budgetDisplayName];
+  if (!api) return;
   if (!(Number(m.costAmount) >= Number(m.budgetAmount))) return;
   const meta = await fetch('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', {
     headers: { 'Metadata-Flavor': 'Google' },
   }).then((r) => r.json());
-  const res = await fetch(`https://serviceusage.googleapis.com/v1/projects/${PROJECT}/services/places.googleapis.com:disable`, {
+  const res = await fetch(`https://serviceusage.googleapis.com/v1/projects/${PROJECT}/services/${api}:disable`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${meta.access_token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ disableDependentServices: false }),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`disable places ${res.status}: ${text.slice(0, 300)}`);
-  logger.error('KILL SWITCH: Places API turned off', { cost: m.costAmount, budget: m.budgetAmount, currency: m.currencyCode });
+  if (!res.ok) throw new Error(`disable ${api} ${res.status}: ${text.slice(0, 300)}`);
+  logger.error(`KILL SWITCH: ${api} turned off`, { budget: m.budgetDisplayName, cost: m.costAmount, amount: m.budgetAmount, currency: m.currencyCode });
 });
