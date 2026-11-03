@@ -142,6 +142,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -446,6 +447,17 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         )
         Box(
             Modifier
+                // going to the trash: nothing to land on, so the folding page shrinks away and fades
+                // on its last stretch, shadow and all, instead of vanishing at the card's size
+                .graphicsLayer {
+                    if (nav.toCard || !nav.closing) return@graphicsLayer
+                    val e = (nav.p.value / .5f).coerceIn(0f, 1f)
+                    alpha = e
+                    val k = .6f + .4f * e
+                    scaleX = k; scaleY = k
+                    val r = nav.rectNow
+                    if (fullW > 0 && fullH > 0) transformOrigin = TransformOrigin(r.center.x / fullW, r.center.y / fullH)
+                }
                 .layout { m, _ ->
                     val p = nav.p.value
                     // folding back (or held by a finger): follow the card live, it may still be moving
