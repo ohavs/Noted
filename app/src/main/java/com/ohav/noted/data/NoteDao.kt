@@ -52,6 +52,9 @@ interface NoteDao {
     @Query("UPDATE categories SET parent = :parent WHERE id IN (:ids)")
     suspend fun setCategoryParent(ids: List<String>, parent: String)
 
+    @Query("UPDATE categories SET share = :share WHERE id = :id")
+    suspend fun setCategoryShare(id: String, share: String)
+
     @Query("DELETE FROM categories WHERE id = :id")
     suspend fun deleteCategory(id: String)
 

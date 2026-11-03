@@ -63,7 +63,13 @@ class MainActivity : ComponentActivity() {
         preferHighRefreshRate()
         val app = application as NotedApp
         app.updater.onResume()
+        com.ohav.noted.sync.Push.foreground = true
         // "allow all the time" is granted outside the app; coming back is when fences can be registered
         app.scope.launch { app.places.sync() }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        com.ohav.noted.sync.Push.foreground = false
     }
 }

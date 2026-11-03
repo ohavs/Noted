@@ -18,6 +18,10 @@ data class Share(
     val role: String = "",
     val members: List<Member> = emptyList(),
     val by: Map<String, String> = emptyMap(),
+    /** The shared folder this note sits in ("" = none). */
+    val folder: String = "",
+    /** Members a shared folder brought in (not managed on the note itself). */
+    val via: List<String> = emptyList(),
 ) {
     /** More than one person on it. */
     val shared: Boolean get() = members.size > 1
@@ -35,7 +39,8 @@ data class Share(
         if (owner.isEmpty()) return ""
         val m = JSONArray()
         members.forEach { m.put(JSONObject().put("u", it.uid).put("n", it.name).put("p", it.photo ?: "").put("r", it.role)) }
-        return JSONObject().put("o", owner).put("r", role).put("m", m).put("b", JSONObject(by as Map<*, *>)).toString()
+        return JSONObject().put("o", owner).put("r", role).put("m", m).put("b", JSONObject(by as Map<*, *>))
+            .put("f", folder).put("v", JSONArray(via)).toString()
     }
 
     companion object {
@@ -59,7 +64,11 @@ data class Share(
                     Member(m.getString("u"), m.optString("n"), m.optString("p").ifEmpty { null }, m.optString("r"))
                 }
                 val b = o.optJSONObject("b")
-                Share(o.getString("o"), o.optString("r"), members, b?.keys()?.asSequence()?.associateWith { b.getString(it) }.orEmpty())
+                val v = o.optJSONArray("v")
+                Share(
+                    o.getString("o"), o.optString("r"), members, b?.keys()?.asSequence()?.associateWith { b.getString(it) }.orEmpty(),
+                    o.optString("f"), (0 until (v?.length() ?: 0)).map { v!!.getString(it) },
+                )
             }.getOrDefault(None)
             synchronized(cache) { cache[s] = v }
             return v
@@ -68,3 +77,9 @@ data class Share(
 }
 
 val NoteEntity.shareInfo: Share get() = Share.parse(share)
+
+/** A shared folder's members (for a category; [Share.None] when it isn't shared). */
+val CategoryEntity.shareInfo: Share get() = Share.parse(share)
+
+/** Someone else's shared folder, here as a category. */
+val CategoryEntity.foreign: Boolean get() = shareInfo.withMe

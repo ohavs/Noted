@@ -1,0 +1,116 @@
+package com.ohav.noted.sync
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import com.ohav.noted.MainActivity
+import com.ohav.noted.R
+import com.ohav.noted.reminders.Notifier
+import kotlinx.coroutines.tasks.await
+import java.security.MessageDigest
+
+/**
+ * Notifications from the people a note or folder is shared with. The server (functions/)
+ * sends data messages — what changed is already worded there — and this side draws them:
+ * one notification per note, replaced as more changes come in.
+ */
+object Push {
+    const val CHANNEL = "shared"
+
+    /** The note open in the editor right now, while the app is in front (no notification for it). */
+    @Volatile var viewing: String? = null
+    @Volatile var foreground = false
+
+    private fun idOf(token: String): String =
+        MessageDigest.getInstance("SHA-1").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    /** This device's token under `users/{uid}/devices`, so the server can reach it. */
+    suspend fun register(ctx: Context, uid: String) {
+        val token = FirebaseMessaging.getInstance().token.await()
+        save(ctx, uid, token)
+    }
+
+    fun save(ctx: Context, uid: String, token: String) {
+        FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(idOf(token)).set(
+            mapOf("token" to token, "at" to FieldValue.serverTimestamp(), "model" to Build.MODEL, "app" to appVersion(ctx)),
+        )
+    }
+
+    /** Before signing out: this device stops getting the account's notifications. */
+    suspend fun unregister(uid: String) {
+        runCatching {
+            val token = FirebaseMessaging.getInstance().token.await()
+            FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(idOf(token)).delete().await()
+        }
+    }
+
+    private fun appVersion(ctx: Context): String =
+        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName.orEmpty() }.getOrDefault("")
+
+    fun ensureChannel(ctx: Context) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        if (nm.getNotificationChannel(CHANNEL) != null) return
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL, "שינויים בפתקים משותפים", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "כשמישהו כותב בפתק או בתיקייה ששיתפו איתך, או מצטרף אליהם"
+            },
+        )
+    }
+
+    fun show(ctx: Context, data: Map<String, String>) {
+        val note = data["note"].orEmpty()
+        val folder = data["folder"].orEmpty()
+        if (note.isNotEmpty() && foreground && viewing == note) return
+        if (!Notifier.permitted(ctx)) return
+        ensureChannel(ctx)
+        val tag = note.ifEmpty { "f:$folder" }
+        val open = PendingIntent.getActivity(
+            ctx, tag.hashCode(),
+            Intent(ctx, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .apply { if (note.isNotEmpty()) putExtra(Notifier.EXTRA_NOTE, note) },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val body = data["body"].orEmpty()
+        val n = NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_share)
+            .setColor(0xFFE0542C.toInt())
+            .setContentTitle(data["title"].orEmpty())
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setOnlyAlertOnce(false)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx).notify(tag, 1, n)
+        } catch (_: SecurityException) {
+        }
+    }
+
+    /** Opening the note clears its notification. */
+    fun clear(ctx: Context, note: String) = NotificationManagerCompat.from(ctx).cancel(note, 1)
+}
+
+class PushService : FirebaseMessagingService() {
+    override fun onNewToken(token: String) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        Push.save(this, uid, token)
+    }
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        if (message.data.isNotEmpty()) Push.show(this, message.data)
+    }
+}

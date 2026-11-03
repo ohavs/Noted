@@ -35,8 +35,12 @@ import androidx.compose.ui.unit.dp
 import com.ohav.noted.NotedApp
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
+import com.ohav.noted.data.Share
 import com.ohav.noted.data.shareInfo
+import com.ohav.noted.design.Squircle
+import com.ohav.noted.ui.categories.CatIcons
 import com.ohav.noted.design.Btn
 import com.ohav.noted.design.BtnKind
 import com.ohav.noted.design.LocalOverlays
@@ -55,14 +59,19 @@ import kotlinx.coroutines.launch
  * the editor from it; a new shared note starts here too.
  */
 @Composable
-fun SharedScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onOpen: (NoteEntity, Rect?, Boolean) -> Unit) {
+fun SharedScreen(
+    app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, cats: List<CategoryEntity>,
+    onFolder: (String) -> Unit, onOpen: (NoteEntity, Rect?, Boolean) -> Unit,
+) {
     val c = Noted.colors
     val t = Noted.type
     val scope = rememberCoroutineScope()
     val overlays = LocalOverlays.current
     val user by app.account.user.collectAsState()
-    val withMe = remember(notes) { notes.filter { it.shareInfo.withMe } }
-    val mine = remember(notes) { notes.filter { it.shareInfo.let { s -> s.shared && !s.withMe } } }
+    // notes in a shared folder are found through the folder
+    val withMe = remember(notes) { notes.filter { it.shareInfo.let { s -> s.withMe && s.folder.isEmpty() } } }
+    val mine = remember(notes) { notes.filter { it.shareInfo.let { s -> s.shared && !s.withMe && s.folder.isEmpty() } } }
+    val folders = remember(cats) { cats.filter { it.share.isNotEmpty() && it.parent.isEmpty() }.sortedBy { it.position } }
 
     fun newShared() {
         scope.launch {
@@ -86,12 +95,16 @@ fun SharedScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 "מתחברים עם גוגל, ואז כל פתק יכול להיות משותף — רשימת קניות, טיול, משימות בבית.",
                 Modifier.padding(top = 40.dp),
             ) { GoogleButton(app, toasts, Modifier.padding(horizontal = 24.dp).fillMaxWidth()) }
-            withMe.isEmpty() && mine.isEmpty() -> EmptyState(
+            withMe.isEmpty() && mine.isEmpty() && folders.isEmpty() -> EmptyState(
                 EmptyArt.Shared, "עוד לא שיתפת כלום",
                 "פותחים פתק ולוחצים על סמל השיתוף למעלה — או מתחילים כאן פתק משותף חדש.",
                 Modifier.padding(top = 40.dp),
             ) { Btn("פתק משותף חדש", icon = Ph.Plus, kind = BtnKind.Dark) { newShared() } }
             else -> {
+                if (folders.isNotEmpty()) {
+                    Label("תיקיות")
+                    folders.forEach { k -> FolderRow(k, notes.count { it.categoryId == k.id || cats.any { s -> s.parent == k.id && s.id == it.categoryId } }, u.uid) { onFolder(k.id) } }
+                }
                 if (withMe.isNotEmpty()) {
                     Label("שיתפו איתי")
                     withMe.forEach { n -> SharedRow(n, u.uid, onOpen) }
@@ -161,5 +174,36 @@ private fun SharedRow(n: NoteEntity, me: String, onOpen: (NoteEntity, Rect?, Boo
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun FolderRow(k: CategoryEntity, count: Int, me: String, onClick: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val share = Share.parse(k.share)
+    Row(
+        Modifier
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .fillMaxWidth()
+            .press(scale = .97f) { haptics.light(); onClick() }
+            .clip(Shapes.lg)
+            .background(c.bg2)
+            .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(46.dp).clip(Squircle(15.dp)).background(c.accentSoft), contentAlignment = Alignment.Center) {
+            Icon(CatIcons.of(k.icon), null, Modifier.size(24.dp), tint = c.accent)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(k.name, style = t.noteTitle, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val whose = if (share.withMe) share.ownerMember?.first?.let { "של $it" } ?: "משותפת איתי" else "שיתפתי"
+            val many = when (count) { 0 -> "ריקה"; 1 -> "פתק אחד"; else -> "$count פתקים" }
+            Text("$many · $whose" + if (share.readOnly) " · צפייה" else "", style = t.meta, color = c.ink2, maxLines = 1)
+        }
+        Spacer(Modifier.width(12.dp))
+        FacePile(share.members.filter { it.uid != me }.ifEmpty { share.members }, 30.dp, ring = c.bg2)
     }
 }

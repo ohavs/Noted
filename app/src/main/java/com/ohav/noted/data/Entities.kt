@@ -14,6 +14,11 @@ data class CategoryEntity(
     @ColumnInfo(defaultValue = "folder") val icon: String = "folder",
     /** The category this one sits under ("" = top level). One level only — see [CatTree]. */
     @ColumnInfo(defaultValue = "") val parent: String = "",
+    /**
+     * A shared folder ([Share] JSON, "" = not shared). Only top-level categories are shared;
+     * someone else's folder is a category here with the folder's id and their [Share.owner].
+     */
+    @ColumnInfo(defaultValue = "") val share: String = "",
 )
 
 /**

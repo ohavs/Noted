@@ -103,13 +103,26 @@ private fun ShareBody(app: NotedApp, overlays: Overlays, toasts: ToastState, out
     val isOwner = share.owner.isEmpty() || share.owner == u.uid
     val members = share.members.ifEmpty { listOf(Member(u.uid, u.name, u.photoUrl, Share.ROLE_OWNER)) }
 
+    val cats by app.notes.categories.collectAsState(emptyList())
+    val folder = cats.firstOrNull { it.id == share.folder && share.folder.isNotEmpty() }
+    if (folder != null) {
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 16.dp).clip(Shapes.md).background(Noted.colors.bg2).padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(CatIcons.of(folder.icon), null, Modifier.size(22.dp), tint = Noted.colors.accent)
+            Spacer(Modifier.width(12.dp))
+            Text("בתיקייה המשותפת ״${folder.name}״ — כל מי שבה רואה את הפתק", style = Noted.type.sub, color = Noted.colors.ink2, modifier = Modifier.weight(1f))
+        }
+    }
+    val viaMe = u.uid in share.via
     if (members.size > 1 || !isOwner) {
         Section("משתתפים · ${members.size}")
         var open by remember { mutableStateOf<String?>(null) }
         members.forEachIndexed { i, m ->
             MemberRow(
-                m, me = m.uid == u.uid, manage = isOwner && m.uid != u.uid, open = open == m.uid,
-                last = i == members.lastIndex,
+                m, me = m.uid == u.uid, manage = isOwner && m.uid != u.uid && m.uid !in share.via, open = open == m.uid,
+                last = i == members.lastIndex, note = if (m.uid in share.via && folder != null) "דרך התיקייה" else null,
                 onToggle = { open = if (open == m.uid) null else m.uid },
                 onRole = { r ->
                     if (r != m.role) outer.launch {
@@ -147,10 +160,10 @@ private fun ShareBody(app: NotedApp, overlays: Overlays, toasts: ToastState, out
                 Text("יש לך הרשאת צפייה — ${share.ownerMember?.first ?: "הבעלים"} יכול/ה לשנות אותה", style = Noted.type.caption, color = Noted.colors.ink3)
             }
         }
-        val cats by app.notes.categories.collectAsState(emptyList())
         val where = cats.firstOrNull { it.id == n.categoryId }?.name
-        SheetRow(Ph.House, if (where != null) "בבית: $where" else "להציג גם בבית…", end = if (where != null) "שינוי" else null) { page = "cats" }
-        SheetRow(Ph.SignOut, "יציאה מהשיתוף", danger = true, last = true) {
+        SheetRow(Ph.House, if (where != null) "בבית: $where" else "להציג גם בבית…", end = if (where != null) "שינוי" else null, last = viaMe) { page = "cats" }
+        // brought in by a folder: leaving is the folder's business
+        if (!viaMe) SheetRow(Ph.SignOut, "יציאה מהשיתוף", danger = true, last = true) {
             outer.launch {
                 val ok = overlays.dialog.confirm(
                     title = "לצאת מהפתק?", text = "הפתק ייעלם אצלך, ואצל השאר יישאר כמו שהוא. כדי לחזור צריך הזמנה חדשה.",
@@ -167,14 +180,15 @@ private fun ShareBody(app: NotedApp, overlays: Overlays, toasts: ToastState, out
 }
 
 @Composable
-private fun Section(text: String) {
+internal fun Section(text: String) {
     Text(text, style = Noted.type.section, color = Noted.colors.ink3, modifier = Modifier.padding(bottom = 6.dp))
 }
 
 @Composable
-private fun MemberRow(
+internal fun MemberRow(
     m: Member, me: Boolean, manage: Boolean, open: Boolean, last: Boolean,
     onToggle: () -> Unit, onRole: (String) -> Unit, onRemove: () -> Unit,
+    removeLabel: String = "הסרה מהפתק", note: String? = null,
 ) {
     val c = Noted.colors
     val t = Noted.type
@@ -188,7 +202,7 @@ private fun MemberRow(
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(m.name.ifBlank { "משתתף" } + if (me) " · אני" else "", style = t.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(roleWord(m.role), style = t.caption, color = c.ink2)
+                Text(roleWord(m.role) + (note?.let { " · $it" } ?: ""), style = t.caption, color = c.ink2)
             }
             if (manage) Icon(Ph.CaretDown, null, Modifier.size(18.dp).graphicsLayer { rotationZ = turn * 180f }, tint = c.ink3)
         }
@@ -204,7 +218,7 @@ private fun MemberRow(
                 ) {
                     Icon(Ph.UserMinus, null, Modifier.size(18.dp), tint = c.danger)
                     Spacer(Modifier.width(8.dp))
-                    Text("הסרה מהפתק", style = t.label, color = c.danger)
+                    Text(removeLabel, style = t.label, color = c.danger)
                 }
             }
         }
@@ -236,6 +250,20 @@ fun RoleTile(icon: ImageVector, title: String, sub: String, on: Boolean, modifie
 
 @Composable
 private fun InviteBlock(app: NotedApp, toasts: ToastState, n: NoteEntity, first: Boolean) {
+    val title = n.title.ifBlank { "ללא כותרת" }
+    InviteLinks(
+        toasts, first,
+        intro = "מי שמקבל את הקישור מצטרף לפתק ורואה כל שינוי בזמן אמת.",
+        message = { url -> "הזמנה לפתק ״$title״ ב-noted\n$url" },
+    ) { role -> app.sharing.invite(n.id, role) }
+}
+
+/** Editor / viewer, then send or copy a fresh invite link that [make] creates. */
+@Composable
+fun InviteLinks(
+    toasts: ToastState, first: Boolean, intro: String, message: (String) -> String,
+    make: suspend (String) -> Sharing.Result<String>,
+) {
     val c = Noted.colors
     val t = Noted.type
     val ctx = LocalContext.current
@@ -246,7 +274,7 @@ private fun InviteBlock(app: NotedApp, toasts: ToastState, n: NoteEntity, first:
     val dim by animateFloatAsState(if (busy) .55f else 1f, Motion.glide(), label = "busy")
 
     if (first) {
-        Text("מי שמקבל את הקישור מצטרף לפתק ורואה כל שינוי בזמן אמת.", style = t.sub, color = c.ink2, modifier = Modifier.padding(bottom = 16.dp))
+        Text(intro, style = t.sub, color = c.ink2, modifier = Modifier.padding(bottom = 16.dp))
     } else Section("הזמנה בקישור")
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         RoleTile(Ph.PencilSimple, "עריכה", "כותבים ומסמנים", role == Share.ROLE_EDITOR, Modifier.weight(1f)) { role = Share.ROLE_EDITOR }
@@ -258,7 +286,7 @@ private fun InviteBlock(app: NotedApp, toasts: ToastState, n: NoteEntity, first:
         if (busy) return
         busy = true
         scope.launch {
-            when (val r = app.sharing.invite(n.id, role)) {
+            when (val r = make(role)) {
                 is Sharing.Result.Ok -> then(r.value)
                 is Sharing.Result.Failed -> { haptics.reject(); toasts.show(r.message, Ph.WarningCircle) }
             }
@@ -271,10 +299,9 @@ private fun InviteBlock(app: NotedApp, toasts: ToastState, n: NoteEntity, first:
                 .press(scale = .96f) {
                     make { url ->
                         haptics.confirm()
-                        val title = n.title.ifBlank { "ללא כותרת" }
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "הזמנה לפתק ״$title״ ב-noted\n$url")
+                            putExtra(Intent.EXTRA_TEXT, message(url))
                         }
                         ctx.startActivity(Intent.createChooser(send, "שליחת הזמנה").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     }

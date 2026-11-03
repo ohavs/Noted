@@ -242,6 +242,12 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     val color = NoteColor.of(live?.color ?: n.color)
     val bg = animateColorAsState(c.note(color), Motion.glide(), label = "edBg")
     val me = app.account.user.collectAsState().value?.uid
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.DisposableEffect(n.id) {
+        com.ohav.noted.sync.Push.viewing = n.id
+        if (app.account.available) com.ohav.noted.sync.Push.clear(ctx, n.id)
+        onDispose { if (com.ohav.noted.sync.Push.viewing == n.id) com.ohav.noted.sync.Push.viewing = null }
+    }
     LaunchedEffect(live?.share, me) {
         state.share = live?.shareInfo ?: com.ohav.noted.data.Share.None
         state.me = me

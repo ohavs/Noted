@@ -59,8 +59,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** An invite link was opened: show whose note it is and join it. [onOpen] opens the note once it's here. */
-fun openJoinSheet(app: NotedApp, overlays: Overlays, toasts: ToastState, token: String, onOpen: (NoteEntity) -> Unit) {
-    overlays.sheet.show("הזמנה לפתק") { JoinBody(app, overlays, toasts, token, onOpen) }
+fun openJoinSheet(app: NotedApp, overlays: Overlays, toasts: ToastState, token: String, onFolder: (String) -> Unit = {}, onOpen: (NoteEntity) -> Unit) {
+    overlays.sheet.show("הזמנה") { JoinBody(app, overlays, toasts, token, onFolder, onOpen) }
 }
 
 private sealed interface Step {
@@ -70,7 +70,7 @@ private sealed interface Step {
 }
 
 @Composable
-private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, token: String, onOpen: (NoteEntity) -> Unit) {
+private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, token: String, onFolder: (String) -> Unit, onOpen: (NoteEntity) -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -84,7 +84,7 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
     var busy by remember { mutableStateOf(false) }
     LaunchedEffect(token, user?.uid) {
         step = when (val r = app.sharing.read(token)) {
-            is Sharing.Result.Ok -> Step.Ready(r.value)
+            is Sharing.Result.Ok -> Step.Ready(r.value).also { overlays.sheet.setTitle(if (r.value.isFolder) "הזמנה לתיקייה" else "הזמנה לפתק") }
             is Sharing.Result.Failed -> Step.Failed(r.message)
         }
     }
@@ -94,6 +94,11 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
         while (n == null) { delay(300); n = app.notes.get(id) }
         n
     }
+
+    suspend fun arriveFolder(id: String): Boolean = withTimeoutOrNull(15_000) {
+        while (app.notes.categoriesNow().none { it.id == id }) delay(300)
+        true
+    } ?: false
 
     AnimatedContent(step, transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) }, label = "join") { s ->
         Column(Modifier.fillMaxWidth()) {
@@ -118,15 +123,24 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
                 }
                 is Step.Ready -> {
                     val inv = s.inv
-                    val tint = c.note(NoteColor.of(inv.color))
-                    // the note itself, small: its colour, its title, who sent it
+                    val tint = if (inv.isFolder) c.bg2 else c.note(NoteColor.of(inv.color))
+                    // the note itself, small: its colour, its title, who sent it (a folder: its icon and name)
                     Column(Modifier.fillMaxWidth().clip(Shapes.card).background(tint).padding(22.dp)) {
-                        Text(inv.title.ifBlank { "ללא כותרת" }, style = t.cardTitle, color = c.noteInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (inv.isFolder) {
+                            Box(Modifier.size(52.dp).clip(Squircle(16.dp)).background(c.accentSoft), contentAlignment = Alignment.Center) {
+                                Icon(com.ohav.noted.ui.categories.CatIcons.of(inv.icon), null, Modifier.size(26.dp), tint = c.accent)
+                            }
+                            VSpace(14.dp)
+                        }
+                        Text(
+                            inv.title.ifBlank { if (inv.isFolder) "תיקייה" else "ללא כותרת" }, style = t.cardTitle,
+                            color = if (inv.isFolder) c.ink else c.noteInk, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        )
                         VSpace(18.dp)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Face(Member("from:" + inv.from, inv.from, inv.fromPhoto, Share.ROLE_OWNER), 34.dp, ring = tint)
                             Spacer(Modifier.width(10.dp))
-                            Text("הזמנה מ${inv.from.ifBlank { "חבר/ה" }}", style = t.label, color = c.noteInk2, modifier = Modifier.weight(1f))
+                            Text("הזמנה מ${inv.from.ifBlank { "חבר/ה" }}", style = t.label, color = if (inv.isFolder) c.ink2 else c.noteInk2, modifier = Modifier.weight(1f))
                         }
                     }
                     VSpace(16.dp)
@@ -134,7 +148,12 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
                         Icon(if (inv.role == Share.ROLE_VIEWER) Ph.Eye else Ph.PencilSimple, null, Modifier.size(20.dp), tint = c.ink2)
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            if (inv.role == Share.ROLE_VIEWER) "אפשר יהיה לראות את הפתק ואת כל השינויים בו" else "אפשר יהיה לכתוב, לסמן ולהוסיף — וכולם רואים בזמן אמת",
+                            when {
+                                inv.isFolder && inv.role == Share.ROLE_VIEWER -> "התיקייה תופיע אצלך בבית, עם כל הפתקים בה — לצפייה"
+                                inv.isFolder -> "התיקייה תופיע אצלך בבית. אפשר לכתוב בפתקים שבה ולהוסיף חדשים — כולם רואים"
+                                inv.role == Share.ROLE_VIEWER -> "אפשר יהיה לראות את הפתק ואת כל השינויים בו"
+                                else -> "אפשר יהיה לכתוב, לסמן ולהוסיף — וכולם רואים בזמן אמת"
+                            },
                             style = t.sub, color = c.ink2, modifier = Modifier.weight(1f),
                         )
                     }
@@ -151,7 +170,17 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
                                 busy = true
                                 scope.launch {
                                     when (val r = app.sharing.join(inv)) {
-                                        is Sharing.Result.Ok -> {
+                                        is Sharing.Result.Ok -> if (inv.isFolder) {
+                                            val here = arriveFolder(inv.folder)
+                                            busy = false
+                                            haptics.confirm()
+                                            overlays.sheet.close()
+                                            if (here) onFolder(inv.folder)
+                                            toasts.show(
+                                                if (!here) "הצטרפת — התיקייה תופיע בבית בעוד רגע" else if (r.value) "״${inv.title}״ בבית שלך" else "כבר בתיקייה",
+                                                com.ohav.noted.ui.categories.CatIcons.of(inv.icon),
+                                            )
+                                        } else {
                                             val n = arrive(inv.note)
                                             busy = false
                                             if (n == null) { toasts.show("הצטרפת — הפתק יופיע במשותף בעוד רגע", Ph.UsersThree); overlays.sheet.close(); return@launch }
@@ -171,7 +200,7 @@ private fun JoinBody(app: NotedApp, overlays: Overlays, toasts: ToastState, toke
                     ) {
                         Icon(Ph.UserPlus, null, Modifier.size(20.dp), tint = c.inverseInk)
                         Spacer(Modifier.width(10.dp))
-                        Text(if (busy) "מצטרפים…" else "הצטרפות לפתק", style = t.button, color = c.inverseInk)
+                        Text(if (busy) "מצטרפים…" else if (inv.isFolder) "הצטרפות לתיקייה" else "הצטרפות לפתק", style = t.button, color = c.inverseInk)
                     }
                 }
             }

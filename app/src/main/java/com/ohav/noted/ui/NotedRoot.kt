@@ -102,6 +102,9 @@ class Chrome {
 
     /** The note editor, opened as a container transform over everything. */
     val editor = EditorNav()
+
+    /** A category Home should switch to (a shared folder just joined); Home clears it. */
+    var showCat by mutableStateOf<String?>(null)
 }
 
 enum class Tab(val label: String, val icon: ImageVector, val iconOn: ImageVector) {
@@ -193,7 +196,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
     LaunchedEffect(invite.value) {
         val token = invite.value ?: return@LaunchedEffect
         invite.value = null
-        openJoinSheet(app, overlays, toasts, token) { n ->
+        openJoinSheet(app, overlays, toasts, token, onFolder = { id -> tab = Tab.Home; chrome.showCat = id }) { n ->
             tab = Tab.Shared
             sharedSeen = true
             chrome.editor.open(n, midRect())
@@ -215,7 +218,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         ) { t ->
             when (t) {
                 Tab.Home -> HomeScreen(app, toasts, chrome, onSettings, onCategories)
-                Tab.Shared -> SharedScreen(app, toasts, notes) { n, rect, fresh -> chrome.editor.open(n, rect ?: midRect(), fresh) }
+                Tab.Shared -> SharedScreen(app, toasts, notes, categories, onFolder = { id -> chrome.showCat = id; tab = Tab.Home }) { n, rect, fresh -> chrome.editor.open(n, rect ?: midRect(), fresh) }
                 Tab.Agenda -> TabPage("לוח") {
                     Agenda(notes, categories) { n, rect -> chrome.editor.open(n, rect) }
                 }

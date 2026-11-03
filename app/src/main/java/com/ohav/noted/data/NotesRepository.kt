@@ -31,7 +31,9 @@ class NotesRepository(private val db: NotedDatabase) {
     suspend fun get(id: String): NoteEntity? = dao.get(id)
 
     /** The first top-level category (where a note made outside the home stack lands). */
-    suspend fun categoriesFirst(): String? = CatTree(dao.categories()).tops.firstOrNull()?.id
+    suspend fun categoriesNow(): List<CategoryEntity> = dao.categories()
+
+    suspend fun categoriesFirst(): String? = CatTree(dao.categories()).tops.let { t -> t.firstOrNull { !it.foreign } ?: t.firstOrNull() }?.id
 
     /** Editor autosave: title + blocks in one write. */
     suspend fun save(id: String, title: String, blocks: List<Block>) = dao.setContent(id, title, Blocks.serialize(blocks), now())

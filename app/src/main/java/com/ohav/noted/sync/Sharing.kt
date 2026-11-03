@@ -4,6 +4,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NotesRepository
 import com.ohav.noted.data.Share
 import kotlinx.coroutines.delay
@@ -26,7 +27,12 @@ class Sharing(private val account: Account, private val sync: Sync, private val 
         val title: String,
         val color: String,
         val expired: Boolean,
-    )
+        /** A shared folder (category) instead of a single note: its id, and its icon. */
+        val folder: String = "",
+        val icon: String = "folder",
+    ) {
+        val isFolder: Boolean get() = folder.isNotEmpty()
+    }
 
     sealed interface Result<out T> {
         data class Ok<T>(val value: T) : Result<T>
@@ -78,13 +84,15 @@ class Sharing(private val account: Account, private val sync: Sync, private val 
             d.getString("from").orEmpty(), d.getString("fromPhoto"), d.getString("title").orEmpty(),
             d.getString("color") ?: "Butter",
             (d.getTimestamp("exp")?.toDate()?.time ?: Long.MAX_VALUE) < System.currentTimeMillis(),
+            folder = d.getString("folder").orEmpty(),
+            icon = d.getString("icon") ?: "folder",
         )
     }.fold({ Result.Ok(it) }, { Result.Failed(reason(it)) })
 
-    /** Joins the invite's note; Ok(true) = joined now, Ok(false) = was already on it. */
+    /** Joins the invite's note (or folder); Ok(true) = joined now, Ok(false) = was already on it. */
     suspend fun join(inv: Invite): Result<Boolean> {
         val u = account.user.value ?: return Result.Failed("צריך להתחבר קודם")
-        val ref = fs.collection("notes").document(inv.note)
+        val ref = if (inv.isFolder) fs.collection("folders").document(inv.folder) else fs.collection("notes").document(inv.note)
         // already a member (or the owner): reading works only then
         val already = runCatching { ref.get().await().let { it.exists() && (it.get("memberIds") as? List<*>)?.contains(u.uid) == true } }.getOrDefault(false)
         if (already) return Result.Ok(false)
@@ -102,24 +110,62 @@ class Sharing(private val account: Account, private val sync: Sync, private val 
         }.fold({ Result.Ok(it) }, { Result.Failed(if ((it as? FirebaseFirestoreException)?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) "הקישור כבר לא בתוקף" else reason(it)) })
     }
 
-    /** Owner: change someone's role. */
-    suspend fun setRole(noteId: String, uid: String, role: String): Result<Unit> = runCatching {
-        fs.collection("notes").document(noteId).update("members.$uid", role).await()
+    /** Owner: change someone's role (on a note, or with [folder] on a shared folder). */
+    suspend fun setRole(noteId: String, uid: String, role: String, folder: Boolean = false): Result<Unit> = runCatching {
+        fs.collection(if (folder) "folders" else "notes").document(noteId).update("members.$uid", role).await()
         Unit
     }.fold({ Result.Ok(it) }, { Result.Failed(reason(it)) })
 
-    /** Owner: take someone off the note (or anyone: take myself off). */
-    suspend fun remove(noteId: String, uid: String): Result<Unit> = runCatching {
-        fs.collection("notes").document(noteId).update(
-            mapOf(
-                "memberIds" to FieldValue.arrayRemove(uid),
-                "members.$uid" to FieldValue.delete(),
-                "people.$uid" to FieldValue.delete(),
-                "u.$uid" to FieldValue.delete(),
-            ),
-        ).await()
+    /** Owner: take someone off the note or folder (or anyone: take myself off). */
+    suspend fun remove(noteId: String, uid: String, folder: Boolean = false): Result<Unit> = runCatching {
+        val upd = mutableMapOf<String, Any>(
+            "memberIds" to FieldValue.arrayRemove(uid),
+            "members.$uid" to FieldValue.delete(),
+            "people.$uid" to FieldValue.delete(),
+        )
+        if (!folder) upd["u.$uid"] = FieldValue.delete()
+        fs.collection(if (folder) "folders" else "notes").document(noteId).update(upd).await()
         Unit
     }.fold({ Result.Ok(it) }, { Result.Failed(reason(it)) })
+
+    // ------------------------------------------------------------------ shared folders
+
+    /** Starts sharing my top-level category [k] (needs the network once). */
+    suspend fun shareFolder(k: CategoryEntity): Result<Unit> {
+        val u = account.user.value ?: return Result.Failed("צריך להתחבר קודם")
+        return runCatching { sync.shareFolder(u, k) }.fold({ Result.Ok(Unit) }, { Result.Failed(reason(it)) })
+    }
+
+    /** A new invite link to my shared folder [k]. */
+    suspend fun folderInvite(k: CategoryEntity, role: String): Result<String> {
+        val u = account.user.value ?: return Result.Failed("צריך להתחבר קודם")
+        return runCatching {
+            val token = token()
+            fs.collection("invites").document(token).set(
+                mapOf(
+                    "folder" to k.id, "role" to role, "by" to u.uid,
+                    "from" to u.first, "fromPhoto" to u.photoUrl,
+                    "title" to k.name, "icon" to k.icon,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "exp" to Timestamp(java.util.Date(System.currentTimeMillis() + INVITE_DAYS * 86_400_000L)),
+                ),
+            ).await()
+            link(token)
+        }.fold({ Result.Ok(it) }, { Result.Failed(reason(it)) })
+    }
+
+    /** Owner: nobody else sees the folder any more; the category and its notes stay mine. */
+    suspend fun unshareFolder(id: String): Result<Unit> =
+        runCatching { sync.unshareFolder(id) }.fold({ Result.Ok(Unit) }, { Result.Failed(reason(it)) })
+
+    /** Leaves someone else's folder: its notes go, mine from it move to my own category. */
+    suspend fun leaveFolder(id: String): Result<Unit> {
+        val u = account.user.value ?: return Result.Failed("צריך להתחבר קודם")
+        return when (val r = remove(id, u.uid, folder = true)) {
+            is Result.Ok -> { sync.leftFolder(id, u.uid); r }
+            is Result.Failed -> r
+        }
+    }
 
     suspend fun leave(noteId: String): Result<Unit> {
         val u = account.user.value ?: return Result.Failed("צריך להתחבר קודם")

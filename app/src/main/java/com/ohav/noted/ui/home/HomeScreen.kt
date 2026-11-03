@@ -1,6 +1,7 @@
 package com.ohav.noted.ui.home
 
 import com.ohav.noted.data.shareInfo
+import com.ohav.noted.data.foreign
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.Orientation
@@ -120,7 +121,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.sign
 
-private data class Cat(val id: String, val name: String)
+private data class Cat(val id: String, val name: String, val shared: Boolean = false)
 
 @Composable
 fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: () -> Unit, onCategories: () -> Unit) {
@@ -136,12 +137,17 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val notes = remember(notesOrNull) { notesOrNull.orEmpty().filter { it.categoryId.isNotEmpty() } }
     val tree = remember(dbCats) { CatTree(dbCats) }
     // the giant title shows top-level categories; subcategories ride a smaller track under it
-    val cats = remember(tree) { listOf(Cat("all", "כל הפתקים")) + tree.tops.map { Cat(it.id, it.name) } }
+    val cats = remember(tree) { listOf(Cat("all", "כל הפתקים")) + tree.tops.map { Cat(it.id, it.name, it.share.isNotEmpty()) } }
     // the stack swipe walks this: each category, then its subcategories, then the next one
     val flat = remember(tree) { listOf("all") + tree.flat.map { it.id } }
     val names = remember(dbCats) { dbCats.associate { it.id to it.name } + ("all" to "כל הפתקים") }
 
     var cat by rememberSaveable { mutableStateOf("all") }
+    // a shared folder just joined (or picked in the shared tab): show it
+    LaunchedEffect(chrome.showCat, dbCats) {
+        val want = chrome.showCat ?: return@LaunchedEffect
+        if (dbCats.any { it.id == want }) { cat = want; chrome.showCat = null }
+    }
     var shownCat by rememberSaveable { mutableStateOf("all") }
     var expanded by rememberSaveable { mutableStateOf<String?>(null) }
     var searching by rememberSaveable { mutableStateOf(false) }
@@ -200,8 +206,17 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         haptics.medium()
         val k = dbCats.firstOrNull { it.id == id }
         val count = if (k == null) notes.size else notes.count { it.categoryId == k.id }
+        val foreign = k?.foreign == true
         overlays.sheet.show(k?.name ?: "כל הפתקים") {
-            if (k != null) SheetRow(Ph.PencilSimple, "שם ואייקון") { catActions.edit(k, dbCats, count) }
+            if (k != null && !foreign) SheetRow(Ph.PencilSimple, "שם ואייקון") { catActions.edit(k, dbCats, count) }
+            // a top-level category can be shared whole; someone else's shows who's on it
+            if (k != null && tree.isTop(k.id)) {
+                val sh = k.shareInfo
+                SheetRow(
+                    if (k.share.isEmpty()) Ph.UsersThree else Ph.UsersThreeFill,
+                    when { foreign -> "משתתפים"; k.share.isEmpty() -> "שיתוף התיקייה"; else -> "שיתוף · ${sh.members.size} משתתפים" },
+                ) { com.ohav.noted.ui.share.openFolderSheet(app, overlays, toasts, scope, k.id) }
+            }
             if (k != null && tree.isTop(k.id)) SheetRow(Ph.Plus, "תת-קטגוריה חדשה") {
                 catActions.create(dbCats, parent = k.id) { made -> cat = made.id }
             }
@@ -209,7 +224,9 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 catActions.create(dbCats) { made -> cat = made.id }
             }
             SheetRow(Ph.ArrowsDownUp, "סידור וניהול", last = k == null) { overlays.sheet.close(); onCategories() }
-            if (k != null) SheetRow(Ph.Trash, "מחיקת הקטגוריה", danger = true, last = true) { catActions.delete(k, dbCats, count) }
+            if (k != null && foreign) SheetRow(Ph.SignOut, "יציאה מהתיקייה", danger = true, last = true) {
+                com.ohav.noted.ui.share.leaveFolder(app, overlays, toasts, scope, k.id, k.name)
+            } else if (k != null) SheetRow(Ph.Trash, "מחיקת הקטגוריה", danger = true, last = true) { catActions.delete(k, dbCats, count) }
         }
     }
 
@@ -258,7 +275,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
 
     fun openMove(ids: List<String>) {
         overlays.sheet.show(if (ids.size > 1) "להעביר ${ids.size} פתקים ל…" else "להעביר ל…") {
-            tree.flat.forEach { k ->
+            // a folder shared with me for viewing only can't take notes
+            tree.flat.filterNot { it.foreign && it.shareInfo.readOnly }.forEach { k ->
                 SheetRow(CatIcons.of(k.icon), k.name, end = "${notes.count { it.categoryId == k.id }}", inset = k.id in tree.parentOf) {
                     scope.launch { app.notes.move(ids, k.id) }
                     overlays.sheet.close()
@@ -513,8 +531,15 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             chrome.editor.open(draft, cardRect(draft.id) ?: fabRect, fresh = true)
             return
         }
+        val here = dbCats.firstOrNull { it.id == (tree.parentOf[cat] ?: cat) }
+        if (here != null && here.foreign && here.shareInfo.readOnly) {
+            haptics.reject()
+            toasts.show("ב״${here.name}״ יש לך הרשאת צפייה בלבד", Ph.Eye)
+            return
+        }
         scope.launch {
-            val n = newNote(app, if (cat == "all") tree.tops.firstOrNull()?.id ?: "home" else cat, notes.size)
+            // "all notes": the first category of my own (not a folder someone shared with me)
+            val n = newNote(app, if (cat == "all") (tree.tops.firstOrNull { !it.foreign } ?: tree.tops.firstOrNull())?.id ?: "home" else cat, notes.size)
             focusNew = n.id
             haptics.confirm()
             chrome.editor.open(n, fabRect, fresh = true)
@@ -931,6 +956,11 @@ private fun CategoryTrack(
                 horizontalArrangement = Arrangement.spacedBy(if (small) 4.dp else 6.dp),
             ) {
                 Text(cat.name, style = if (small) t.subCat else t.cat, color = col, maxLines = 1, softWrap = false)
+                // a shared folder wears a small mark next to its name
+                if (cat.shared) Icon(
+                    Ph.UsersThreeFill, "משותפת", tint = col,
+                    modifier = Modifier.padding(top = if (small) 6.dp else 12.dp).size(if (small) 14.dp else 18.dp),
+                )
                 Text(
                     "${count(cat.id)}", style = t.label.copy(fontSize = if (small) 12.sp else 14.sp), color = c.accent,
                     modifier = Modifier

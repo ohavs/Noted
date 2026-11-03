@@ -25,6 +25,7 @@ import com.ohav.noted.data.ShadowEntity
 import com.ohav.noted.data.Share
 import com.ohav.noted.data.Member
 import com.ohav.noted.data.shareInfo
+import com.ohav.noted.data.foreign
 import com.ohav.noted.data.Span
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -81,6 +82,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     private val mutex = Mutex()
     private val noteShadows = HashMap<String, NoteShadow>()
     private val catShadows = HashMap<String, CatShadow>()
+    /** Shared folders I'm on, as the cloud last had them (`folders/{id}`, same id as the owner's category). */
+    private val folders = HashMap<String, FolderShadow>()
+    /** The folders listener has heard from the server: only then may a missing folder be created. */
+    private var foldersSeen = false
     private val mediaKick = Channel<Unit>(Channel.CONFLATED)
 
     fun start() {
@@ -117,7 +122,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('n' to s) else failed(e) },
             fs.collection("users").document(uid).collection("categories")
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('c' to s) else failed(e) },
+            fs.collection("folders").whereArrayContains("memberIds", uid)
+                .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('f' to s) else failed(e) },
         )
+        launch { runCatching { Push.register(ctx, uid) } }
         // nothing is pushed before this device has seen the cloud once, so a second phone merges instead of duplicating
         val primed = MutableStateFlow(prefs.getBoolean("primed:$uid", false))
         try {
@@ -125,8 +133,18 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 var serverNotes = false
                 var serverCats = false
                 for ((k, s) in inbox) {
-                    mutex.withLock { if (k == 'n') pullNotes(s, uid) else pullCats(s) }
-                    if (!s.metadata.isFromCache) if (k == 'n') serverNotes = true else serverCats = true
+                    mutex.withLock {
+                        when (k) {
+                            'n' -> pullNotes(s, uid)
+                            'c' -> pullCats(s, uid)
+                            else -> pullFolders(s, uid)
+                        }
+                    }
+                    if (!s.metadata.isFromCache) when (k) {
+                        'n' -> serverNotes = true
+                        'c' -> serverCats = true
+                        else -> foldersSeen = true
+                    }
                     if (!primed.value && serverNotes && serverCats) {
                         mutex.withLock { firstContact() }
                         prefs.edit().putBoolean("primed:$uid", true).apply()
@@ -155,7 +173,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                     .collect { (ns, cs) ->
                         mutex.withLock {
                             pushCats(fs, uid, cs)
-                            pushNotes(fs, u, ns)
+                            pushFolders(fs, u, cs)
+                            pushNotes(fs, u, ns, cs)
                         }
                         kick()
                     }
@@ -189,7 +208,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             dao.clearMedia()
             prefs.edit().putString("uid", uid).apply()
         }
-        noteShadows.clear(); catShadows.clear()
+        noteShadows.clear(); catShadows.clear(); folders.clear(); foldersSeen = false
         dao.shadows().forEach { s ->
             when {
                 s.id.startsWith("n:") -> NoteShadow.decode(s.json)?.let { noteShadows[s.id.drop(2)] = it }
@@ -264,16 +283,18 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         )
     }
 
-    private suspend fun pushNotes(fs: FirebaseFirestore, u: Account.User, all: List<NoteEntity>) {
+    private suspend fun pushNotes(fs: FirebaseFirestore, u: Account.User, all: List<NoteEntity>, cats: List<CategoryEntity>) {
         val uid = u.uid
+        val byId = cats.associateBy { it.id }
         for (n in all) {
             val sh = noteShadows[n.id]
             // someone else's note: never recreate it from here, wait for the cloud to hand it over
             if (sh == null && n.shareInfo.owner.let { it.isNotEmpty() && it != uid }) continue
             if (sh?.gone == true) continue
-            if (sh != null && sh.sameMeta(n) && sh.blocksJson == n.blocks) continue
+            val folder = if (sh == null || sh.owner == uid) folderOf(n, byId) else sh.folder
+            if (sh != null && sh.sameMeta(n) && sh.folder == folder && sh.blocksJson == n.blocks) continue
             val blocks = Blocks.parse(n.blocks)
-            if (sh != null && sh.sameMeta(n) && sh.blocks == blocks) continue
+            if (sh != null && sh.sameMeta(n) && sh.folder == folder && sh.blocks == blocks) continue
             val orders = Orders.assign(blocks.map { it.id }, sh?.orders ?: emptyMap())
             val ref = fs.collection("notes").document(n.id)
             if (sh == null) {
@@ -286,8 +307,9 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 doc["blocks"] = blocks.associate { it.id to blockMap(it, orders.getValue(it.id)) }
                 doc["by"] = uid
                 doc["at"] = FieldValue.serverTimestamp()
+                if (folder.isNotEmpty()) doc["folder"] = folder
                 ref.set(doc, SetOptions.merge()).addOnFailureListener { forget(n.id) }
-                val next = NoteShadow.of(n, blocks, orders, uid, null)
+                val next = NoteShadow.of(n, blocks, orders, uid, null).copy(folder = folder)
                 noteShadows[n.id] = next
                 dao.putShadow(ShadowEntity("n:${n.id}", next.encode()))
                 continue
@@ -296,6 +318,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             val canEdit = sh.role(uid) != Share.ROLE_VIEWER
             val upd = HashMap<String, Any?>()
             var content = false
+            if (mine && sh.folder != folder) upd["folder"] = if (folder.isEmpty()) FieldValue.delete() else folder
             meta(n).forEach { (k, v) ->
                 if (k == "updatedAt" || sh.metaValue(k) == v) return@forEach
                 when {
@@ -327,13 +350,24 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 upd["at"] = FieldValue.serverTimestamp()
             }
             if (upd.isNotEmpty()) ref.update(upd).addOnFailureListener { forget(n.id) }
-            val next = NoteShadow.of(n, keptBlocks, keptOrders, sh.owner, sh).let {
+            val next = NoteShadow.of(n, keptBlocks, keptOrders, sh.owner, sh).copy(folder = folder).let {
                 if (canEdit) it.copy(by = by) else it.copy(title = sh.title, color = sh.color, updatedAt = sh.updatedAt)
             }.let { if (!mine && upd.keys.any { k -> k.startsWith("u.") }) it.copy(personal = true) else it }
             noteShadows[n.id] = next
             dao.putShadow(ShadowEntity("n:${n.id}", next.encode()))
             if (next.by != sh.by) notes.setShare(n.id, next.share(uid).encode())
         }
+    }
+
+    /**
+     * The shared folder a note of mine belongs in: its top-level category's, when that one is
+     * shared and I may add to it ("" otherwise).
+     */
+    private fun folderOf(n: NoteEntity, byId: Map<String, CategoryEntity>): String {
+        val k = byId[n.categoryId] ?: return ""
+        val top = if (k.parent.isNotEmpty()) byId[k.parent] ?: k else k
+        if (top.share.isEmpty() || top.parent.isNotEmpty()) return ""
+        return if (top.shareInfo.role == Share.ROLE_VIEWER) "" else top.id
     }
 
     private fun person(u: Account.User) = mapOf("n" to u.name.ifBlank { u.email.substringBefore('@') }, "p" to u.photoUrl)
@@ -361,7 +395,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     // ------------------------------------------------------------------ categories
 
-    private suspend fun pullCats(s: QuerySnapshot) {
+    private suspend fun pullCats(s: QuerySnapshot, uid: String) {
         for (ch in s.documentChanges) {
             val d = ch.document
             if (d.metadata.hasPendingWrites()) continue
@@ -378,11 +412,14 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                         if (rest != null) notes.deleteCategory(d.id)
                     }
                 } else if (local == null) {
-                    if (base == null || base.deleted) notes.upsertCategory(CategoryEntity(d.id, r.name, r.position, r.icon, r.parent))
+                    if (base == null || base.deleted) {
+                        val share = folders[d.id]?.takeIf { it.owner == uid }?.share(uid)?.encode().orEmpty()
+                        notes.upsertCategory(CategoryEntity(d.id, r.name, r.position, r.icon, r.parent, share))
+                    }
                 } else {
-                    val m = if (base == null) local else CategoryEntity(
-                        d.id, Merge.pick(base.name, local.name, r.name), Merge.pick(base.position, local.position, r.position),
-                        Merge.pick(base.icon, local.icon, r.icon), Merge.pick(base.parent, local.parent, r.parent),
+                    val m = if (base == null) local else local.copy(
+                        name = Merge.pick(base.name, local.name, r.name), position = Merge.pick(base.position, local.position, r.position),
+                        icon = Merge.pick(base.icon, local.icon, r.icon), parent = Merge.pick(base.parent, local.parent, r.parent),
                     )
                     if (m != local) notes.upsertCategory(m)
                 }
@@ -396,6 +433,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         val col = fs.collection("users").document(uid).collection("categories")
         val live = cats.associateBy { it.id }
         for (k in cats) {
+            if (k.foreign) continue // someone else's folder: it lives in `folders/`, not in my categories
             val sh = catShadows[k.id]
             val now = CatShadow(k.name, k.icon, k.position, false, k.parent)
             if (sh == now) continue
@@ -416,6 +454,110 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             catShadows[id] = gone
             dao.putShadow(ShadowEntity("c:$id", gone.encode()))
         }
+    }
+
+    // ------------------------------------------------------------------ shared folders
+
+    private suspend fun pullFolders(s: QuerySnapshot, uid: String) {
+        for (ch in s.documentChanges) {
+            val d = ch.document
+            if (d.metadata.hasPendingWrites()) continue
+            if (ch.type == com.google.firebase.firestore.DocumentChange.Type.REMOVED) {
+                folders.remove(d.id)
+                db.withTransaction { folderGone(d.id, uid) }
+                continue
+            }
+            val f = FolderShadow.of(d) ?: continue
+            folders[d.id] = f
+            db.withTransaction {
+                val local = notes.categories().firstOrNull { it.id == d.id }
+                val share = f.share(uid).encode()
+                when {
+                    f.owner == uid -> if (local != null && local.share != share) notes.setCategoryShare(d.id, share)
+                    // joined just now: first in the category row, so it's easy to find
+                    local == null -> notes.upsertCategory(CategoryEntity(d.id, f.name, (notes.categories().minOfOrNull { it.position } ?: 0) - 1, f.icon, "", share))
+                    local.name != f.name || local.icon != f.icon || local.share != share || local.parent.isNotEmpty() ->
+                        notes.upsertCategory(local.copy(name = f.name, icon = f.icon, share = share, parent = ""))
+                }
+            }
+        }
+    }
+
+    /** I'm off folder [id] (left, removed, or it stopped being shared). */
+    private suspend fun folderGone(id: String, uid: String) {
+        val all = notes.categories()
+        val local = all.firstOrNull { it.id == id } ?: return
+        if (!local.foreign) {
+            if (local.share.isNotEmpty()) notes.setCategoryShare(id, "")
+            return
+        }
+        // someone else's folder: what I wrote in it stays with me, in my own first category
+        val kids = all.filter { it.parent == id }.map { it.id }
+        if (kids.isNotEmpty()) notes.setCategoryParent(kids, "")
+        val ids = notes.liveNoteIdsIn(id)
+        val home = all.filter { it.id != id && !it.foreign && it.parent.isEmpty() }.minByOrNull { it.position }
+            ?: CategoryEntity(java.util.UUID.randomUUID().toString(), "כללי", (all.maxOfOrNull { it.position } ?: 0) + 1).also { notes.upsertCategory(it) }
+        if (ids.isNotEmpty()) notes.setCategory(ids, home.id, System.currentTimeMillis())
+        notes.deleteCategory(id)
+    }
+
+    /** My shared categories → their `folders/` documents (name, icon; gone when no longer shared). */
+    private suspend fun pushFolders(fs: FirebaseFirestore, u: Account.User, cats: List<CategoryEntity>) {
+        if (!foldersSeen) return
+        val uid = u.uid
+        val col = fs.collection("folders")
+        val byId = cats.associateBy { it.id }
+        for ((id, f) in folders.toList()) {
+            if (f.owner != uid) continue
+            val k = byId[id]
+            when {
+                // the category is gone (deleted here or on another device of mine): so is the folder
+                k == null -> { col.document(id).delete(); folders.remove(id) }
+                k.share.isEmpty() -> notes.setCategoryShare(id, f.share(uid).encode())
+            }
+        }
+        val mine = cats.filter { it.share.isNotEmpty() && it.shareInfo.owner == uid && it.id in byId }
+        for (k in mine) {
+            val f = folders[k.id]
+            if (f == null) {
+                // shared, but the cloud doesn't have it (restored after an undo): start it again
+                col.document(k.id).set(newFolder(u, k))
+                folders[k.id] = FolderShadow(uid, k.name, k.icon, mapOf(uid to Share.ROLE_OWNER), mapOf(uid to Person(u.name, u.photoUrl)))
+            } else if (f.name != k.name || f.icon != k.icon) {
+                col.document(k.id).update(mapOf("name" to k.name, "icon" to k.icon))
+                folders[k.id] = f.copy(name = k.name, icon = k.icon)
+            }
+        }
+    }
+
+    private fun newFolder(u: Account.User, k: CategoryEntity): Map<String, Any?> = mapOf(
+        "owner" to u.uid, "memberIds" to listOf(u.uid), "members" to mapOf(u.uid to Share.ROLE_OWNER),
+        "people" to mapOf(u.uid to person(u)), "name" to k.name, "icon" to k.icon, "at" to FieldValue.serverTimestamp(),
+    )
+
+    /** Starts sharing my category [k]: creates its folder (online), then marks the category. */
+    suspend fun shareFolder(u: Account.User, k: CategoryEntity) {
+        FirebaseFirestore.getInstance().collection("folders").document(k.id).set(newFolder(u, k)).await()
+        mutex.withLock {
+            val f = FolderShadow(u.uid, k.name, k.icon, mapOf(u.uid to Share.ROLE_OWNER), mapOf(u.uid to Person(u.name, u.photoUrl)))
+            folders[k.id] = f
+            notes.setCategoryShare(k.id, f.share(u.uid).encode())
+        }
+    }
+
+    /** Stops sharing my folder [id]: the category stays mine, the others lose it. */
+    suspend fun unshareFolder(id: String) {
+        FirebaseFirestore.getInstance().collection("folders").document(id).delete().await()
+        mutex.withLock {
+            folders.remove(id)
+            notes.setCategoryShare(id, "")
+        }
+    }
+
+    /** After leaving someone's folder: take it off this device now, without waiting for the listener. */
+    suspend fun leftFolder(id: String, uid: String) = mutex.withLock {
+        folders.remove(id)
+        db.withTransaction { folderGone(id, uid) }
     }
 
     // ------------------------------------------------------------------ media
@@ -516,15 +658,19 @@ data class NoteShadow(
     val gone: Boolean = false,
     /** A non-owner already has their own personal fields on it. */
     val personal: Boolean = false,
+    /** The shared folder it's in ("" = none). */
+    val folder: String = "",
+    /** Members the folder brought in. */
+    val via: List<String> = emptyList(),
 ) {
     val blocksJson: String by lazy { Blocks.serialize(blocks) }
 
     fun role(uid: String): String = members[uid] ?: if (uid == owner) Share.ROLE_OWNER else Share.ROLE_VIEWER
 
     fun share(uid: String): Share {
-        if (members.size <= 1 && owner == uid) return Share.None.copy(owner = uid, role = Share.ROLE_OWNER, members = listOf(member(uid)), by = by)
+        if (members.size <= 1 && owner == uid) return Share.None.copy(owner = uid, role = Share.ROLE_OWNER, members = listOf(member(uid)), by = by, folder = folder)
         val list = members.keys.sortedWith(compareBy({ members[it] != Share.ROLE_OWNER }, { it != uid }, { people[it]?.name.orEmpty() })).map(::member)
-        return Share(owner, role(uid), list, by)
+        return Share(owner, role(uid), list, by, folder, via)
     }
 
     private fun member(uid: String) = Member(uid, people[uid]?.name.orEmpty(), people[uid]?.photo, members[uid] ?: Share.ROLE_OWNER)
@@ -551,7 +697,7 @@ data class NoteShadow(
             .put("c", color).put("k", categoryId).put("p", pinned).put("f", favorite).put("a", archived)
             .put("tr", trashedAt ?: JSONObject.NULL).put("pos", position).put("cr", createdAt).put("u", updatedAt)
             .put("m", JSONObject(members as Map<*, *>)).put("pp", ppl).put("by", JSONObject(by as Map<*, *>))
-            .put("g", gone).put("pe", personal)
+            .put("g", gone).put("pe", personal).put("fo", folder).put("v", org.json.JSONArray(via))
             .toString()
     }
 
@@ -572,6 +718,8 @@ data class NoteShadow(
                 by = o.optJSONObject("by").strings(),
                 gone = o.optBoolean("g"),
                 personal = o.optBoolean("pe"),
+                folder = o.optString("fo"),
+                via = o.optJSONArray("v")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
             )
         }.getOrNull()
 
@@ -583,6 +731,8 @@ data class NoteShadow(
             people = prev?.people.orEmpty(),
             by = prev?.by.orEmpty(),
             personal = prev?.personal ?: false,
+            folder = prev?.folder.orEmpty(),
+            via = prev?.via.orEmpty(),
         )
 
         /** Reads a `notes/{id}` document as [me] sees it; null if it isn't one of ours yet (half-written). */
@@ -615,13 +765,15 @@ data class NoteShadow(
                 (k as? String)?.let { it to Person(m["n"] as? String ?: "", (m["p"] as? String)?.ifEmpty { null }) }
             }?.toMap().orEmpty()
             val topTrash = d.getLong("trashedAt")
+            val folder = d.getString("folder").orEmpty()
             return NoteShadow(
                 owner = owner,
                 title = d.getString("title").orEmpty(),
                 blocks = list.map { it.third },
                 orders = list.associate { it.first to it.second },
                 color = d.getString("color") ?: "Butter",
-                categoryId = pick("categoryId", { d.getString("categoryId") }, ""),
+                // someone else's note in a shared folder sits in that folder until I place it elsewhere
+                categoryId = pick("categoryId", { d.getString("categoryId") }, folder),
                 pinned = pick("pinned", { d.getBoolean("pinned") }, false),
                 favorite = pick("favorite", { d.getBoolean("favorite") }, false),
                 archived = pick("archived", { d.getBoolean("archived") }, false),
@@ -634,6 +786,8 @@ data class NoteShadow(
                 by = by,
                 gone = !mine && topTrash != null,
                 personal = my != null,
+                folder = folder,
+                via = (d.get("via") as? List<*>).orEmpty().filterIsInstance<String>(),
             ).also { it.id = d.id }
         }
     }
@@ -655,5 +809,32 @@ data class CatShadow(val name: String, val icon: String, val position: Int, val 
             d.getString("name").orEmpty(), d.getString("icon") ?: "folder", (d.getLong("position") ?: 0L).toInt(), d.getBoolean("deleted") ?: false,
             d.getString("parent").orEmpty(),
         )
+    }
+}
+
+/** A `folders/{id}` document: a shared category, its members and their names. */
+data class FolderShadow(
+    val owner: String,
+    val name: String,
+    val icon: String,
+    val members: Map<String, String>,
+    val people: Map<String, Person>,
+) {
+    fun share(uid: String): Share {
+        val list = members.keys.sortedWith(compareBy({ members[it] != Share.ROLE_OWNER }, { it != uid }, { people[it]?.name.orEmpty() }))
+            .map { Member(it, people[it]?.name.orEmpty(), people[it]?.photo, members[it] ?: Share.ROLE_VIEWER) }
+        return Share(owner, members[uid] ?: Share.ROLE_VIEWER, list)
+    }
+
+    companion object {
+        fun of(d: DocumentSnapshot): FolderShadow? {
+            val owner = d.getString("owner") ?: return null
+            val members = (d.get("members") as? Map<*, *>)?.entries?.mapNotNull { (k, v) -> (k as? String)?.let { it to (v as? String ?: Share.ROLE_VIEWER) } }?.toMap().orEmpty()
+            val people = (d.get("people") as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+                val m = v as? Map<*, *> ?: return@mapNotNull null
+                (k as? String)?.let { it to Person(m["n"] as? String ?: "", (m["p"] as? String)?.ifEmpty { null }) }
+            }?.toMap().orEmpty()
+            return FolderShadow(owner, d.getString("name").orEmpty(), d.getString("icon") ?: "folder", members.ifEmpty { mapOf(owner to Share.ROLE_OWNER) }, people)
+        }
     }
 }

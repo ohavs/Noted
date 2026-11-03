@@ -64,6 +64,8 @@ import com.ohav.noted.NotedApp
 import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NotesRepository
+import com.ohav.noted.data.foreign
+import com.ohav.noted.data.shareInfo
 import com.ohav.noted.design.Btn
 import com.ohav.noted.design.BtnKind
 import com.ohav.noted.design.Haptics
@@ -115,6 +117,8 @@ class CategoryActions(
     private val toasts: ToastState,
     private val haptics: Haptics,
     private val scope: CoroutineScope,
+    /** Someone else's shared folder: its own sheet (members, leave) instead of editing. */
+    private val onForeign: (CategoryEntity) -> Unit = {},
 ) {
     /** Names already used next to a category under [parent] (siblings may not repeat; cousins may). */
     private fun taken(all: List<CategoryEntity>, parent: String, except: String? = null): Set<String> {
@@ -142,6 +146,7 @@ class CategoryActions(
     }
 
     fun edit(k: CategoryEntity, all: List<CategoryEntity>, count: Int) {
+        if (k.foreign) { onForeign(k); return }
         val tree = CatTree(all)
         val parent = tree.parentOf[k.id]
         val homes = tree.tops.filter { it.id != k.id && it.id != parent }
@@ -156,7 +161,7 @@ class CategoryActions(
             }
             VSpace(6.dp)
             // a category with subcategories stays on top (one level only)
-            if (!tree.hasChildren(k.id) && homes.isNotEmpty()) {
+            if (!tree.hasChildren(k.id) && k.share.isEmpty() && homes.isNotEmpty()) {
                 SheetRow(Ph.FolderSimple, if (parent == null) "להכניס לתוך קטגוריה" else "להעביר לקטגוריה אחרת") { place(k, all) }
             }
             if (parent != null) SheetRow(Ph.ArrowUp, "להוציא לרמה הראשית") { overlays.sheet.close(); moveTo(k, null) }
@@ -168,7 +173,7 @@ class CategoryActions(
     fun place(k: CategoryEntity, all: List<CategoryEntity>) {
         val tree = CatTree(all)
         val parent = tree.parentOf[k.id]
-        val homes = tree.tops.filter { it.id != k.id && it.id != parent }
+        val homes = tree.tops.filter { it.id != k.id && it.id != parent && !(it.foreign && it.shareInfo.readOnly) }
         overlays.sheet.show("להכניס את ״${k.name}״ לתוך…") {
             homes.forEachIndexed { i, h ->
                 SheetRow(CatIcons.of(h.icon), h.name, last = i == homes.lastIndex) { overlays.sheet.close(); moveTo(k, h) }
@@ -188,6 +193,7 @@ class CategoryActions(
     }
 
     fun delete(k: CategoryEntity, all: List<CategoryEntity>, count: Int) {
+        if (k.foreign) { onForeign(k); return }
         val tree = CatTree(all)
         val others = tree.flat.filter { it.id != k.id }
         if (others.isEmpty()) {
@@ -249,7 +255,11 @@ class CategoryActions(
 fun rememberCategoryActions(app: NotedApp, overlays: Overlays, toasts: ToastState): CategoryActions {
     val haptics = Noted.haptics
     // app.scope: a deletion or its undo must finish even if the screen that asked goes away
-    return remember(overlays, toasts, haptics) { CategoryActions(app.notes, overlays, toasts, haptics, app.scope) }
+    return remember(overlays, toasts, haptics) {
+        CategoryActions(app.notes, overlays, toasts, haptics, app.scope) { k ->
+            com.ohav.noted.ui.share.openFolderSheet(app, overlays, toasts, app.scope, k.id)
+        }
+    }
 }
 
 /** Name + icon. The preview tile wears the chosen icon; a duplicate name is pointed out, not refused silently. */
@@ -396,7 +406,7 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
     val shown = shownIds.mapNotNull { byId[it] }
     fun nested(id: String): Boolean {
         val o = order
-        if (id == dragId && o != null) return into != null || CatTree.predict(o, id, parents, hidden.isNotEmpty()).isNotEmpty()
+        if (id == dragId && o != null) return into != null || CatTree.predict(o, id, parents, hidden.isNotEmpty() || byId[id]?.share?.isNotEmpty() == true).isNotEmpty()
         return (pending?.firstOrNull { it.first == id }?.second ?: parents[id]).orEmpty().isNotEmpty()
     }
     // the drag handlers outlive compositions: read the lists through these
@@ -468,7 +478,7 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
                         onDragEnd = {
                             val o = order
                             val target = into
-                            val result = o?.let { CatTree.arrange(it, k.id, target, parentsNow, hidden) }
+                            val result = o?.let { CatTree.arrange(it, k.id, target, parentsNow, hidden, stayTop = k.share.isNotEmpty()) }
                             scope.launch {
                                 settle.snapTo(dragDy.floatValue)
                                 settle.animateTo(0f, Motion.glide()) { dragDy.floatValue = value }
@@ -497,7 +507,9 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
                         }
                         // a top-level neighbour can take the row in: hovering over its middle aims there,
                         // so the swap waits a bit longer; a category with children never nests
-                        val nestable = next != null && hidden.isEmpty() && parentsNow[next].isNullOrEmpty()
+                        // a shared folder stays on top, and a viewer-only folder of someone else takes nothing in
+                        val nestable = next != null && hidden.isEmpty() && k.share.isEmpty() && parentsNow[next].isNullOrEmpty() &&
+                            catsNow.firstOrNull { it.id == next }?.let { it.foreign && it.shareInfo.readOnly } != true
                         val aim = if (nestable && abs(f) >= .35f && abs(f) < .7f) next else null
                         if (aim != into) { into = aim; if (aim != null) haptics.tick() }
                         val swapAt = if (nestable) .7f else .5f

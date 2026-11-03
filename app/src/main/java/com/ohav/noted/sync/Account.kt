@@ -102,6 +102,7 @@ class Account(private val ctx: Context, private val scope: CoroutineScope) {
 
     suspend fun signOut() {
         if (!available) return
+        FirebaseAuth.getInstance().currentUser?.uid?.let { Push.unregister(it) }
         FirebaseAuth.getInstance().signOut()
         runCatching { CredentialManager.create(ctx).clearCredentialState(ClearCredentialStateRequest()) }
     }

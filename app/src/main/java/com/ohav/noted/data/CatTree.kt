@@ -40,19 +40,24 @@ class CatTree(all: List<CategoryEntity>) {
          * child. At the end of a group → stays in it only if it was already there. A category
          * with children never nests: inside another group it moves to just after that group.
          */
-        fun arrange(order: List<String>, moved: String, into: String?, parents: Map<String, String>, hidden: List<String>): List<Pair<String, String>> {
+        fun arrange(
+            order: List<String>, moved: String, into: String?, parents: Map<String, String>, hidden: List<String>,
+            /** Must stay top-level (a shared folder), even without children. */
+            stayTop: Boolean = false,
+        ): List<Pair<String, String>> {
             val list = order.toMutableList()
             val p = { id: String -> parents[id].orEmpty() }
             var parent: String
-            if (into != null && hidden.isEmpty() && into != moved && p(into).isEmpty()) {
+            val top = hidden.isNotEmpty() || stayTop
+            if (into != null && !top && into != moved && p(into).isEmpty()) {
                 list.remove(moved)
                 var at = list.indexOf(into) + 1
                 while (at < list.size && p(list[at]) == into) at++
                 list.add(at, moved)
                 parent = into
             } else {
-                parent = predict(list, moved, parents, hidden.isNotEmpty())
-                if (hidden.isNotEmpty()) {
+                parent = predict(list, moved, parents, top)
+                if (top) {
                     // a top with children can't sit inside another group: move past its end
                     val i = list.indexOf(moved)
                     val below = list.getOrNull(i + 1)
