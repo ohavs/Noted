@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">noted</string>
+    <string name="share_in_label">noted</string>
     <string name="widget_main_label">הפתקים שלי</string>
     <string name="widget_main_desc">הערימה של קטגוריה אחת על המסך — סימון שורות, מעבר קטגוריה ופתק חדש</string>
     <string name="widget_preview_cat">קניות</string>

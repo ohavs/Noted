@@ -50,6 +50,28 @@
             </intent-filter>
         </activity>
 
+        <!-- "Share → noted" from any app: a small sheet over that app (new note / end of an existing one) -->
+        <activity
+            android:name=".inbox.ShareInActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:label="@string/share_in_label"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Noted.Overlay">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".reminders.SnoozeActivity"
             android:exported="false"
