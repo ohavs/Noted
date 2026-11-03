@@ -448,6 +448,21 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                 overlays.sheet.close()
                 scope.launch { delay(180); share() }
             }
+            SheetRow(Ph.Export, "ייצוא") {
+                overlays.sheet.close()
+                scope.launch {
+                    delay(180)
+                    com.ohav.noted.ui.export.openExportSheet(app, overlays, toasts, scope) {
+                        val (title, blocks) = state.content()
+                        val row = live ?: n
+                        com.ohav.noted.backup.NoteExport.Doc(
+                            title, blocks, NoteColor.of(row.color),
+                            app.notes.categoriesNow().firstOrNull { it.id == row.categoryId }?.name.orEmpty(),
+                            row.updatedAt,
+                        )
+                    }
+                }
+            }
             SheetRow(Ph.ArrowCounterClockwise, "ביטול כל השינויים מהפתיחה") {
                 overlays.sheet.close()
                 if (!state.changedSinceOpen) { toasts.show("אין שינויים לבטל", Ph.Info); return@SheetRow }

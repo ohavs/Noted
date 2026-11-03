@@ -99,6 +99,9 @@ interface PlaceDao {
     @Query("SELECT * FROM place_reminders")
     fun observeReminders(): Flow<List<PlaceReminderEntity>>
 
+    @Query("SELECT * FROM place_reminders")
+    suspend fun allReminders(): List<PlaceReminderEntity>
+
     /** Reminders that can still ring: not fired, note not in the bin. */
     @Query("SELECT r.* FROM place_reminders r JOIN notes n ON n.id = r.noteId WHERE n.trashedAt IS NULL AND r.fired = 0")
     suspend fun live(): List<PlaceReminderEntity>

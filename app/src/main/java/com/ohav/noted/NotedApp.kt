@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 
 class NotedApp : Application() {
     val scope = CoroutineScope(SupervisorJob())
+    lateinit var db: NotedDatabase private set
     lateinit var notes: NotesRepository private set
     lateinit var settings: SettingsRepository private set
     lateinit var updater: Updater private set
@@ -32,11 +33,12 @@ class NotedApp : Application() {
     lateinit var sharing: Sharing private set
     lateinit var bin: com.ohav.noted.sync.Bin private set
     lateinit var privacy: com.ohav.noted.data.Privacy private set
+    lateinit var backup: com.ohav.noted.backup.Backup private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
         super.onCreate()
-        val db = NotedDatabase.create(this)
+        db = NotedDatabase.create(this)
         notes = NotesRepository(db)
         privacy = com.ohav.noted.data.Privacy(this)
         reminders = Reminders(this, db)
@@ -47,6 +49,7 @@ class NotedApp : Application() {
         account = Account(this, scope)
         sync = Sync(this, db, account, scope).also { it.start() }
         sharing = Sharing(account, sync, notes)
+        backup = com.ohav.noted.backup.Backup(this)
         bin = com.ohav.noted.sync.Bin(this, notes, reminders, places, account, sync, sharing)
         scope.launch { notes.seedIfEmpty() }
         // a new note left empty when the app went away with it open: gone, like closing it would have

@@ -147,6 +147,9 @@ interface ReminderDao {
     @Query("SELECT * FROM reminders")
     fun observeAll(): Flow<List<ReminderEntity>>
 
+    @Query("SELECT * FROM reminders")
+    suspend fun all(): List<ReminderEntity>
+
     @Query("SELECT r.* FROM reminders r JOIN notes n ON n.id = r.noteId WHERE n.trashedAt IS NULL")
     suspend fun live(): List<ReminderEntity>
 
