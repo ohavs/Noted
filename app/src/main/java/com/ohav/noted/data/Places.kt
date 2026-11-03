@@ -116,6 +116,9 @@ interface PlaceDao {
     @Query("SELECT * FROM place_reminders WHERE placeId = :placeId")
     suspend fun remindersAt(placeId: String): List<PlaceReminderEntity>
 
+    @Query("SELECT * FROM place_reminders WHERE noteId = :noteId")
+    suspend fun remindersFor(noteId: String): List<PlaceReminderEntity>
+
     @Upsert
     suspend fun upsertReminder(r: PlaceReminderEntity)
 

@@ -10,6 +10,14 @@ class NotesRepository(private val db: NotedDatabase) {
     private val dao: NoteDao = db.notes()
     val notes: Flow<List<NoteEntity>> = dao.observeActive()
     val categories: Flow<List<CategoryEntity>> = dao.observeCategories()
+    val trashed: Flow<List<NoteEntity>> = dao.observeTrashed()
+    val archived: Flow<List<NoteEntity>> = dao.observeArchived()
+
+    suspend fun trashedBefore(before: Long): List<String> = dao.trashedBefore(before)
+
+    /** Every media file the notes other than [except] still point at. */
+    suspend fun filesInUse(except: Set<String>): Set<String> =
+        dao.all().filter { it.id !in except }.flatMapTo(HashSet()) { n -> Blocks.parse(n.blocks).flatMap { MediaExtra.files(it) } }
 
     suspend fun create(categoryId: String, color: NoteColor, title: String = "", blocks: List<Block> = emptyList()): NoteEntity {
         val now = System.currentTimeMillis()

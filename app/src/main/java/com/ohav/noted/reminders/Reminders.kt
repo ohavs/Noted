@@ -62,6 +62,9 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
         clear(id)
     }
 
+    /** Every time reminder of a note (it's being deleted for good). */
+    suspend fun removeAll(noteId: String) = dao.forNote(noteId).forEach { remove(it.noteId, it.blockId) }
+
     /** Puts a removed reminder back exactly as it was (undo). */
     suspend fun restore(r: ReminderEntity) {
         dao.upsert(r)

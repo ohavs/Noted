@@ -1,5 +1,7 @@
 package com.ohav.noted.ui.settings
 
+import com.ohav.noted.sync.Bin
+import com.ohav.noted.ui.bin.Shelf
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import androidx.compose.runtime.setValue
@@ -68,12 +70,14 @@ import com.ohav.noted.widget.NotedWidgetReceiver
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCategories: () -> Unit) {
+fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCategories: () -> Unit, onShelf: (Shelf) -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
     val scope = rememberCoroutineScope()
     val s by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
+    val archived by app.notes.archived.collectAsStateWithLifecycle(initialValue = emptyList())
+    val trashed by app.notes.trashed.collectAsStateWithLifecycle(initialValue = emptyList())
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()
@@ -87,18 +91,10 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
 
         Section("חשבון") { AccountCard(app, toasts) }
         Section("ארגון") {
-            Row(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)
-                    .press(scale = .98f, onClick = onCategories)
-                    .padding(horizontal = 18.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Ph.FolderSimple, null, Modifier.size(22.dp), tint = c.ink2)
-                Spacer(Modifier.width(14.dp))
-                Text("קטגוריות", style = t.body, color = c.ink, modifier = Modifier.weight(1f))
-                Text("שם, אייקון, סדר", style = t.caption, color = c.ink3)
-                Spacer(Modifier.width(8.dp))
-                Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.ink3)
+            Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)) {
+                NavRow(Ph.FolderSimple, "קטגוריות", "שם, אייקון, סדר", onClick = onCategories)
+                NavRow(Ph.Archive, "ארכיון", if (archived.isEmpty()) "ריק" else "${archived.size}") { onShelf(Shelf.Archive) }
+                NavRow(Ph.Trash, "סל מחזור", if (trashed.isEmpty()) "ריק" else "${trashed.size} · ${Bin.DAYS} יום", last = true) { onShelf(Shelf.Trash) }
             }
         }
         Section("מראה") {
@@ -192,6 +188,24 @@ private fun PrivacyCard(app: NotedApp, toasts: ToastState) {
                 NotedSwitch(bio)
             }
         }
+    }
+}
+
+/** One row of a grouped card: icon, label, a quiet hint and the way in. */
+@Composable
+private fun NavRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, hint: String, last: Boolean = false, onClick: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    Column(Modifier.fillMaxWidth().press(scale = .98f, onClick = onClick)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(22.dp), tint = c.ink2)
+            Spacer(Modifier.width(14.dp))
+            Text(label, style = t.body, color = c.ink, modifier = Modifier.weight(1f))
+            Text(hint, style = t.caption, color = c.ink3)
+            Spacer(Modifier.width(8.dp))
+            Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.ink3)
+        }
+        if (!last) Box(Modifier.padding(start = 54.dp).fillMaxWidth().height(1.dp).background(c.line))
     }
 }
 

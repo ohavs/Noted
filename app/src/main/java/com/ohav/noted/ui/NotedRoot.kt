@@ -3,6 +3,8 @@ package com.ohav.noted.ui
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import com.ohav.noted.ui.bin.Shelf
+import com.ohav.noted.ui.bin.ShelfScreen
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.animateColorAsState
@@ -130,7 +132,9 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
     val lock = remember { com.ohav.noted.ui.lock.LockState() }
     val privFlags by app.privacy.flags.collectAsStateWithLifecycle()
     val privacy = com.ohav.noted.ui.lock.PrivacyView(privFlags, app.privacy.unlocked)
-    BackHandler(enabled = screen != "main") { screen = if (screen == "categories") catsFrom else "main" }
+    BackHandler(enabled = screen != "main") {
+        screen = when (screen) { "categories" -> catsFrom; "archive", "trash" -> "settings"; else -> "main" }
+    }
     // a reminder notification was tapped: back to the main screen, where the note opens
     LaunchedEffect(openNote.value, invite.value) { if (openNote.value != null || invite.value != null) screen = "main" }
     val reminders by app.reminders.all.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -155,14 +159,19 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
             targetState = screen,
             transitionSpec = {
                 // RTL: going deeper enters from the left (end side), back returns from the right.
-                val forward = targetState == "categories" || targetState == "settings" && initialState == "main"
+                val forward = targetState == "categories" || targetState in setOf("archive", "trash") || targetState == "settings" && initialState == "main"
                 (slideInHorizontally(Motion.glide()) { if (forward) -it / 3 else it / 3 } + fadeIn(Motion.glide()))
                     .togetherWith(slideOutHorizontally(Motion.glide()) { if (forward) it / 4 else -it / 4 } + fadeOut(Motion.glide()))
             },
             label = "screen",
         ) { s ->
             when (s) {
-                "settings" -> SettingsScreen(app, toasts, onBack = { screen = "main" }, onCategories = { catsFrom = "settings"; screen = "categories" })
+                "settings" -> SettingsScreen(
+                    app, toasts, onBack = { screen = "main" }, onCategories = { catsFrom = "settings"; screen = "categories" },
+                    onShelf = { screen = if (it == Shelf.Trash) "trash" else "archive" },
+                )
+                "archive" -> ShelfScreen(app, toasts, Shelf.Archive, onBack = { screen = "settings" })
+                "trash" -> ShelfScreen(app, toasts, Shelf.Trash, onBack = { screen = "settings" })
                 "categories" -> CategoriesScreen(app, toasts, overlays, onBack = { screen = catsFrom })
                 else -> MainScreen(app, toasts, openNote, invite, onSettings = { screen = "settings" }, onCategories = { catsFrom = "main"; screen = "categories" })
             }

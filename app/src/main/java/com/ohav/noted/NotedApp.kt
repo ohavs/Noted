@@ -30,6 +30,7 @@ class NotedApp : Application() {
     lateinit var account: Account private set
     lateinit var sync: Sync private set
     lateinit var sharing: Sharing private set
+    lateinit var bin: com.ohav.noted.sync.Bin private set
     lateinit var privacy: com.ohav.noted.data.Privacy private set
 
     @OptIn(FlowPreview::class)
@@ -46,6 +47,7 @@ class NotedApp : Application() {
         account = Account(this, scope)
         sync = Sync(this, db, account, scope).also { it.start() }
         sharing = Sharing(account, sync, notes)
+        bin = com.ohav.noted.sync.Bin(this, notes, reminders, places, account, sync, sharing)
         scope.launch { notes.seedIfEmpty() }
         // a new note left empty when the app went away with it open: gone, like closing it would have
         val launched = System.currentTimeMillis()
@@ -54,6 +56,8 @@ class NotedApp : Application() {
                 if (reminders.get(id) == null && places.reminder(id) == null) sync.discard(id)
             }
         }
+        // the bin keeps a note 30 days
+        scope.launch { bin.sweep() }
         scope.launch { updater.check(quiet = true) }
         // anything missed while we weren't running rings now; after that, every change re-arms the alarm
         scope.launch {

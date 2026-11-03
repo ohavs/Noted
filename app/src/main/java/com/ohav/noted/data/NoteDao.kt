@@ -19,6 +19,17 @@ interface NoteDao {
     @Query("SELECT * FROM notes")
     suspend fun all(): List<NoteEntity>
 
+    /** The bin, latest thrown first. */
+    @Query("SELECT * FROM notes WHERE trashedAt IS NOT NULL ORDER BY trashedAt DESC")
+    fun observeTrashed(): Flow<List<NoteEntity>>
+
+    /** The archive, latest put away first (archiving stamps updatedAt). */
+    @Query("SELECT * FROM notes WHERE archived = 1 AND trashedAt IS NULL ORDER BY updatedAt DESC")
+    fun observeArchived(): Flow<List<NoteEntity>>
+
+    @Query("SELECT id FROM notes WHERE trashedAt IS NOT NULL AND trashedAt < :before")
+    suspend fun trashedBefore(before: Long): List<String>
+
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun delete(id: String)
 

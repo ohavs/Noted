@@ -114,6 +114,9 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
 
     suspend fun restoreReminder(r: PlaceReminderEntity) = dao.upsertReminder(r)
 
+    /** Every place reminder of a note (it's being deleted for good). */
+    suspend fun removeAll(noteId: String) = dao.remindersFor(noteId).forEach { remove(it.noteId, it.blockId) }
+
     /** "Next time" from the notification: a fired one-shot waits for the next crossing. */
     suspend fun again(id: String) {
         val r = dao.reminder(id) ?: return

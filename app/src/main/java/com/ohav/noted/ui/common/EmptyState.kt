@@ -36,7 +36,7 @@ import com.ohav.noted.design.Noted
 import com.ohav.noted.design.NotedColors
 
 /** Illustrations from the prototype's empty states, drawn on a 168×140 grid. */
-enum class EmptyArt { Stack, Search, Shared, Places, Agenda }
+enum class EmptyArt { Stack, Search, Shared, Places, Agenda, Archive, Bin }
 
 private fun DrawScope.rr(x: Float, y: Float, w: Float, h: Float, r: Float, color: Color) =
     drawRoundRect(color, Offset(x, y), Size(w, h), CornerRadius(r, r))
@@ -94,6 +94,29 @@ private fun DrawScope.drawArt(art: EmptyArt, c: NotedColors) {
             drawCircle(c.accent, 20f, Offset(124f, 102f))
             drawLine(c.accentInk, Offset(124f, 102f), Offset(124f, 92f), 3.5f, StrokeCap.Round)
             drawLine(c.accentInk, Offset(124f, 102f), Offset(131f, 106f), 3.5f, StrokeCap.Round)
+        }
+        EmptyArt.Archive -> {
+            // two notes tucked into a drawer, its label in the accent
+            rotate(-9f, Offset(72f, 56f)) { rr(38f, 24f, 70f, 62f, 18f, c.note(NoteColor.Butter)) }
+            rotate(7f, Offset(98f, 52f)) {
+                rr(64f, 20f, 70f, 62f, 18f, c.note(NoteColor.Sky))
+                rr(78f, 36f, 34f, 8f, 4f, ink.copy(alpha = .22f))
+            }
+            rr(20f, 62f, 128f, 64f, 22f, c.note(NoteColor.Sage))
+            rr(20f, 62f, 128f, 12f, 6f, ink.copy(alpha = .08f))
+            rr(66f, 88f, 36f, 11f, 5.5f, c.accent)
+        }
+        EmptyArt.Bin -> {
+            // a crumpled note on its way in; the clock is the 30 days
+            rotate(16f, Offset(108f, 38f)) { rr(86f, 16f, 46f, 40f, 14f, c.note(NoteColor.Rose)) }
+            drawPath(path("M44 60h80l-7 60a12 12 0 0 1-12 10H63a12 12 0 0 1-12-10z"), c.note(NoteColor.Lilac))
+            rr(34f, 48f, 100f, 13f, 6.5f, ink.copy(alpha = .26f))
+            rr(72f, 40f, 24f, 10f, 5f, ink.copy(alpha = .26f))
+            listOf(70f, 84f, 98f).forEach { x -> drawLine(ink.copy(alpha = .14f), Offset(x, 74f), Offset(x, 116f), 4f, StrokeCap.Round) }
+            drawCircle(c.bg, 21f, Offset(130f, 108f))
+            drawCircle(c.accent, 17f, Offset(130f, 108f))
+            drawLine(c.accentInk, Offset(130f, 108f), Offset(130f, 99f), 3.5f, StrokeCap.Round)
+            drawLine(c.accentInk, Offset(130f, 108f), Offset(136f, 112f), 3.5f, StrokeCap.Round)
         }
     }
 }
