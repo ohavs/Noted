@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.ohav.noted.MainActivity
 import com.ohav.noted.NotedApp
 import com.ohav.noted.R
+import com.ohav.noted.data.Privacy
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.Blocks
@@ -222,13 +223,13 @@ object Notifier {
     fun show(ctx: Context, r: ReminderEntity, noteTitle: String, line: Block?, blocks: List<Block>) {
         if (!permitted(ctx)) return
         ensureChannel(ctx)
-        val title = when {
-            line != null -> line.text.trim().ifEmpty { "שורה ברשימה" }
-            else -> noteTitle.trim().ifEmpty { "פתק בלי כותרת" }
-        }
+        val m = Privacy.mask((ctx.applicationContext as? NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
+        val title = m.head
         val body = when {
-            line != null -> noteTitle.trim().ifEmpty { "פתק בלי כותרת" }
-            else -> summary(blocks)
+            m.locked -> "יש לך תזכורת — פותחים עם הקוד"
+            line != null -> m.note
+            m.body -> summary(blocks)
+            else -> "התוכן מוסתר"
         }
         val code = idOf(r.id)
         val open = PendingIntent.getActivity(

@@ -250,7 +250,7 @@ async function deliver(noteId, p) {
     else if (n === 1 && ids.length === 1 && clean(blocks[ids[0]].text)) body = `${w}: ${clean(blocks[ids[0]].text).slice(0, 90)}`;
     else if (n === 1) body = `${w} · שורה אחת השתנתה`;
     else body = `${w} · ${n} שורות השתנו`;
-    return send(r, { kind: 'edit', note: noteId, folder: note.folder || '', title: title || 'פתק משותף', body });
+    return send(r, { kind: 'edit', note: noteId, folder: note.folder || '', title: title || 'פתק משותף', body, who: w });
   }));
 }
 

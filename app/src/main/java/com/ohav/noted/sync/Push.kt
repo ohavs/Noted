@@ -82,11 +82,20 @@ object Push {
                 .apply { if (note.isNotEmpty()) putExtra(Notifier.EXTRA_NOTE, note) },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val body = data["body"].orEmpty()
+        // a note kept private on this device says only that something changed, and by whom
+        val flags = if (note.isEmpty()) 0 else (ctx.applicationContext as? com.ohav.noted.NotedApp)?.privacy?.of(note) ?: 0
+        val m = com.ohav.noted.data.Privacy.mask(flags, data["title"].orEmpty(), null)
+        val who = data["who"].orEmpty()
+        val body = when {
+            m.body -> data["body"].orEmpty()
+            who.isNotEmpty() -> "$who · יש שינוי"
+            else -> "יש שינוי"
+        }
+        val title = if (flags == 0) data["title"].orEmpty() else m.note
         val n = NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_share)
             .setColor(0xFFE0542C.toInt())
-            .setContentTitle(data["title"].orEmpty())
+            .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setCategory(NotificationCompat.CATEGORY_SOCIAL)

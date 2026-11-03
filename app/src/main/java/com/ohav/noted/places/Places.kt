@@ -326,12 +326,15 @@ object PlaceNotifier {
     fun show(ctx: Context, r: PlaceReminderEntity, p: PlaceEntity, noteTitle: String, line: Block?, blocks: List<Block>) {
         if (!Notifier.permitted(ctx)) return
         Notifier.ensureChannel(ctx)
-        val title = when {
-            line != null -> line.text.trim().ifEmpty { "שורה ברשימה" }
-            else -> noteTitle.trim().ifEmpty { "פתק בלי כותרת" }
-        }
+        val m = com.ohav.noted.data.Privacy.mask((ctx.applicationContext as? com.ohav.noted.NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
+        val title = m.head
         val where = (if (r.leave) "יציאה · " else "הגעה · ") + p.name
-        val body = if (line != null) noteTitle.trim().ifEmpty { "פתק בלי כותרת" } else Notifier.summary(blocks)
+        val body = when {
+            m.locked -> "יש לך תזכורת — פותחים עם הקוד"
+            line != null -> m.note
+            m.body -> Notifier.summary(blocks)
+            else -> "התוכן מוסתר"
+        }
         val code = idOf(r.id)
         val open = PendingIntent.getActivity(
             ctx, code,

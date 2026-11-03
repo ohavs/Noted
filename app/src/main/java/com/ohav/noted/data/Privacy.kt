@@ -128,5 +128,24 @@ class Privacy(context: Context) {
         const val CODE_LEN = 4
         const val MAX_FAILS = 5
         const val WAIT_MS = 30_000L
+
+        /**
+         * What a reminder may show outside its note (notification, calendar tab): a locked note shows
+         * nothing, a blurred title or body stays hidden. [head] is the line's text (or the note's name),
+         * [note] the note's name, [body] whether the note's text may be summarised.
+         */
+        fun mask(flags: Int, noteTitle: String, lineText: String?): Masked {
+            if (flags and LOCK != 0) return Masked("פתק נעול", "פתק נעול", locked = true, body = false)
+            val hideBody = flags and BLUR_BODY != 0
+            val note = if (flags and BLUR_TITLE != 0) "פתק מוסתר" else noteTitle.trim().ifEmpty { "פתק בלי כותרת" }
+            val head = when {
+                lineText == null -> note
+                hideBody -> "שורה ברשימה"
+                else -> lineText.trim().ifEmpty { "שורה ברשימה" }
+            }
+            return Masked(head, note, locked = false, body = !hideBody)
+        }
     }
+
+    class Masked(val head: String, val note: String, val locked: Boolean, val body: Boolean)
 }

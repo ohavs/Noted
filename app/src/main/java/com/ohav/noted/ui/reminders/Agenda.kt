@@ -16,6 +16,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.data.Privacy
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.design.NoteColor
@@ -71,17 +74,20 @@ fun Agenda(notes: List<NoteEntity>, categories: List<CategoryEntity>, onOpen: (N
     }
     val zone = ZoneId.systemDefault()
     val today = now.toLocalDate()
-    val items = remember(reminders, notes, categories, today) {
+    val flags by (LocalContext.current.applicationContext as com.ohav.noted.NotedApp).privacy.flags.collectAsStateWithLifecycle()
+    val items = remember(reminders, notes, categories, today, flags) {
         val byId = notes.associateBy { it.id }
         val cats = categories.associateBy { it.id }
         buildList {
             reminders.values.forEach { r ->
                 val n = byId[r.noteId] ?: return@forEach
                 val line = if (r.blockId.isEmpty()) null else Blocks.parse(n.blocks).firstOrNull { it.id == r.blockId } ?: return@forEach
-                val title = line?.text?.trim()?.ifEmpty { null } ?: n.title.trim().ifEmpty { "פתק בלי כותרת" }
+                val m = Privacy.mask(flags[n.id] ?: 0, n.title, line?.text)
+                val title = m.head
                 val rep = When.repeat(r.repeat)
                 val sub = when {
-                    line != null -> "שורה מתוך ״${n.title.trim().ifEmpty { "פתק" }}״"
+                    m.locked -> if (line != null) "שורה ברשימה" else rep
+                    line != null -> "שורה מתוך ״${m.note}״"
                     rep.isNotEmpty() -> rep
                     else -> cats[n.categoryId]?.name.orEmpty()
                 }
