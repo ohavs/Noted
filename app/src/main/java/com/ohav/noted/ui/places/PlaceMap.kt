@@ -51,6 +51,7 @@ import com.ohav.noted.data.PlaceReminderEntity
 import com.ohav.noted.design.NotedColors
 import com.ohav.noted.design.Noted
 import com.ohav.noted.design.Shapes
+import kotlinx.coroutines.delay
 import kotlin.math.cos
 import kotlin.math.ln
 
@@ -109,8 +110,11 @@ fun MiniMap(lat: Double, lng: Double, radius: Int, kind: PlaceKind, modifier: Mo
     // lite mode can't animate: the frame jumps to fit a new radius
     LaunchedEffect(radius) { cam.position = CameraPosition.fromLatLngZoom(at, MapLook.zoomFor(lat, radius, 96f)) }
     val style = remember(c) { MapLook.style(c) }
+    // built a beat after the sheet starts rising, so making the map view doesn't stall its slide
+    var on by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(320); on = true }
     Box(modifier.clip(Shapes.md).background(c.bg)) {
-        GoogleMap(
+        if (on) GoogleMap(
             modifier = Modifier.matchParentSize(),
             cameraPositionState = cam,
             googleMapOptionsFactory = { GoogleMapOptions().liteMode(true) },
@@ -137,6 +141,7 @@ fun PlacesMap(
     cam: CameraPositionState,
     padding: PaddingValues,
     modifier: Modifier = Modifier,
+    onLoaded: () -> Unit = {},
     onPlace: (PlaceEntity) -> Unit,
 ) {
     val c = Noted.colors
@@ -162,7 +167,7 @@ fun PlacesMap(
             compassEnabled = false, tiltGesturesEnabled = false, indoorLevelPickerEnabled = false,
         ),
         contentPadding = padding,
-        onMapLoaded = { loaded = true },
+        onMapLoaded = { loaded = true; onLoaded() },
     ) {
         places.forEach { p ->
             val lit = p.id in withNotes

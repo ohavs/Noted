@@ -8,7 +8,8 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -49,10 +50,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +109,8 @@ import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
 import com.ohav.noted.ui.reminders.PlaceWords
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.ln
@@ -118,7 +123,7 @@ import kotlin.math.sin
  * there, edit, open in a maps app, delete with undo.
  */
 @Composable
-fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onOpenNote: (NoteEntity) -> Unit) {
+fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, settled: Boolean, onOpenNote: (NoteEntity) -> Unit) {
     val ctx = LocalContext.current
     val c = Noted.colors
     val t = Noted.type
@@ -134,8 +139,14 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
         me = Geo.last(ctx) ?: me
         if (Geo.hasFine(ctx) || Geo.hasCoarse(ctx)) Geo.current(ctx)?.let { me = it }
     }
+    // the map view is heavy to build: it waits until the tab has slid in, then fades up once drawn
+    var mapOn by remember { mutableStateOf(false) }
+    LaunchedEffect(settled) {
+        if (!settled) delay(700)
+        mapOn = true
+    }
     val list = places ?: return
-    val open = reminders.filter { !it.fired }
+    val open = remember(reminders) { reminders.filter { !it.fired } }
     val actions = remember(app, overlays, toasts, scope) { PlaceActions(app, overlays, toasts, scope) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -146,22 +157,34 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
         // tucked down: only the grabber and the title peek out above the floating tab bar
         val navBottom = WindowInsets.navigationBars.getBottom(density).toFloat()
         val lowTop = (h - navBottom - with(density) { (92 + 76).dp.toPx() }).coerceAtLeast(peekTop)
-        val top = remember { Animatable(peekTop) }
+        // the sheet's top edge; written straight from the finger (same frame), animated only to settle
+        var y by remember { mutableFloatStateOf(peekTop) }
+        var glide by remember { mutableStateOf<Job?>(null) }
+        fun snap(v: Float) { glide?.cancel(); glide = null; y = v }
         val haptics = Noted.haptics
         // 0 at peek → 1 fully open; the radar recedes as the sheet rises
-        fun openness() = ((peekTop - top.value) / (peekTop - fullTop)).coerceIn(0f, 1f)
+        fun openness() = ((peekTop - y) / (peekTop - fullTop)).coerceIn(0f, 1f)
 
         if (PlacesApi.enabled) {
             // ---- map under everything; the sheet and the title float on it
             val cam = rememberCameraPositionState { position = CameraPosition.fromLatLngZoom(MapLook.ISRAEL, 7f) }
-            PlacesMap(
-                list, open, me, cam,
-                padding = PaddingValues(
-                    top = with(density) { statusTop.toDp() } + 96.dp,
-                    bottom = with(density) { (h - peekTop).toDp() },
-                ),
-                modifier = Modifier.fillMaxSize(),
-            ) { p -> actions.card(p, notes, reminders, me, onOpenNote) }
+            var drawn by remember { mutableStateOf(false) }
+            // no network can mean no "loaded" callback: don't leave the map hidden behind the cover
+            LaunchedEffect(mapOn) { if (mapOn) { delay(2500); drawn = true } }
+            val cover = animateFloatAsState(if (drawn) 0f else 1f, Motion.glide(), label = "mapCover")
+            val padding = remember(statusTop, h, peekTop) {
+                with(density) { PaddingValues(top = statusTop.toDp() + 96.dp, bottom = (h - peekTop).toDp()) }
+            }
+            val latestNotes by rememberUpdatedState(notes)
+            val latestAll by rememberUpdatedState(reminders)
+            val latestMe by rememberUpdatedState(me)
+            val latestOpen by rememberUpdatedState(onOpenNote)
+            val onPin = remember(actions) { { p: PlaceEntity -> actions.card(p, latestNotes, latestAll, latestMe, latestOpen) } }
+            if (mapOn) {
+                PlacesMap(list, open, me, cam, padding, Modifier.fillMaxSize(), onLoaded = { drawn = true }, onPlace = onPin)
+            }
+            // a plain sheet of background until the tiles are in, so nothing pops
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = cover.value }.background(c.bg))
             // the map sinks back as the catalog rises
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = openness() * .7f }.background(c.bg))
             Box(
@@ -176,7 +199,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
             Box(
                 Modifier
                     .align(AbsoluteAlignment.TopRight)
-                    .offset { IntOffset(0, (top.value - 72.dp.toPx()).roundToInt()) }
+                    .offset { IntOffset(0, (y - 72.dp.toPx()).roundToInt()) }
                     .padding(end = 16.dp)
                     .graphicsLayer { alpha = 1f - openness() * 3f }
                     .press(scale = .88f) {
@@ -211,25 +234,26 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
 
         // ---- catalog sheet
         val anchors = listOf(fullTop, peekTop, lowTop)
-        fun settle(v: Float) = scope.launch {
-            val y = top.value
+        fun settle(v: Float) {
+            val from = y
             val target = when {
-                v < -900f -> anchors.lastOrNull { it < y - 1f } ?: fullTop
-                v > 900f -> anchors.firstOrNull { it > y + 1f } ?: lowTop
-                else -> anchors.minBy { kotlin.math.abs(it - y) }
+                v < -900f -> anchors.lastOrNull { it < from - 1f } ?: fullTop
+                v > 900f -> anchors.firstOrNull { it > from + 1f } ?: lowTop
+                else -> anchors.minBy { kotlin.math.abs(it - from) }
             }
-            if (kotlin.math.abs(target - y) > 1f) haptics.tick()
-            top.animateTo(target, Motion.glide(), initialVelocity = v)
+            if (kotlin.math.abs(target - from) > 1f) haptics.tick()
+            glide?.cancel()
+            glide = scope.launch { animate(from, target, v, Motion.glide()) { value, _ -> y = value } }
         }
         val listState = rememberLazyListState()
         val nested = remember(lowTop, peekTop, fullTop) {
             object : NestedScrollConnection {
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     // pushing up: the sheet rises before the list scrolls
-                    if (available.y < 0 && top.value > fullTop) {
-                        val next = (top.value + available.y).coerceAtLeast(fullTop)
-                        val used = next - top.value
-                        scope.launch { top.snapTo(next) }
+                    if (available.y < 0 && y > fullTop) {
+                        val next = (y + available.y).coerceAtLeast(fullTop)
+                        val used = next - y
+                        snap(next)
                         return Offset(0f, used)
                     }
                     return Offset.Zero
@@ -238,16 +262,16 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                     // pulling down past the list's top: the sheet follows
                     if (available.y > 0 && source == NestedScrollSource.UserInput) {
-                        val next = (top.value + available.y).coerceAtMost(lowTop)
-                        val used = next - top.value
-                        scope.launch { top.snapTo(next) }
+                        val next = (y + available.y).coerceAtMost(lowTop)
+                        val used = next - y
+                        snap(next)
                         return Offset(0f, used)
                     }
                     return Offset.Zero
                 }
 
                 override suspend fun onPreFling(available: Velocity): Velocity {
-                    if (anchors.none { kotlin.math.abs(it - top.value) < 1f }) {
+                    if (anchors.none { kotlin.math.abs(it - y) < 1f }) {
                         settle(available.y)
                         return available
                     }
@@ -255,11 +279,11 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 }
             }
         }
-        val drag = rememberDraggableState { dy -> scope.launch { top.snapTo((top.value + dy).coerceIn(fullTop, lowTop)) } }
+        val drag = rememberDraggableState { dy -> snap((y + dy).coerceIn(fullTop, lowTop)) }
 
         Column(
             Modifier
-                .offset { IntOffset(0, top.value.roundToInt()) }
+                .offset { IntOffset(0, y.roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { (h - fullTop).toDp() })
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))

@@ -1,5 +1,8 @@
 package com.ohav.noted
 
+import android.os.Looper
+import com.google.android.gms.maps.MapsInitializer
+import com.ohav.noted.places.PlacesApi
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +32,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = null)
             settings?.let { NotedTheme(it) { NotedRoot(app, openNote, invite) } }
+        }
+        warmMaps()
+    }
+
+    /**
+     * Load the Maps SDK once the first screen is idle, so the places tab doesn't pay for it
+     * (hundreds of ms on the main thread) the first time it opens.
+     */
+    private fun warmMaps() {
+        if (!PlacesApi.enabled) return
+        Looper.myQueue().addIdleHandler {
+            runCatching { MapsInitializer.initialize(applicationContext, MapsInitializer.Renderer.LATEST) {} }
+            false
         }
     }
 

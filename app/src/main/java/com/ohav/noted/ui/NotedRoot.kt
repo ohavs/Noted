@@ -3,6 +3,8 @@ package com.ohav.noted.ui
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -174,6 +176,7 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
     }
 }
 
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState<String?>, invite: MutableState<String?>, onSettings: () -> Unit, onCategories: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
@@ -271,7 +274,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
                 Tab.Agenda -> TabPage("לוח") {
                     Agenda(notes, categories) { n, rect -> chrome.editor.open(n, rect) }
                 }
-                Tab.Places -> PlacesScreen(app, toasts, notes) { n ->
+                Tab.Places -> PlacesScreen(app, toasts, notes, settled = transition.currentState == EnterExitState.Visible) { n ->
                     val rect = with(density) {
                         val w = config.screenWidthDp.dp.toPx()
                         val h = config.screenHeightDp.dp.toPx()
