@@ -72,6 +72,9 @@ jobs:
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: bash scripts/places-guard.sh after || echo "::warning::places after-deploy incomplete"
+      - name: Kill-switch end-to-end test (commit message has [kill-test])
+        if: contains(github.event.head_commit.message, '[kill-test]')
+        run: bash scripts/places-guard.sh killtest
       - name: Report
         if: always()
         run: bash scripts/places-guard.sh report

@@ -12,7 +12,7 @@ TOPIC=budget-alerts
 SERVER_KEY=noted-places-server
 KILL_NAME="noted places kill switch"
 # release keystore (public — it's in every APK)
-APP_SHA1=45:1F:6A:59:5D:7A:AA:F8:25:B1:C0:F9:DF:E9:CE:A6:C0:CE:67:BE
+APP_SHA1=451f6a595d7aaaf825b1c0f9dfe9cea6c0ce67be
 
 AT=$(node -e "require('$(npm root -g)/firebase-tools/lib/auth').getAccessToken(process.env.FIREBASE_TOKEN, []).then(t => console.log(t.access_token))")
 echo "::add-mask::$AT"
@@ -169,6 +169,21 @@ report() {
   api POST "https://cloudresourcemanager.googleapis.com/v1/projects/$P:getIamPolicy" '{}' |
     jq -r '.bindings[]? | select(.role=="roles/serviceusage.serviceUsageAdmin") | .members | join(",")'
   echo "==============================================================="
+}
+
+# End-to-end check of the kill switch: a budget alert over the limit → Places off → back on.
+killtest() {
+  local svc="https://serviceusage.googleapis.com/v1/projects/$P/services/places.googleapis.com" msg i st
+  msg=$(jq -nc --arg n "$KILL_NAME" '{budgetDisplayName: $n, costAmount: 99, budgetAmount: 10, currencyCode: "ILS"}' | base64 -w0)
+  api POST "https://pubsub.googleapis.com/v1/projects/$P/topics/$TOPIC:publish" "{\"messages\":[{\"data\":\"$msg\"}]}" | jq -c .
+  for i in $(seq 1 18); do
+    sleep 10; st=$(api GET "$svc" | jq -r .state); echo "places: $st"
+    [ "$st" = DISABLED ] && break
+  done
+  api POST "$svc:enable" >/dev/null
+  for i in $(seq 1 12); do sleep 5; [ "$(api GET "$svc" | jq -r .state)" = ENABLED ] && break; done
+  echo "places back: $(api GET "$svc" | jq -r .state)"
+  [ "$st" = DISABLED ] && echo "KILL SWITCH OK" || { echo "::error::kill switch did not turn Places off"; return 1; }
 }
 
 "$@"
