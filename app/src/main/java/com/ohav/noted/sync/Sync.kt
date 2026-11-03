@@ -878,7 +878,8 @@ data class NoteShadow(
                 members = members.ifEmpty { mapOf(owner to Share.ROLE_OWNER) },
                 people = people,
                 by = by,
-                gone = !mine && topTrash != null,
+                // the owner trashed it, or I deleted it for good from a shared folder (it can't leave the folder for me alone)
+                gone = !mine && (topTrash != null || my?.get("purged") == true),
                 personal = my != null,
                 folder = folder,
                 via = (d.get("via") as? List<*>).orEmpty().filterIsInstance<String>(),

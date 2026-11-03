@@ -85,6 +85,8 @@ class NotesRepository(private val db: NotedDatabase) {
     suspend fun archive(ids: List<String>, on: Boolean = true) = dao.setArchived(ids, on, now())
     suspend fun trash(ids: List<String>) = now().let { dao.setTrashed(ids, it, it) }
     suspend fun restore(ids: List<String>) = dao.setTrashed(ids, null, now())
+    /** Back into the bin with its old date (undoing a restore keeps the days it had left). */
+    suspend fun retrash(ids: List<String>, at: Long) = dao.setTrashed(ids, at, now())
 
     /**
      * Writes a new relative order for [ids] (already sorted as wanted) by reusing the

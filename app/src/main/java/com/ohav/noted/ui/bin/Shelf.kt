@@ -213,7 +213,7 @@ private fun trashSheet(app: NotedApp, overlays: Overlays, toasts: ToastState, n:
             app.scope.launch {
                 app.notes.restore(listOf(n.id))
                 toasts.show("״${titleOf(n, privacy)}״ שוחזר", Ph.ArrowCounterClockwise, action = "ביטול") {
-                    app.scope.launch { app.notes.trash(listOf(n.id)) }
+                    app.scope.launch { app.notes.retrash(listOf(n.id), n.trashedAt ?: System.currentTimeMillis()) }
                 }
             }
         }

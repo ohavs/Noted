@@ -1,6 +1,7 @@
 package com.ohav.noted.sync
 
 import android.content.Context
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
 import com.ohav.noted.data.Blocks
 import com.ohav.noted.data.Media
@@ -38,6 +39,10 @@ class Bin(
             val sh = n.shareInfo
             // someone else's note shared with me alone: step out, or it comes back with the next pull
             if (!sh.isOwner && sh.folder.isEmpty() && uid != null) sharing.leave(n.id)
+            // someone else's note in a folder shared with me: I can't step out of one note, so it stays gone for me alone
+            if (!sh.isOwner && sh.folder.isNotEmpty() && uid != null && account.available) {
+                runCatching { FirebaseFirestore.getInstance().collection("notes").document(n.id).update("u.$uid.purged", true) }
+            }
             val files = Blocks.parse(n.blocks).flatMap { MediaExtra.files(it) }.filter { it !in keep }
             sync.discard(n.id)
             withContext(Dispatchers.IO) { files.forEach { Media.file(ctx, it).delete() } }
