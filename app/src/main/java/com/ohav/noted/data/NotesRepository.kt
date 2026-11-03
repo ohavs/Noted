@@ -69,10 +69,14 @@ class NotesRepository(private val db: NotedDatabase) {
         n.createdAt < before && n.trashedAt == null && isBlank(n.title, Blocks.parse(n.blocks)) && sh.isOwner && (!sh.shared || sh.folder.isNotEmpty())
     }.map { it.id }
 
-    /** Flips one checklist row; returns the note's (done, total) afterwards. */
-    suspend fun toggleCheck(noteId: String, blockId: String): Pair<Int, Int>? {
+    /** Flips one checklist row (a done row sinks to the bottom of its list); returns the note's (done, total) afterwards. */
+    suspend fun toggleCheck(noteId: String, blockId: String, to: Boolean? = null): Pair<Int, Int>? {
         val n = dao.get(noteId) ?: return null
-        val blocks = Blocks.parse(n.blocks).map { if (it.id == blockId) it.copy(done = !it.done) else it }
+        val old = Blocks.parse(n.blocks)
+        val was = old.firstOrNull { it.id == blockId }?.done ?: return null
+        val tick = to ?: !was
+        if (tick == was) return null
+        val blocks = old.map { if (it.id == blockId) it.copy(done = tick) else it }.sinkChecked(blockId)
         dao.setBlocks(noteId, Blocks.serialize(blocks), now())
         val checks = blocks.filter { it.type == BlockType.Check }
         return checks.count { it.done } to checks.size

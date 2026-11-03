@@ -1,5 +1,6 @@
 package com.ohav.noted.data
 
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -54,4 +55,61 @@ object Blocks {
             put(o)
         }
     }.toString()
+}
+
+/**
+ * A ticked checklist row sinks to the bottom of its list; unticked, it rises back above the done ones.
+ * The list = the run of checklist rows around [i] at its indent (deeper rows travel with their parent).
+ * [list] already holds the new state of row [i]. Shared by the repository, the editor and (copied) the watch.
+ */
+fun <T> sinkChecked(list: List<T>, i: Int, isCheck: (T) -> Boolean, indent: (T) -> Int, done: (T) -> Boolean): List<T> {
+    if (i !in list.indices || !isCheck(list[i])) return list
+    val lvl = indent(list[i])
+    var s = i
+    while (s > 0 && isCheck(list[s - 1]) && indent(list[s - 1]) >= lvl) s--
+    var e = i
+    while (e < list.lastIndex && isCheck(list[e + 1]) && indent(list[e + 1]) >= lvl) e++
+    var k = s
+    while (k <= e && indent(list[k]) > lvl) k++
+    val head = s until k
+    val units = ArrayList<IntRange>()
+    while (k <= e) {
+        val st = k++
+        while (k <= e && indent(list[k]) > lvl) k++
+        units += st until k
+    }
+    val mine = units.firstOrNull { i in it } ?: return list
+    val others = units.filter { it != mine }
+    val at = if (done(list[i])) others.size else others.indexOfFirst { done(list[it.first]) }.let { if (it < 0) others.size else it }
+    val ordered = others.toMutableList().apply { add(at, mine) }
+    if (ordered == units) return list
+    return list.subList(0, s) + head.map { list[it] } + ordered.flatMap { r -> r.map { list[it] } } + list.subList(e + 1, list.size)
+}
+
+fun List<Block>.sinkChecked(id: String): List<Block> =
+    sinkChecked(this, indexOfFirst { it.id == id }, { it.type == BlockType.Check }, { it.indent }, { it.done })
+
+/**
+ * Rows ticked a moment ago. A done row stays in sight (struck through, at the bottom) for [SHOW_MS]
+ * on the widget and the home card, then folds away; the editor always shows it.
+ */
+object Ticked {
+    const val SHOW_MS = 4_000L
+    private val at = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /** Bumps on a tick and again when it expires, so views re-filter. */
+    val version = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    fun mark(blockId: String, scope: kotlinx.coroutines.CoroutineScope) {
+        at[blockId] = System.currentTimeMillis()
+        version.value++
+        scope.launch {
+            kotlinx.coroutines.delay(SHOW_MS + 150)
+            at.entries.removeAll { System.currentTimeMillis() - it.value > SHOW_MS }
+            version.value++
+        }
+    }
+
+    /** Whether [b] shows on a glance surface: anything but a done row that wasn't just ticked. */
+    fun shows(b: Block): Boolean =
+        b.type != BlockType.Check || !b.done || at[b.id]?.let { System.currentTimeMillis() - it <= SHOW_MS } == true
 }

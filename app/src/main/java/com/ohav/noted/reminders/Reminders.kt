@@ -21,6 +21,7 @@ import com.ohav.noted.data.Privacy
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.BlockType
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.data.sinkChecked
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.ReminderEntity
 import com.ohav.noted.data.Repeat
@@ -88,7 +89,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
         }
         if (r.blockId.isNotEmpty()) {
             notes.get(r.noteId)?.let { n ->
-                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }
+                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }.sinkChecked(r.blockId)
                 notes.setBlocks(n.id, Blocks.serialize(blocks), System.currentTimeMillis())
             }
         }

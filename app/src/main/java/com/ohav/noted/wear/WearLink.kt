@@ -173,9 +173,8 @@ class WearLink(private val app: NotedApp) {
     suspend fun toggle(noteId: String, blockId: String, done: Boolean) {
         val n = app.notes.get(noteId) ?: return
         if (n.shareInfo.readOnly) return
-        val blocks = Blocks.parse(n.blocks)
-        if (blocks.none { it.id == blockId && it.done != done }) return
-        app.notes.save(noteId, n.title, blocks.map { if (it.id == blockId) it.copy(done = done) else it })
+        com.ohav.noted.data.Ticked.mark(blockId, app.scope)
+        app.notes.toggleCheck(noteId, blockId, done)
     }
 
     /** A dictated note: a short phrase is the title, anything longer the first line. */

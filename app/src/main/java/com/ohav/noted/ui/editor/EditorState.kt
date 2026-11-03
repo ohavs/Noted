@@ -338,7 +338,22 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
 
     // ---- toolbar actions ------------------------------------------------------------------
 
-    fun toggleCheck(b: EdBlock) { record(true); b.done = !b.done; changed() }
+    fun toggleCheck(b: EdBlock) { record(true); b.done = !b.done; changed(); sinking = b.id to ++sinks }
+
+    /** A row just ticked / unticked: [BlockList] lets the tick play, then calls [sink]. */
+    var sinking by mutableStateOf<Pair<String, Int>?>(null)
+        private set
+    private var sinks = 0
+
+    /** Moves row [id] to the bottom of its checklist (done) or back above the done rows; false if it stays. Part of the tick's undo step. */
+    fun sink(id: String): Boolean {
+        val now = blocks.toList()
+        val out = com.ohav.noted.data.sinkChecked(now, indexOf(id), { it.type == BlockType.Check }, { it.indent }, { it.done })
+        if (out === now) return false
+        out.forEachIndexed { k, b -> if (blocks[k] !== b) blocks[k] = b }
+        changed()
+        return true
+    }
 
     /** Turns the focused block into [type]; the same type again goes back to a paragraph. */
     fun setType(type: BlockType) {

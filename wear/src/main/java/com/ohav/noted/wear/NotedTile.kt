@@ -16,10 +16,12 @@ import androidx.wear.tiles.RequestBuilders
 import androidx.wear.tiles.TileBuilders
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
+import com.ohav.noted.wear.ui.whenText
 
 /**
- * The tile: up to three pinned notes (the newest notes when nothing is pinned) as paper strips
- * with their checklist progress, and the two quick ways in — dictate a note / record one.
+ * The tile, as the wearer chose in settings ([WView.tile]): pinned notes (the newest when nothing is
+ * pinned), the newest, one category, one note (its open rows), or the coming reminders — as paper
+ * strips with their checklist progress, and the two quick ways in — dictate a note / record one.
  * Under the first note with open checklist rows, the next ones can be ticked right here (the
  * tile reloads, the row goes, the next comes up). Everything else opens the app; the tile only
  * reads the stored state, so it draws at once.
@@ -53,26 +55,59 @@ class NotedTile : TileService() {
 
     private fun tile(width: Float): TileBuilders.Tile {
         val s = store.state.value
+        val v = store.view.value
         val accent = Palette.accent(s?.accent)
-        val all = s?.notes.orEmpty().let { all -> all.filter { it.pinned }.ifEmpty { all.sortedByDescending { it.at } } }
-        // the first of them with something left to tick; the strips make room for its rows
-        val focus = all.take(3).firstOrNull { n -> !n.locked && !n.blurBody && !n.readOnly && n.checks.any { !it.done && it.text.isNotBlank() } }
-        val rows = focus?.checks?.filter { !it.done && it.text.isNotBlank() }?.take(if (width >= 210) 2 else 1).orEmpty()
-        val notes = if (focus == null) all.take(if (width >= 210) 3 else 2) else (listOf(focus) + all.filter { it.id != focus.id }).take(if (width >= 210) 2 else 1)
+        val wide = width >= 210
         val col = LayoutElementBuilders.Column.Builder()
             .setWidth(expand())
             .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
-            .addContent(text(if (s?.notes.orEmpty().any { it.pinned }) "נעוצים" else "אחרונים", 12f, Palette.INK2))
-            .addContent(space(6f))
-        if (s == null || notes.isEmpty()) {
-            col.addContent(text(if (s == null) "פתחו את noted בטלפון" else "אין פתקים עדיין", 14f, Palette.INK, lines = 2))
-        } else {
-            notes.forEachIndexed { i, n ->
-                if (i > 0) col.addContent(space(5f))
-                col.addContent(strip(n, width))
-                if (n.id == focus?.id) rows.forEach { l ->
-                    col.addContent(space(3f))
-                    col.addContent(checkRow(n, l, width))
+        fun head(t: String) { col.addContent(text(t, 12f, Palette.INK2)).addContent(space(6f)) }
+        fun note(t: String) { col.addContent(text(t, 14f, Palette.INK, lines = 2)) }
+        val one = v.tile.removePrefix("note:").takeIf { v.tile.startsWith("note:") }?.let { s?.note(it) }
+        val cat = v.tile.removePrefix("cat:").takeIf { v.tile.startsWith("cat:") }?.let { s?.cat(it) }
+        when {
+            s == null -> { head("noted"); note("פתחו את noted בטלפון") }
+            v.tile == WView.TILE_REMS -> {
+                head("בקרוב")
+                val rems = v.rems(s).take(if (wide) 3 else 2)
+                if (rems.isEmpty()) note("אין תזכורות קרובות")
+                rems.forEachIndexed { i, r ->
+                    if (i > 0) col.addContent(space(5f))
+                    col.addContent(chip(r.title, whenText(r.at, r.due), Palette.SURFACE, Palette.INK, open("do", "rem", "r:" + r.id), width))
+                }
+            }
+            one != null -> {
+                // one note on the wrist: its open rows, more of them, tickable here
+                head(s.cat(one.cat)?.name ?: "פתק")
+                col.addContent(strip(one, width))
+                val readable = !one.locked && !one.blurBody
+                val open = if (readable && !one.readOnly) one.checks.filter { !it.done && it.text.isNotBlank() }.take(if (wide) 3 else 2) else emptyList()
+                open.forEach { l -> col.addContent(space(3f)); col.addContent(checkRow(one, l, width)) }
+                if (readable && open.isEmpty()) {
+                    val total = one.progress.second
+                    val peek = if (total > 0) "הכל סומן" else one.lines.firstOrNull { !it.isCheck && it.text.isNotBlank() && it.kind in TEXTY }?.text?.trim()
+                    if (peek != null) { col.addContent(space(5f)); col.addContent(text(peek, 13f, Palette.INK2, lines = 2)) }
+                }
+            }
+            else -> {
+                val (title, list) = when {
+                    cat != null -> cat.name to s.notes.filter { s.top(it.cat) == cat.id }.sortedWith(compareByDescending<Note> { it.pinned }.thenByDescending { it.at })
+                    v.tile == WView.TILE_RECENT -> "אחרונים" to v.notes(s).sortedByDescending { it.at }
+                    else -> v.notes(s).let { all -> all.filter { it.pinned }.takeIf { it.isNotEmpty() }?.let { "נעוצים" to it } ?: ("אחרונים" to all.sortedByDescending { it.at }) }
+                }
+                head(title)
+                // the first of them with something left to tick; the strips make room for its rows
+                val focus = list.take(3).firstOrNull { n -> !n.locked && !n.blurBody && !n.readOnly && n.checks.any { !it.done && it.text.isNotBlank() } }
+                val rows = focus?.checks?.filter { !it.done && it.text.isNotBlank() }?.take(if (wide) 2 else 1).orEmpty()
+                val notes = if (focus == null) list.take(if (wide) 3 else 2) else (listOf(focus) + list.filter { it.id != focus.id }).take(if (wide) 2 else 1)
+                if (notes.isEmpty()) note("אין פתקים עדיין")
+                notes.forEachIndexed { i, n ->
+                    if (i > 0) col.addContent(space(5f))
+                    col.addContent(strip(n, width))
+                    if (n.id == focus?.id) rows.forEach { l ->
+                        col.addContent(space(3f))
+                        col.addContent(checkRow(n, l, width))
+                    }
                 }
             }
         }
@@ -162,6 +197,30 @@ class NotedTile : TileService() {
             .build()
     }
 
+    /** A reminder on the tile: what, and when under it. */
+    private fun chip(title: String, sub: String, bg: Int, ink: Int, click: ModifiersBuilders.Clickable, width: Float): LayoutElement =
+        LayoutElementBuilders.Box.Builder()
+            .setWidth(dp(width * .72f))
+            .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder().setColor(argb(bg))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(13f)).build()).build(),
+                    )
+                    .setPadding(ModifiersBuilders.Padding.Builder().setStart(dp(12f)).setEnd(dp(12f)).setTop(dp(5f)).setBottom(dp(5f)).build())
+                    .setClickable(click)
+                    .build(),
+            )
+            .addContent(
+                LayoutElementBuilders.Column.Builder()
+                    .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                    .addContent(text(title, 13f, ink, bold = true))
+                    .addContent(text(sub, 11f, Palette.INK2))
+                    .build(),
+            )
+            .build()
+
     private fun circle(icon: String, size: Float, bg: Int, tint: Int, click: ModifiersBuilders.Clickable): LayoutElement =
         LayoutElementBuilders.Box.Builder()
             .setWidth(dp(size)).setHeight(dp(size))
@@ -213,6 +272,7 @@ class NotedTile : TileService() {
         .build()
 
     companion object {
+        private val TEXTY = setOf("P", "H1", "H2", "H3", "Quote", "Bullet", "Num")
         private const val RES = "1"
         fun refresh(ctx: Context) = runCatching { getUpdater(ctx).requestUpdate(NotedTile::class.java) }
     }

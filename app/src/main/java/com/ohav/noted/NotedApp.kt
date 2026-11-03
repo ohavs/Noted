@@ -76,7 +76,7 @@ class NotedApp : Application() {
         scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
         // home-screen widgets follow notes, categories, reminders and the look (a no-op without widgets)
         scope.launch {
-            combine(notes.notes, notes.categories, settings.settings, reminders.all, places.reminders, privacy.flags) { _ -> }.drop(1).debounce(500)
+            combine(notes.notes, notes.categories, settings.settings, reminders.all, places.reminders, privacy.flags, com.ohav.noted.data.Ticked.version) { _ -> }.drop(1).debounce(500)
                 .collect { NotedWidget.refresh(this@NotedApp) }
         }
     }

@@ -39,6 +39,8 @@ import com.ohav.noted.wear.ui.Ph
 import com.ohav.noted.wear.ui.RecordScreen
 import com.ohav.noted.wear.ui.RemindersScreen
 import com.ohav.noted.wear.ui.SettingsScreen
+import com.ohav.noted.wear.ui.CatsScreen
+import com.ohav.noted.wear.ui.TileScreen
 
 class MainActivity : ComponentActivity() {
     /** What the tile asked for: "dictate", "record", or "note:<id>". */
@@ -112,6 +114,7 @@ class MainActivity : ComponentActivity() {
                 },
                 reminders = { nav.navigate("rem") },
                 settings = { nav.navigate("settings") },
+                go = { route -> nav.navigate(route) },
                 flash = flash,
             )
         }
@@ -124,6 +127,7 @@ class MainActivity : ComponentActivity() {
             when {
                 a == "dictate" -> actions.dictate(null)
                 a == "record" -> actions.record(null)
+                a == "rem" -> { nav.popBackStack("home", inclusive = false); nav.navigate("rem") }
                 a.startsWith("note:") -> { nav.popBackStack("home", inclusive = false); nav.navigate("note/" + a.removePrefix("note:")) }
             }
         }
@@ -135,6 +139,8 @@ class MainActivity : ComponentActivity() {
                     composable("note/{id}") { e -> NoteScreen(e.arguments?.getString("id").orEmpty(), actions) }
                     composable("rem") { RemindersScreen(actions) }
                     composable("settings") { SettingsScreen(actions) }
+                    composable("cats") { CatsScreen() }
+                    composable("tile") { TileScreen(actions) }
                     composable("rec") { RecordScreen(recInto.value, actions) { nav.popBackStack() } }
                 }
                 FlashHost(flash, Color(Palette.accent(s?.accent)), Color(Palette.onAccent(s?.accent)))

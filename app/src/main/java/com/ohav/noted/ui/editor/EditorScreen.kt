@@ -909,6 +909,22 @@ private fun BlockList(state: EditorState, onBlockMenu: (String) -> Unit, toasts:
 
     fun shiftOf(id: String) = shifts.getOrPut(id) { Animatable(0f) }
 
+    // a ticked row waits for its tick to draw, then sinks to the bottom of its list; every row that
+    // moved glides from where it was (heights are known, so old and new tops are sums)
+    LaunchedEffect(state.sinking) {
+        val id = state.sinking?.first ?: return@LaunchedEffect
+        delay(420)
+        if (dragId != null) return@LaunchedEffect
+        fun tops(): Map<String, Float> { var y = 0f; return state.blocks.associate { b -> b.id to y.also { y += heights[b.id] ?: 0 } } }
+        val before = tops()
+        if (!state.sink(id)) return@LaunchedEffect
+        val after = tops()
+        after.forEach { (k, y) ->
+            val d = (before[k] ?: y) - y
+            if (d != 0f) shiftOf(k).let { a -> scope.launch { a.snapTo(a.value + d); a.animateTo(0f, Motion.glide()) } }
+        }
+    }
+
     Column(Modifier.fillMaxWidth()) {
         // numbering restarts after anything that isn't a numbered row, and per indent level
         val counters = IntArray(4)

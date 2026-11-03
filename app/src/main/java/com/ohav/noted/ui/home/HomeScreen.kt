@@ -700,6 +700,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         onLongClick = { startLift(n) },
                         onToggleCheck = { blockId ->
                             if (n.shareInfo.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@NoteCard }
+                            com.ohav.noted.data.Ticked.mark(blockId, app.scope)
                             scope.launch {
                                 val r = app.notes.toggleCheck(n.id, blockId) ?: return@launch
                                 if (r.first == r.second && r.second > 0) toasts.show("כל הרשימה סומנה. יפה!", Ph.CheckCircleFill)

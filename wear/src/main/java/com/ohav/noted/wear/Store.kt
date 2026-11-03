@@ -79,6 +79,60 @@ data class WState(
 ) {
     fun note(id: String) = notes.firstOrNull { it.id == id }
     fun cat(id: String) = cats.firstOrNull { it.id == id }
+    val tops get() = cats.filter { it.parent.isEmpty() || cat(it.parent) == null }
+
+    /** The top-level category [id] sits under (itself for a top one). */
+    fun top(id: String): String {
+        var c = cat(id) ?: return id
+        repeat(8) { c = cat(c.parent) ?: return c.id }
+        return c.id
+    }
+}
+
+/**
+ * What the wearer chose to see. [cats]: top-level categories on the watch (empty = all).
+ * [tile]: [TILE_PINNED] / [TILE_RECENT] / [TILE_REMS] / "cat:<id>" / "note:<id>".
+ */
+data class WView(val cats: Set<String> = emptySet(), val tile: String = TILE_PINNED) {
+    /** Chosen categories that still exist; none left = everything. */
+    fun live(s: WState): Set<String> = cats.filterTo(HashSet()) { s.cat(it) != null }
+    fun shows(s: WState, n: Note): Boolean = live(s).let { it.isEmpty() || s.top(n.cat) in it }
+    fun notes(s: WState): List<Note> = live(s).let { l -> if (l.isEmpty()) s.notes else s.notes.filter { s.top(it.cat) in l } }
+    fun rems(s: WState): List<Rem> = s.rems.filter { r -> s.note(r.noteId)?.let { shows(s, it) } ?: true }
+    fun places(s: WState): List<PlaceRem> = s.places.filter { r -> s.note(r.noteId)?.let { shows(s, it) } ?: true }
+
+    companion object {
+        const val TILE_PINNED = "pinned"
+        const val TILE_RECENT = "recent"
+        const val TILE_REMS = "rems"
+    }
+}
+
+/** A ticked row sinks to the bottom of its checklist (same rule as the phone's `sinkChecked`). */
+fun List<Line>.sink(id: String): List<Line> {
+    val i = indexOfFirst { it.id == id }
+    if (i < 0 || !this[i].isCheck) return this
+    val lvl = this[i].indent
+    fun inList(k: Int) = this[k].isCheck && this[k].indent >= lvl
+    var s = i
+    while (s > 0 && inList(s - 1)) s--
+    var e = i
+    while (e < lastIndex && inList(e + 1)) e++
+    var k = s
+    while (k <= e && this[k].indent > lvl) k++
+    val head = s until k
+    val units = ArrayList<IntRange>()
+    while (k <= e) {
+        val st = k++
+        while (k <= e && this[k].indent > lvl) k++
+        units += st until k
+    }
+    val mine = units.firstOrNull { i in it } ?: return this
+    val others = units.filter { it != mine }
+    val at = if (this[i].done) others.size else others.indexOfFirst { this[it.first].done }.let { if (it < 0) others.size else it }
+    val ordered = others.toMutableList().apply { add(at, mine) }
+    if (ordered == units) return this
+    return subList(0, s) + head.map { this[it] } + ordered.flatMap { r -> r.map { this[it] } } + subList(e + 1, size)
 }
 
 /**
@@ -102,6 +156,25 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
 
     /** Lines checked here, waiting for the phone: "note|line" → done. */
     private val pending = MutableStateFlow(loadPending())
+
+    // ---- what to show ----
+
+    private val vp = ctx.getSharedPreferences("view", Context.MODE_PRIVATE)
+    private val _view = MutableStateFlow(WView(vp.getStringSet("cats", null).orEmpty().toSet(), vp.getString("tile", null) ?: WView.TILE_PINNED))
+    val view: StateFlow<WView> = _view
+
+    fun setCats(cats: Set<String>) = setView(_view.value.copy(cats = cats))
+    fun setTile(tile: String) = setView(_view.value.copy(tile = tile))
+    private fun setView(v: WView) {
+        _view.value = v
+        vp.edit().putStringSet("cats", v.cats).putString("tile", v.tile).apply()
+        NotedTile.refresh(ctx)
+    }
+
+    /** Rows ticked here a moment ago: they stay in sight (struck, at the bottom) for [SHOW_MS], then fold away. */
+    private val _ticked = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val ticked: StateFlow<Map<String, Long>> = _ticked
+    fun fresh(lineId: String, now: Long = System.currentTimeMillis()) = _ticked.value[lineId]?.let { now - it <= SHOW_MS } == true
 
     // ---- incoming ----
 
@@ -145,6 +218,13 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
     // ---- outgoing ----
 
     fun toggle(noteId: String, lineId: String, done: Boolean) {
+        val now = System.currentTimeMillis()
+        _ticked.value = _ticked.value.filterValues { now - it <= SHOW_MS } + (lineId to now)
+        scope.launch {
+            kotlinx.coroutines.delay(SHOW_MS + 150)
+            _ticked.value = _ticked.value.filterValues { System.currentTimeMillis() - it <= SHOW_MS }
+            NotedTile.refresh(ctx)
+        }
         setPending(pending.value + ("$noteId|$lineId" to done))
         _state.value = _state.value?.let(::withPending)
         NotedTile.refresh(ctx)
@@ -277,8 +357,14 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
         val p = pending.value
         if (p.isEmpty()) return s
         return s.copy(notes = s.notes.map { n ->
-            if (p.keys.none { it.startsWith(n.id + "|") }) n
-            else n.copy(lines = n.lines.map { l -> p["${n.id}|${l.id}"]?.let { l.copy(done = it) } ?: l })
+            val mine = p.keys.filter { it.startsWith(n.id + "|") }
+            if (mine.isEmpty()) n
+            else {
+                // checked here: shown checked and sunk to the bottom, as the phone will have it
+                var lines = n.lines.map { l -> p["${n.id}|${l.id}"]?.let { l.copy(done = it) } ?: l }
+                mine.forEach { k -> lines = lines.sink(k.substringAfter('|')) }
+                n.copy(lines = lines)
+            }
         })
     }
 
@@ -304,6 +390,7 @@ class Store(private val ctx: Context, private val scope: CoroutineScope) {
         const val PIC = "/noted/pic"
         const val PLACE_DONE = "/noted/pdone"
         const val CAP_PHONE = "noted_phone"
+        const val SHOW_MS = 4_000L
 
         fun parse(json: String): WState? = runCatching {
             val o = JSONObject(json)

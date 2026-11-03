@@ -3,7 +3,17 @@ package com.ohav.noted.ui.home
 import com.ohav.noted.ui.lock.veil
 import androidx.compose.animation.animateColorAsState
 import com.ohav.noted.ui.media.CardMedia
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import com.ohav.noted.data.Ticked
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -111,7 +121,8 @@ class CardPull(
 
 private val TEXTY = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 
-fun snippetOf(blocks: List<Block>): String = blocks.firstOrNull { it.type in TEXTY && it.text.isNotBlank() }?.text.orEmpty()
+fun snippetOf(blocks: List<Block>): String =
+    blocks.firstOrNull { it.type in TEXTY && it.text.isNotBlank() && !(it.type == BlockType.Check && it.done) }?.text.orEmpty()
 
 fun progressOf(blocks: List<Block>): Pair<Int, Int>? {
     val c = blocks.filter { it.type == BlockType.Check }
@@ -318,11 +329,34 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
     val rich = remember(blocks, c.isDark) { blocks.associate { it.id to Rich.annotate(it.text, it.spans, c.isDark, links = true) } }
     val reminders = LocalReminders.current
     val placeChips = LocalPlaceChips.current
+    // a ticked row sinks to the bottom of its list (rows glide to their new places), stays struck
+    // through for a moment, then folds away; the editor still has it
+    Ticked.version.collectAsState().value
+    val gone = blocks.count { !Ticked.shows(it) }
+    val scope = rememberCoroutineScope()
+    val tops = remember { HashMap<String, Float>() }
+    val glides = remember { HashMap<String, Animatable<Float, AnimationVector1D>>() }
+    // numbers worked out up front: a row's content may recompose on its own
+    val nums = remember(blocks) {
+        var k = 0
+        blocks.associate { b -> b.id to (if (b.type == BlockType.Num) ++k else { k = 0; 0 }) }
+    }
     Column(modifier.fillMaxWidth()) {
-        var num = 0
         blocks.forEach { b ->
-            if (b.type != BlockType.Num) num = 0
             val ann = rich[b.id] ?: androidx.compose.ui.text.AnnotatedString(b.text)
+            val glide = glides.getOrPut(b.id) { Animatable(0f) }
+            AnimatedVisibility(
+                Ticked.shows(b),
+                Modifier
+                    .onPlaced { lc ->
+                        val y = lc.positionInParent().y
+                        val was = tops.put(b.id, y)
+                        if (was != null && was != y) scope.launch { glide.snapTo(glide.value + was - y); glide.animateTo(0f, Motion.glide()) }
+                    }
+                    .graphicsLayer { translationY = glide.value },
+                enter = fadeIn(Motion.glide()) + expandVertically(Motion.glide()),
+                exit = fadeOut(Motion.glide()) + shrinkVertically(Motion.glide()),
+            ) { Column {
             when (b.type) {
                 BlockType.P -> if (b.text.isNotBlank()) Text(ann, style = t.note, color = c.noteInk, modifier = Modifier.padding(bottom = 12.dp))
                 BlockType.H1, BlockType.H2, BlockType.H3 ->
@@ -333,7 +367,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                     Text(ann, style = t.note.copy(fontStyle = FontStyle.Italic), color = c.noteInk)
                 }
                 BlockType.Bullet -> ListRow(null, ann, b.indent)
-                BlockType.Num -> { num++; ListRow("$num.", ann, b.indent) }
+                BlockType.Num -> ListRow("${nums[b.id]}.", ann, b.indent)
                 BlockType.Check -> CheckRow(
                     b.text, b.done, c.note(NoteColor.of(n.color)),
                     remind = reminders[ReminderEntity.idFor(n.id, b.id)]?.let { fmtRel(it.occAt) },
@@ -341,6 +375,19 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                 ) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
+            }
+            } }
+        }
+        AnimatedVisibility(gone > 0, enter = fadeIn(Motion.glide()) + expandVertically(Motion.glide()), exit = fadeOut(Motion.glide()) + shrinkVertically(Motion.glide())) {
+            Row(
+                Modifier
+                    .padding(top = 2.dp, bottom = 6.dp)
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onOpenEditor() },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(Ph.Checks, null, Modifier.size(16.dp), tint = c.noteInk2)
+                Text(if (gone == 1) "פריט אחד בוצע" else "$gone פריטים בוצעו", style = Noted.type.meta, color = c.noteInk2)
             }
         }
         val paper = c.note(NoteColor.of(n.color))

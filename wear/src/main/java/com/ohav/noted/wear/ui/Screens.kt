@@ -70,6 +70,9 @@ import com.ohav.noted.wear.Palette
 import com.ohav.noted.wear.Rem
 import com.ohav.noted.wear.Updater
 import com.ohav.noted.wear.store
+import com.ohav.noted.wear.Store
+import com.ohav.noted.wear.WView
+import com.ohav.noted.wear.WState
 import kotlinx.coroutines.launch
 
 /** What the screens can ask the activity for. */
@@ -81,6 +84,8 @@ class Actions(
     val reminders: () -> Unit,
     val settings: () -> Unit,
     val flash: Flash,
+    /** Any other screen by its route ("cats", "tile"). */
+    val go: (String) -> Unit,
 )
 
 @Composable
@@ -117,8 +122,11 @@ fun HomeScreen(a: Actions) {
         Waiting(phone == false) { ctx.store.refresh() }
         return
     }
-    val pinned = st.notes.filter { it.pinned }
-    val rest = st.notes.filterNot { it.pinned }
+    val view by ctx.store.view.collectAsState()
+    val notes = view.notes(st)
+    val rems = view.rems(st)
+    val pinned = notes.filter { it.pinned }
+    val rest = notes.filterNot { it.pinned }
     ListScreen {
         item { Wordmark(accent) }
         item {
@@ -131,11 +139,11 @@ fun HomeScreen(a: Actions) {
         if (phone == false && ctx.store.waiting > 0) item {
             BasicText("${ctx.store.waiting} פעולות מחכות לטלפון", style = body(11.sp, C.ink3, 500, TextAlign.Center))
         }
-        if (st.rems.isNotEmpty()) {
+        if (rems.isNotEmpty()) {
             item { Section("בקרוב") }
-            items(st.rems.take(2), key = { "r" + it.id }) { r -> ReminderRow(r, accent, compact = true) { a.reminders() } }
-            if (st.rems.size > 2) item {
-                BasicText("כל התזכורות (${st.rems.size})", Modifier.press { a.reminders() }.padding(6.dp), style = body(12.sp, accent, 600))
+            items(rems.take(2), key = { "r" + it.id }) { r -> ReminderRow(r, accent, compact = true) { a.reminders() } }
+            if (rems.size > 2) item {
+                BasicText("כל התזכורות (${rems.size})", Modifier.press { a.reminders() }.padding(6.dp), style = body(12.sp, accent, 600))
             }
         }
         if (pinned.isNotEmpty()) {
@@ -146,8 +154,8 @@ fun HomeScreen(a: Actions) {
             item { Section(if (pinned.isEmpty()) "פתקים" else "כל השאר") }
             items(rest, key = { it.id }) { n -> NoteCard(n) { a.openNote(n.id) } }
         }
-        if (st.notes.isEmpty()) item {
-            BasicText("אין פתקים עדיין.\nהכתיבו את הראשון", Modifier.padding(12.dp), style = body(14.sp, C.ink2, 400, TextAlign.Center))
+        if (notes.isEmpty()) item {
+            BasicText(if (st.notes.isEmpty()) "אין פתקים עדיין.\nהכתיבו את הראשון" else "אין פתקים בקטגוריות שנבחרו לשעון", Modifier.padding(12.dp), style = body(14.sp, C.ink2, 400, TextAlign.Center))
         }
         item {
             Column(Modifier.padding(top = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -248,6 +256,8 @@ fun NoteScreen(id: String, a: Actions) {
     val h = rememberHaptics()
     var showTitle by rememberSaveable { mutableStateOf(false) }
     var showBody by rememberSaveable { mutableStateOf(false) }
+    var showDone by rememberSaveable { mutableStateOf(false) }
+    val ticked by ctx.store.ticked.collectAsState()
     if (n == null) {
         Box(Modifier.fillMaxSize().background(C.bg), contentAlignment = Alignment.Center) {
             BasicText("הפתק כבר לא כאן", style = body(14.sp, C.ink2, 500, TextAlign.Center))
@@ -291,14 +301,29 @@ fun NoteScreen(id: String, a: Actions) {
                 }
             }
             else -> {
-                val rows = numbered(n.lines)
+                // a ticked row sinks to the bottom, stays a moment, then folds away (the toggle brings them back)
+                val now = System.currentTimeMillis()
+                val shown = n.lines.filter { l -> !l.isCheck || !l.done || showDone || ticked[l.id]?.let { now - it <= Store.SHOW_MS } == true }
+                val hidden = n.lines.size - shown.size
+                val rows = numbered(shown)
                 items(rows, key = { it.first.id }) { (l, num) ->
                     LineView(l, num, tint, enabled = !n.readOnly) { d ->
                         if (d) h.confirm()
                         ctx.store.toggle(n.id, l.id, d)
                     }
                 }
-                if (rows.isEmpty()) item { BasicText("פתק ריק", style = body(13.sp, C.ink3, 400, TextAlign.Center)) }
+                if (hidden > 0 || (showDone && done > 0)) item {
+                    Row(
+                        Modifier.padding(top = 2.dp).press { showDone = !showDone }.clip(RoundedCornerShape(16.dp)).background(C.surface)
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Ph.Checks, C.ink2, 15.dp)
+                        Spacer(Modifier.width(6.dp))
+                        BasicText(if (showDone) "הסתרת מה שבוצע" else "$hidden בוצעו · הצגה", style = body(12.sp, C.ink2, 500))
+                    }
+                }
+                if (rows.isEmpty() && hidden == 0) item { BasicText("פתק ריק", style = body(13.sp, C.ink3, 400, TextAlign.Center)) }
             }
         }
         if (n.readOnly) item { BasicText("צפייה בלבד", Modifier.padding(top = 4.dp), style = body(11.sp, C.ink3, 500)) }
@@ -434,8 +459,9 @@ fun RemindersScreen(a: Actions) {
     val accent = Color(Palette.accent(s?.accent))
     val onAccent = Color(Palette.onAccent(s?.accent))
     var open by rememberSaveable { mutableStateOf<String?>(null) }
-    val rems = s?.rems.orEmpty()
-    val places = s?.places.orEmpty()
+    val view by ctx.store.view.collectAsState()
+    val rems = s?.let { view.rems(it) }.orEmpty()
+    val places = s?.let { view.places(it) }.orEmpty()
     ListScreen {
         item { BasicText("תזכורות", style = display(28.sp)) }
         if (rems.isEmpty() && places.isEmpty()) item {
@@ -571,6 +597,15 @@ fun SettingsScreen(a: Actions) {
             }
         }
         item {
+            val view by ctx.store.view.collectAsState()
+            val live = s?.let { view.live(it) }.orEmpty()
+            SettingRow(Ph.FolderSimple, "קטגוריות בשעון", if (live.isEmpty()) "הכל" else s?.let { st -> live.mapNotNull { st.cat(it)?.name }.joinToString(" · ") }) { a.go("cats") }
+        }
+        item {
+            val view by ctx.store.view.collectAsState()
+            SettingRow(Ph.Cards, "מה ב-Tile", s?.let { tileLabel(view.tile, it) }) { a.go("tile") }
+        }
+        item {
             BasicText(
                 "הפתקים מגיעים מהטלפון. סימון, הכתבה והקלטות נשמרים בו, גם אם הוא רחוק — הם יישלחו כשיתחבר.",
                 Modifier.padding(horizontal = 14.dp, vertical = 6.dp), style = body(11.sp, C.ink3, 400, TextAlign.Center),
@@ -595,5 +630,102 @@ private fun SettingRow(
             BasicText(label, style = body(14.sp, if (highlight) onAccent else C.ink, 500))
             if (sub != null) BasicText(sub, style = body(11.sp, if (highlight) onAccent.copy(alpha = .7f) else C.ink3))
         }
+    }
+}
+
+// ---------------- what the watch shows ----------------
+
+private fun tileLabel(t: String, s: WState): String = when {
+    t == WView.TILE_RECENT -> "אחרונים"
+    t == WView.TILE_REMS -> "תזכורות קרובות"
+    t.startsWith("cat:") -> s.cat(t.removePrefix("cat:"))?.name ?: "נעוצים"
+    t.startsWith("note:") -> s.note(t.removePrefix("note:"))?.let { if (it.locked || it.blurTitle) "פתק נעול" else it.title.ifBlank { "פתק בלי כותרת" } } ?: "נעוצים"
+    else -> "נעוצים"
+}
+
+/** Which categories reach the watch: none ticked = all of them. */
+@Composable
+fun CatsScreen() {
+    val ctx = LocalContext.current
+    val s by ctx.store.state.collectAsState()
+    val view by ctx.store.view.collectAsState()
+    val h = rememberHaptics()
+    val st = s ?: return
+    val accent = Color(Palette.accent(st.accent))
+    val onAccent = Color(Palette.onAccent(st.accent))
+    val live = view.live(st)
+    ListScreen {
+        item { BasicText("קטגוריות", style = display(26.sp)) }
+        item { BasicText("מה יופיע בשעון וב-Tile", Modifier.padding(bottom = 4.dp), style = body(11.sp, C.ink3, 500, TextAlign.Center)) }
+        item {
+            PickRow("הכל", "${st.notes.size} פתקים", live.isEmpty(), accent, onAccent) { h.tick(); ctx.store.setCats(emptySet()) }
+        }
+        items(st.tops, key = { it.id }) { c ->
+            val count = st.notes.count { st.top(it.cat) == c.id }
+            PickRow(c.name, "$count פתקים", c.id in live, accent, onAccent) {
+                h.tick()
+                ctx.store.setCats(if (c.id in live) live - c.id else live + c.id)
+            }
+        }
+    }
+}
+
+/** What the tile holds: pinned, newest, reminders, one category or one note. */
+@Composable
+fun TileScreen(a: Actions) {
+    val ctx = LocalContext.current
+    val s by ctx.store.state.collectAsState()
+    val view by ctx.store.view.collectAsState()
+    val h = rememberHaptics()
+    val st = s ?: return
+    val accent = Color(Palette.accent(st.accent))
+    val onAccent = Color(Palette.onAccent(st.accent))
+    fun pick(t: String) { h.confirm(); ctx.store.setTile(t); a.flash.show("ה-Tile עודכן", Ph.Cards) }
+    val notes = view.notes(st).sortedWith(compareByDescending<Note> { it.pinned }.thenByDescending { it.at }).take(30)
+    ListScreen {
+        item { BasicText("ב-Tile", style = display(26.sp)) }
+        item { PickRow("נעוצים", "או האחרונים, כשאין נעוצים", view.tile == WView.TILE_PINNED, accent, onAccent) { pick(WView.TILE_PINNED) } }
+        item { PickRow("אחרונים", "מה שהשתנה לאחרונה", view.tile == WView.TILE_RECENT, accent, onAccent) { pick(WView.TILE_RECENT) } }
+        item { PickRow("תזכורות קרובות", "מה ומתי", view.tile == WView.TILE_REMS, accent, onAccent) { pick(WView.TILE_REMS) } }
+        val cats = view.live(st).let { l -> if (l.isEmpty()) st.tops else st.tops.filter { it.id in l } }
+        if (cats.isNotEmpty()) item { Section("קטגוריה אחת") }
+        items(cats, key = { "c:" + it.id }) { c ->
+            PickRow(c.name, null, view.tile == "cat:" + c.id, accent, onAccent) { pick("cat:" + c.id) }
+        }
+        if (notes.isNotEmpty()) item { Section("פתק אחד — לסמן מה-Tile") }
+        items(notes, key = { "n:" + it.id }) { n ->
+            val (done, total) = n.progress
+            PickRow(
+                if (n.locked) "פתק נעול" else if (n.blurTitle) "••••••" else n.title.ifBlank { n.lines.firstOrNull { it.text.isNotBlank() }?.text ?: "פתק בלי כותרת" },
+                if (total > 0 && !n.locked && !n.blurBody) "$done/$total" else null,
+                view.tile == "note:" + n.id, accent, onAccent, paper = C.note(n.color),
+            ) { pick("note:" + n.id) }
+        }
+    }
+}
+
+/** A choice in a list: a disc that fills with the accent and a tick when it's on. */
+@Composable
+private fun PickRow(label: String, sub: String?, on: Boolean, accent: Color, onAccent: Color, paper: Color? = null, onClick: () -> Unit) {
+    val k by animateFloatAsState(if (on) 1f else 0f, Motion.touch(), label = "pick")
+    Row(
+        Modifier.fillMaxWidth().press(onClick = onClick).clip(RoundedCornerShape(20.dp)).background(C.surface)
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (paper != null) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(paper))
+            Spacer(Modifier.width(9.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            BasicText(label, style = body(14.sp, C.ink, 500), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (sub != null) BasicText(sub, style = body(11.sp, C.ink3), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier.size(22.dp).graphicsLayer { val p = 1f + (k - k * k) * .5f; scaleX = p; scaleY = p }
+                .clip(CircleShape).background(accent.copy(alpha = k.coerceIn(0f, 1f))).border(2.dp, if (on) accent else C.ink3, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Tick(onAccent, k, Modifier.size(14.dp)) }
     }
 }

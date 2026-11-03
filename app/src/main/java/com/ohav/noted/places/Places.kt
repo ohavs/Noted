@@ -20,6 +20,7 @@ import com.ohav.noted.NotedApp
 import com.ohav.noted.R
 import com.ohav.noted.data.Block
 import com.ohav.noted.data.Blocks
+import com.ohav.noted.data.sinkChecked
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.PlaceEntity
 import com.ohav.noted.data.PlaceReminderEntity
@@ -130,7 +131,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         clear(id)
         if (r.blockId.isNotEmpty()) {
             notes.get(r.noteId)?.let { n ->
-                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }
+                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }.sinkChecked(r.blockId)
                 notes.setBlocks(n.id, Blocks.serialize(blocks), System.currentTimeMillis())
             }
         }

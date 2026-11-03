@@ -86,6 +86,7 @@ import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.Share
+import com.ohav.noted.data.Ticked
 import com.ohav.noted.design.NotedFonts
 import com.ohav.noted.design.NoteColor
 import com.ohav.noted.design.ThemeMode
@@ -112,6 +113,8 @@ class NotedWidget : GlanceAppWidget() {
             val cats by app.notes.categories.collectAsState(cats0)
             val settings by app.settings.settings.collectAsState(set0)
             val priv by app.privacy.flags.collectAsState()
+            // a row ticked a moment ago stays in sight, then folds away
+            Ticked.version.collectAsState().value
             val state = currentState<Preferences>()
             Main(notes, cats, settings, state[CAT], state[OPEN] == true, priv)
         }
@@ -238,8 +241,10 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
     val canPick = tops.size > 1
     val menu = open && canPick
 
+    // anywhere without its own tap (gaps, margins, below the last card) opens the app
     Column(
-        GlanceModifier.fillMaxSize().background(c.bg.p).cornerRadius(28.dp).padding(start = 12.dp, end = 12.dp, top = 10.dp),
+        GlanceModifier.fillMaxSize().background(c.bg.p).cornerRadius(28.dp).padding(start = 12.dp, end = 12.dp, top = 10.dp)
+            .clickable(actionStartActivity(openAppIntent(context))),
     ) {
         RRow(
             GlanceModifier.fillMaxWidth().absolutePadding(right = 4.dp, bottom = 8.dp),
@@ -279,9 +284,12 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
         when {
             menu -> Menu(tops, notes, tree, cat.id, c, context)
             shown.isEmpty() -> Empty(c, context, cat.id.takeUnless { all })
-            else -> LazyColumn(GlanceModifier.fillMaxSize()) {
+            // wraps its cards, so the space under a short stack belongs to the widget (→ the app)
+            else -> LazyColumn(GlanceModifier.fillMaxWidth()) {
                 items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
-                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context, priv[n.id] ?: 0) }
+                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp).clickable(actionStartActivity(openAppIntent(context)))) {
+                        Card(n, c, context, priv[n.id] ?: 0)
+                    }
                 }
             }
         }
@@ -360,7 +368,10 @@ internal fun Card(n: NoteEntity, c: WColors, context: Context, priv: Int = 0) {
     val hideTitle = priv and com.ohav.noted.data.Privacy.BLUR_TITLE != 0
     val blocks = remember(n.blocks, hideBody) { if (hideBody) emptyList() else Blocks.parse(n.blocks) }
     val canTick = remember(n.share) { Share.parse(n.share).role != Share.ROLE_VIEWER }
-    val lines = blocks.filter { it.type != BlockType.Divider && (it.type !in TEXT || clean(it.text).isNotBlank()) }
+    val real = blocks.filter { it.type != BlockType.Divider && (it.type !in TEXT || clean(it.text).isNotBlank()) }
+    // done rows sink to the bottom and, a moment after the tick, leave the card
+    val lines = real.filter { Ticked.shows(it) }
+    val gone = real.size - lines.size
     val rows = lines.take(MAX_ROWS)
     val rest = lines.size - rows.size
     Column(
@@ -391,9 +402,10 @@ internal fun Card(n: NoteEntity, c: WColors, context: Context, priv: Int = 0) {
             Spacer(GlanceModifier.height(4.dp))
             RText(if (locked) "נעול" else "מוסתר", c.noteInk2, 12f, GlanceModifier.fillMaxWidth(), weight = W.Medium, maxLines = 1)
         }
-        if (rest > 0) {
+        if (rest > 0 || gone > 0) {
             Spacer(GlanceModifier.height(4.dp))
-            RText("ועוד $rest", c.noteInk2, 12f, GlanceModifier.fillMaxWidth(), weight = W.Medium, maxLines = 1)
+            val more = listOfNotNull("ועוד $rest".takeIf { rest > 0 }, "✓ $gone בוצעו".takeIf { gone > 0 }).joinToString("  ·  ")
+            RText(more, c.noteInk2, 12f, GlanceModifier.fillMaxWidth(), weight = W.Medium, maxLines = 1)
         }
     }
 }
@@ -461,6 +473,13 @@ internal fun openNoteIntent(context: Context, id: String) = Intent(context, Main
     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     .putExtra(Notifier.EXTRA_NOTE, id)
 
+/** The app as the launcher opens it (its own data, so the PendingIntent doesn't merge with another). */
+internal fun openAppIntent(context: Context) = Intent(context, MainActivity::class.java)
+    .setAction(Intent.ACTION_MAIN)
+    .addCategory(Intent.CATEGORY_LAUNCHER)
+    .setData(Uri.parse("noted-widget://home"))
+    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+
 /** A new note, opened straight in the editor; [mode] = how it starts (ui.editor.Start). */
 internal fun newNoteIntent(context: Context, cat: String?, mode: String = "text") = Intent(context, MainActivity::class.java)
     .setData(Uri.parse("noted-widget://new/$mode/${cat.orEmpty()}"))
@@ -473,7 +492,10 @@ class ToggleCheck : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val note = parameters[NOTE] ?: return
         val block = parameters[BLOCK] ?: return
-        (context.applicationContext as NotedApp).notes.toggleCheck(note, block)
+        val app = context.applicationContext as NotedApp
+        // marked first, so the row is still there (struck, at the bottom) when the change lands
+        Ticked.mark(block, app.scope)
+        app.notes.toggleCheck(note, block)
         // the row may show on several widgets (the stack and a single-note one)
         NotedWidget.refresh(context)
     }
