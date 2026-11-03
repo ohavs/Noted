@@ -1,6 +1,28 @@
 package com.ohav.noted.ui.places
 
 import android.location.Location
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -247,5 +269,84 @@ private fun MapPin(p: PlaceEntity, lit: Boolean) {
         ) {
             Text(p.name, style = Noted.type.tiny, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         }
+    }
+}
+
+/**
+ * What stands in for the map until its tiles are drawn: the streets sketch themselves in, in the
+ * map's own colours (land, roads, water, park — the same as [MapLook.style]), while a pin pulses
+ * where the view will open. Fading it out lets the real map sharpen out of the same picture.
+ * [focusY] = the pin's height in px (the middle of the visible map); null → 42% of the height.
+ */
+@Composable
+fun MapLoader(modifier: Modifier = Modifier, focusY: Float? = null) {
+    val c = Noted.colors
+    val t = Noted.type
+    val reveal = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { reveal.animateTo(1f, tween(1400, easing = FastOutSlowInEasing)) }
+    val pulse = rememberInfiniteTransition(label = "mapLoader")
+    val pv by pulse.animateFloat(0f, 1f, infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart), label = "pulse")
+    val big = lerp(c.surface, c.ink, .08f)
+    val water = lerp(c.bg, c.accent, if (c.isDark) .22f else .16f)
+    val park = lerp(c.bg, Color(0xFF5E9B62), if (c.isDark) .16f else .14f)
+
+    BoxWithConstraints(modifier.background(c.bg)) {
+        val density = LocalDensity.current
+        val hPx = with(density) { maxHeight.toPx() }
+        val fy = focusY ?: (hPx * .42f)
+        Box(
+            Modifier.fillMaxSize().drawWithCache {
+                val w = size.width
+                val h = size.height
+                fun road(x0: Float, y0: Float, x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) =
+                    Path().apply { moveTo(x0 * w, y0 * h); cubicTo(x1 * w, y1 * h, x2 * w, y2 * h, x3 * w, y3 * h) }
+                // (path, width, colour, start of its share of the reveal)
+                val roads = listOf(
+                    Triple(road(-.05f, .66f, .35f, .58f, .62f, .40f, 1.05f, .33f), 10.dp.toPx(), big) to 0f,
+                    Triple(road(.20f, -.05f, .26f, .35f, .36f, .65f, .30f, 1.05f), 6.dp.toPx(), c.surface) to .08f,
+                    Triple(road(.80f, -.05f, .72f, .30f, .66f, .70f, .70f, 1.05f), 6.dp.toPx(), c.surface) to .16f,
+                    Triple(road(-.05f, .20f, .30f, .16f, .70f, .22f, 1.05f, .14f), 5.dp.toPx(), c.surface) to .24f,
+                    Triple(road(-.05f, .88f, .30f, .84f, .60f, .90f, 1.05f, .80f), 5.dp.toPx(), c.surface) to .30f,
+                    Triple(road(.30f, .50f, .42f, .54f, .52f, .66f, .68f, .62f), 4.dp.toPx(), c.surface) to .38f,
+                    Triple(road(.48f, .02f, .50f, .10f, .46f, .20f, .50f, .30f), 4.dp.toPx(), c.surface) to .44f,
+                )
+                val measure = PathMeasure()
+                val lens = roads.map { (r, _) -> measure.setPath(r.first, false); measure.length }
+                val seg = Path()
+                val lake = Offset(w * 1.02f, h * 1.0f)
+                val lakeR = w * .42f
+                val parkTL = Offset(w * .36f, h * .25f)
+                val parkSize = Size(w * .24f, h * .09f)
+                val parkR = CornerRadius(14.dp.toPx())
+                onDrawBehind {
+                    val p = reveal.value
+                    // water and park bloom first, quietly
+                    val a = (p * 2.2f).coerceIn(0f, 1f)
+                    drawCircle(water.copy(alpha = a), lakeR, lake)
+                    drawRoundRect(park.copy(alpha = a), parkTL, parkSize, parkR)
+                    roads.forEachIndexed { i, (r, start) ->
+                        val f = ((p - start) / (1f - start * .6f - .2f)).coerceIn(0f, 1f)
+                        if (f <= 0f) return@forEachIndexed
+                        measure.setPath(r.first, false)
+                        seg.reset()
+                        measure.getSegment(0f, lens[i] * f, seg, true)
+                        drawPath(seg, r.third, style = Stroke(r.second, cap = StrokeCap.Round))
+                    }
+                    // the pin's pulse: two rings leaving it, staggered (draw-phase only)
+                    val at = Offset(w / 2f, fy)
+                    listOf(pv, (pv + .5f) % 1f).forEach { q ->
+                        drawCircle(c.accent.copy(alpha = (1f - q) * .30f), 10.dp.toPx() + q * 58.dp.toPx(), at)
+                    }
+                    drawCircle(Color.Black.copy(alpha = if (c.isDark) .30f else .10f), 13.dp.toPx(), at + Offset(0f, 2.dp.toPx()))
+                    drawCircle(c.surface, 12.dp.toPx(), at)
+                    drawCircle(c.accent, 8.dp.toPx(), at)
+                }
+            },
+        )
+        Text(
+            "המפה בדרך…", style = t.caption, color = c.ink3, textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().offset { IntOffset(0, (fy + 30.dp.toPx()).roundToInt()) }
+                .graphicsLayer { alpha = ((reveal.value - .3f) * 2f).coerceIn(0f, 1f) },
+        )
     }
 }

@@ -49,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -145,7 +146,15 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
         if (!settled) delay(700)
         mapOn = true
     }
-    val list = places ?: return
+    val list = places ?: run {
+        // the same loader (same pin spot) the map screen opens with, so it carries straight on
+        if (PlacesApi.enabled) BoxWithConstraints(Modifier.fillMaxSize()) {
+            val statusTop = WindowInsets.statusBars.getTop(density).toFloat()
+            val peekTop = with(density) { maxHeight.toPx() } * .52f
+            MapLoader(Modifier.fillMaxSize(), (statusTop + with(density) { 96.dp.toPx() } + peekTop) / 2f)
+        }
+        return
+    }
     val open = remember(reminders) { reminders.filter { !it.fired } }
     val actions = remember(app, overlays, toasts, scope) { PlaceActions(app, overlays, toasts, scope) }
 
@@ -183,8 +192,12 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
             if (mapOn) {
                 PlacesMap(list, open, me, cam, padding, Modifier.fillMaxSize(), onLoaded = { drawn = true }, onPlace = onPin)
             }
-            // a plain sheet of background until the tiles are in, so nothing pops
-            Box(Modifier.fillMaxSize().graphicsLayer { alpha = cover.value }.background(c.bg))
+            // a sketch of streets + a pulsing pin until the tiles are in; the real map sharpens out of it
+            val covering by remember { derivedStateOf { cover.value > .002f } }
+            if (covering) {
+                val focus = (statusTop + with(density) { 96.dp.toPx() } + peekTop) / 2f
+                MapLoader(Modifier.fillMaxSize().graphicsLayer { alpha = cover.value }, focus)
+            }
             // the map sinks back as the catalog rises
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = openness() * .7f }.background(c.bg))
             Box(
