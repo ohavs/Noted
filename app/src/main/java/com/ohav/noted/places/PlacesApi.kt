@@ -19,7 +19,8 @@ import java.util.UUID
  * Google Places (New) over REST: suggestions while typing and the chosen place's point. The key
  * is locked to this app's package and signature, so every call says who it is (package +
  * certificate SHA-1). A typing session and its final lookup share one token — Google bills
- * them as a single lookup.
+ * them as a single lookup. Each device stops after [DAILY_CAP] calls a day (a runaway loop or a
+ * very busy day can't run up a bill) and the search falls back to the on-device Geocoder.
  */
 object PlacesApi {
     val enabled: Boolean get() = BuildConfig.MAPS_API_KEY.isNotEmpty()
@@ -75,7 +76,21 @@ object PlacesApi {
         }.getOrNull()
     }
 
+    private const val DAILY_CAP = 150
+
+    /** Counts today's calls (local date); false once the cap is reached. */
+    @Synchronized
+    private fun spend(ctx: Context): Boolean {
+        val prefs = ctx.getSharedPreferences("places_api", Context.MODE_PRIVATE)
+        val today = java.time.LocalDate.now().toString()
+        val used = if (prefs.getString("day", null) == today) prefs.getInt("used", 0) else 0
+        if (used >= DAILY_CAP) return false
+        prefs.edit().putString("day", today).putInt("used", used + 1).apply()
+        return true
+    }
+
     private fun call(ctx: Context, url: URL, post: String?, fields: String?): JSONObject {
+        check(spend(ctx)) { "places: daily cap" }
         val c = url.openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 8000

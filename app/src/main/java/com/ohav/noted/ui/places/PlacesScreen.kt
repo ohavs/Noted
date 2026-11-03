@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -113,7 +114,7 @@ import kotlin.math.sin
 
 /**
  * The places tab: a radar of saved places round where you stand (north up), under a catalog
- * sheet that drags between half and full height. Tap a place for its card: the notes waiting
+ * sheet that drags between tucked (title peeking above the tab bar), half and full height. Tap a place for its card: the notes waiting
  * there, edit, open in a maps app, delete with undo.
  */
 @Composable
@@ -142,7 +143,11 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
         val statusTop = WindowInsets.statusBars.getTop(density).toFloat()
         val fullTop = statusTop + with(density) { 12.dp.toPx() }
         val peekTop = h * .52f
+        // tucked down: only the grabber and the title peek out above the floating tab bar
+        val navBottom = WindowInsets.navigationBars.getBottom(density).toFloat()
+        val lowTop = (h - navBottom - with(density) { (92 + 76).dp.toPx() }).coerceAtLeast(peekTop)
         val top = remember { Animatable(peekTop) }
+        val haptics = Noted.haptics
         // 0 at peek → 1 fully open; the radar recedes as the sheet rises
         fun openness() = ((peekTop - top.value) / (peekTop - fullTop)).coerceIn(0f, 1f)
 
@@ -205,18 +210,19 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
         }
 
         // ---- catalog sheet
+        val anchors = listOf(fullTop, peekTop, lowTop)
         fun settle(v: Float) = scope.launch {
-            val mid = (fullTop + peekTop) / 2
+            val y = top.value
             val target = when {
-                v < -900f -> fullTop
-                v > 900f -> peekTop
-                top.value < mid -> fullTop
-                else -> peekTop
+                v < -900f -> anchors.lastOrNull { it < y - 1f } ?: fullTop
+                v > 900f -> anchors.firstOrNull { it > y + 1f } ?: lowTop
+                else -> anchors.minBy { kotlin.math.abs(it - y) }
             }
+            if (kotlin.math.abs(target - y) > 1f) haptics.tick()
             top.animateTo(target, Motion.glide(), initialVelocity = v)
         }
         val listState = rememberLazyListState()
-        val nested = remember(peekTop, fullTop) {
+        val nested = remember(lowTop, peekTop, fullTop) {
             object : NestedScrollConnection {
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     // pushing up: the sheet rises before the list scrolls
@@ -232,7 +238,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                     // pulling down past the list's top: the sheet follows
                     if (available.y > 0 && source == NestedScrollSource.UserInput) {
-                        val next = (top.value + available.y).coerceAtMost(peekTop)
+                        val next = (top.value + available.y).coerceAtMost(lowTop)
                         val used = next - top.value
                         scope.launch { top.snapTo(next) }
                         return Offset(0f, used)
@@ -241,7 +247,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 }
 
                 override suspend fun onPreFling(available: Velocity): Velocity {
-                    if (top.value > fullTop + 1f && top.value < peekTop - 1f) {
+                    if (anchors.none { kotlin.math.abs(it - top.value) < 1f }) {
                         settle(available.y)
                         return available
                     }
@@ -249,7 +255,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, onO
                 }
             }
         }
-        val drag = rememberDraggableState { dy -> scope.launch { top.snapTo((top.value + dy).coerceIn(fullTop, peekTop)) } }
+        val drag = rememberDraggableState { dy -> scope.launch { top.snapTo((top.value + dy).coerceIn(fullTop, lowTop)) } }
 
         Column(
             Modifier
