@@ -1,9 +1,9 @@
-name: Firebase backend (Firestore + Storage rules)
+name: Firebase backend (Firestore, Storage rules, Functions)
 
 on:
   push:
     branches: [main, 'ccr-*']
-    paths: ['firestore.rules', 'firestore.indexes.json', 'storage.rules', 'firebase.json', '.github/workflows/firebase-backend.yml']
+    paths: ['functions/**', 'firestore.rules', 'firestore.indexes.json', 'storage.rules', 'firebase.json', '.github/workflows/firebase-backend.yml']
   workflow_dispatch:
 
 concurrency:
@@ -25,7 +25,9 @@ jobs:
         run: |
           AT=$(node -e "require('$(npm root -g)/firebase-tools/lib/auth').getAccessToken(process.env.FIREBASE_TOKEN, []).then(t => console.log(t.access_token))")
           echo "::add-mask::$AT"
-          for api in firestore.googleapis.com firebaserules.googleapis.com firebasestorage.googleapis.com; do
+          for api in firestore.googleapis.com firebaserules.googleapis.com firebasestorage.googleapis.com \
+            cloudfunctions.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com run.googleapis.com \
+            eventarc.googleapis.com pubsub.googleapis.com cloudscheduler.googleapis.com fcm.googleapis.com; do
             curl -fsS -X POST -H "Authorization: Bearer $AT" -H "Content-Length: 0" \
               "https://serviceusage.googleapis.com/v1/projects/noted-ce451/services/$api:enable" >/dev/null && echo "enabled $api" \
               || echo "::warning::could not enable $api"
@@ -55,3 +57,12 @@ jobs:
           if ! firebase deploy --only storage --project noted-ce451 --non-interactive; then
             echo "::warning::Storage not set up yet (needs Blaze + 'Get started' in the console) — media sync stays off."
           fi
+      - name: Functions (sharing fan-out + notifications)
+        run: |
+          npm ci --prefix functions --silent
+          # the first deploy can race Eventarc/Cloud Build permissions that are still propagating
+          for i in 1 2 3; do
+            firebase deploy --only functions --project noted-ce451 --non-interactive --force && exit 0
+            echo "retrying in 90s"; sleep 90
+          done
+          exit 1

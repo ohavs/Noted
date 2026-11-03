@@ -56,7 +56,7 @@ service cloud.firestore {
         || (!member()
           && changed().hasOnly(['memberIds', 'members', 'people', 'inv', 'u'])
           && request.resource.data.inv is string
-          && invite().note == id
+          && invite().get('note', '') == id
           && invite().exp > request.time
           && invite().role in ['editor', 'viewer']
           && request.resource.data.memberIds == resource.data.memberIds.concat([me()])
@@ -65,13 +65,61 @@ service cloud.firestore {
       );
     }
 
-    // Invite links: readable by token (unguessable), never listed; only the note's owner makes them.
+    // A shared folder (one of the owner's top-level categories, same id). Notes carry
+    // `folder: id`; a function puts the folder's members on them (listed in the note's `via`).
+    match /folders/{id} {
+      function fchanged() { return request.resource.data.diff(resource.data).affectedKeys(); }
+      function fonlyMine(f) {
+        return !(f in fchanged())
+          || request.resource.data.get(f, {}).diff(resource.data.get(f, {})).affectedKeys().hasOnly([me()]);
+      }
+      function fmember() { return me() in resource.data.memberIds; }
+      function finvite() { return get(/databases/$(database)/documents/invites/$(request.resource.data.inv)).data; }
+
+      allow read: if me() != null && fmember();
+      allow create: if me() != null
+        && request.resource.data.owner == me()
+        && request.resource.data.memberIds == [me()]
+        && request.resource.data.members[me()] == 'owner';
+      allow delete: if me() != null && resource.data.owner == me();
+      allow update: if me() != null && request.resource.data.owner == resource.data.owner && (
+        (resource.data.owner == me()
+          && me() in request.resource.data.memberIds
+          && request.resource.data.members[me()] == 'owner')
+        // anyone on it: their own name and photo
+        || (fmember() && fchanged().hasOnly(['people']) && fonlyMine('people'))
+        // leaving
+        || (fmember() && resource.data.owner != me()
+          && fchanged().hasOnly(['memberIds', 'members', 'people'])
+          && request.resource.data.memberIds == resource.data.memberIds.removeAll([me()])
+          && !(me() in request.resource.data.members)
+          && fonlyMine('members') && fonlyMine('people'))
+        // joining with a live invite to this folder
+        || (!fmember()
+          && fchanged().hasOnly(['memberIds', 'members', 'people', 'inv'])
+          && request.resource.data.inv is string
+          && finvite().get('folder', '') == id
+          && finvite().exp > request.time
+          && finvite().role in ['editor', 'viewer']
+          && request.resource.data.memberIds == resource.data.memberIds.concat([me()])
+          && request.resource.data.members[me()] == finvite().role
+          && fonlyMine('members') && fonlyMine('people'))
+      );
+    }
+
+    // Invite links (to a note or a folder): readable by token (unguessable), never listed;
+    // only the owner of what they open makes them.
     match /invites/{token} {
       allow get: if me() != null;
       allow create: if me() != null
         && request.resource.data.by == me()
         && request.resource.data.role in ['editor', 'viewer']
-        && get(/databases/$(database)/documents/notes/$(request.resource.data.note)).data.owner == me();
+        && (
+          (request.resource.data.get('note', '') != ''
+            && get(/databases/$(database)/documents/notes/$(request.resource.data.note)).data.owner == me())
+          || (request.resource.data.get('folder', '') != ''
+            && get(/databases/$(database)/documents/folders/$(request.resource.data.folder)).data.owner == me())
+        );
       allow delete: if me() != null && resource.data.by == me();
     }
   }
