@@ -35,6 +35,9 @@ data class LinkInfo(val url: String, val title: String = "", val desc: String = 
  */
 data class Drawing(val strokes: String, val r: Float, val y0: Float)
 
+/** A place card's spot: carried whole in the note, so it reads the same for everyone it's shared with. */
+data class PlaceInfo(val name: String, val address: String, val lat: Double, val lng: Double, val kind: String = "other")
+
 /** Reads and writes the JSON payload ([Block.extra]) of media blocks. */
 object MediaExtra {
     private fun obj(s: String) = runCatching { JSONObject(s) }.getOrDefault(JSONObject())
@@ -75,6 +78,15 @@ object MediaExtra {
     }
 
     fun ofDrawing(d: Drawing): String = JSONObject().put("strokes", d.strokes).put("r", d.r.toDouble()).put("y0", d.y0.toDouble()).toString()
+
+    fun place(s: String): PlaceInfo? {
+        val o = obj(s)
+        if (!o.has("lat") || !o.has("lng")) return null
+        return PlaceInfo(o.optString("name"), o.optString("address"), o.optDouble("lat"), o.optDouble("lng"), o.optString("kind", "other"))
+    }
+
+    fun ofPlace(p: PlaceInfo): String = JSONObject()
+        .put("name", p.name).put("address", p.address).put("lat", p.lat).put("lng", p.lng).put("kind", p.kind).toString()
 
     /** Every media file a block points at (for cleanup / sync later). */
     fun files(b: Block): List<String> = when (b.type) {

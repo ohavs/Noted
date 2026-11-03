@@ -15,6 +15,7 @@ fun CardMedia(b: Block, modifier: Modifier = Modifier) {
         BlockType.Voice -> MediaExtra.voice(b.extra)?.let { VoiceTile(it, compact = true, modifier = modifier) }
         BlockType.Link -> MediaExtra.link(b.extra)?.let { LinkCard(it, compact = true, modifier = modifier) }
         BlockType.Draw -> MediaExtra.drawing(b.extra)?.let { DrawingView(it, modifier) }
+        BlockType.Place -> MediaExtra.place(b.extra)?.let { com.ohav.noted.ui.places.PlaceBlockCard(it, compact = true, modifier = modifier) }
         else -> Unit
     }
 }

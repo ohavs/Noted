@@ -429,8 +429,12 @@ internal fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
                 )
             },
         )
-        BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link -> RText(
-            when (b.type) { BlockType.Images -> "תמונה"; BlockType.Voice -> "הקלטה"; BlockType.Draw -> "ציור"; else -> "קישור" },
+        BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link, BlockType.Place -> RText(
+            when (b.type) {
+                BlockType.Images -> "תמונה"; BlockType.Voice -> "הקלטה"; BlockType.Draw -> "ציור"
+                BlockType.Place -> MediaExtra.place(b.extra)?.let { "📍 " + it.name.ifBlank { it.address } } ?: "מקום"
+                else -> "קישור"
+            },
             c.noteInk2, 13f, GlanceModifier.fillMaxWidth().absolutePadding(right = indent), weight = W.Medium, maxLines = 1,
         )
         else -> {

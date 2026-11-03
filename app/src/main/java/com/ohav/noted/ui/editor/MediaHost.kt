@@ -285,6 +285,16 @@ fun MediaBlock(state: EditorState, b: EdBlock, armed: Boolean) {
             BlockType.Draw -> MediaExtra.drawing(b.extra)?.let { d ->
                 DrawingView(d, Modifier.press(scale = .98f) { host?.editDrawing(b.id) })
             }
+            BlockType.Place -> MediaExtra.place(b.extra)?.let { p ->
+                val ctx = LocalContext.current
+                val overlays = com.ohav.noted.design.LocalOverlays.current
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                com.ohav.noted.ui.places.PlaceBlockCard(p) {
+                    val app = ctx.applicationContext as com.ohav.noted.NotedApp
+                    host?.let { h -> com.ohav.noted.ui.places.placeBlockSheet(app, overlays, h.toasts, scope, state, b.id, p) }
+                        ?: com.ohav.noted.ui.places.navigate(ctx, p)
+                }
+            }
             else -> Unit
         }
     }

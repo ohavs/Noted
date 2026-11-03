@@ -122,6 +122,7 @@ class WearLink(private val app: NotedApp) {
             BlockType.Images -> j.put("x", MediaExtra.pics(b.extra).size.toString())
             BlockType.Voice -> MediaExtra.voice(b.extra)?.let { v -> j.put("x", v.text.take(MAX_TEXT)).put("ms", v.ms) } ?: return null
             BlockType.Link -> MediaExtra.link(b.extra)?.let { l -> j.put("x", l.title.ifBlank { l.site.ifBlank { l.url } }.take(120)) } ?: return null
+            BlockType.Place -> MediaExtra.place(b.extra)?.let { p -> j.put("x", p.name.ifBlank { p.address }.take(120)) } ?: return null
             BlockType.Draw, BlockType.Divider -> {}
             else -> {
                 val t = b.text.replace("​", "")

@@ -123,7 +123,7 @@ internal object MapLook {
  * place form and card. Tapping it does nothing (lite mode would otherwise open Google Maps).
  */
 @Composable
-fun MiniMap(lat: Double, lng: Double, radius: Int, kind: PlaceKind, modifier: Modifier = Modifier) {
+fun MiniMap(lat: Double, lng: Double, radius: Int, kind: PlaceKind, modifier: Modifier = Modifier, ring: Boolean = true) {
     val c = Noted.colors
     val at = LatLng(lat, lng)
     val cam = rememberCameraPositionState(key = "$lat,$lng") {
@@ -144,7 +144,7 @@ fun MiniMap(lat: Double, lng: Double, radius: Int, kind: PlaceKind, modifier: Mo
             uiSettings = MapUiSettings(mapToolbarEnabled = false, zoomControlsEnabled = false, myLocationButtonEnabled = false),
             onMapClick = {},
         ) {
-            Circle(center = at, radius = radius.toDouble(), fillColor = c.accent.copy(alpha = .16f), strokeColor = c.accent, strokeWidth = 4f)
+            if (ring) Circle(center = at, radius = radius.toDouble(), fillColor = c.accent.copy(alpha = .16f), strokeColor = c.accent, strokeWidth = 4f)
         }
         Box(Modifier.align(Alignment.Center)) { PlaceBadge(kind, 34.dp, on = true) }
     }

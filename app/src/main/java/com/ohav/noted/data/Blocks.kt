@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Block types mirror the prototype editor. */
-enum class BlockType { P, H1, H2, H3, Quote, Bullet, Num, Check, Divider, Images, Voice, Draw, Link }
+enum class BlockType { P, H1, H2, H3, Quote, Bullet, Num, Check, Divider, Images, Voice, Draw, Link, Place }
 
 /**
  * Inline style over [start, end) of a block's text.

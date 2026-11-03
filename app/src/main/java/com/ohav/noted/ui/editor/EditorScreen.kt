@@ -105,6 +105,7 @@ import com.ohav.noted.data.Blocks
 import com.ohav.noted.sync.Merge
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.design.LocalOverlays
+import com.ohav.noted.ui.places.placeSheet
 import com.ohav.noted.design.Motion
 import com.ohav.noted.design.NoteColor
 import com.ohav.noted.design.Noted
@@ -1372,6 +1373,10 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         }
                         BarBtn(Ph.Microphone, "הקלטה") { media?.record(); keyboard?.hide(); focusManager.clearFocus() }
                         BarBtn(Ph.ScribbleLoop, "ציור") { media?.draw(); keyboard?.hide(); focusManager.clearFocus() }
+                        BarBtn(Ph.MapPin, "מקום") {
+                            state.placeSheet(ctx.applicationContext as com.ohav.noted.NotedApp, overlays, toasts)
+                            keyboard?.hide(); focusManager.clearFocus()
+                        }
                         BarBtn(Ph.Bell, "תזכורת") { remind("", null) }
                     }
                     BarMode.Format -> {

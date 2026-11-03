@@ -184,6 +184,7 @@ private fun preview(blocks: List<Block>, max: Int): List<String> = blocks.mapNot
         BlockType.Voice -> "הקלטה"
         BlockType.Draw -> "ציור"
         BlockType.Link -> MediaExtra.link(b.extra)?.let { it.title.ifBlank { it.url } }
+        BlockType.Place -> MediaExtra.place(b.extra)?.let { "📍 " + it.name.ifBlank { it.address } }
         else -> b.text.trim().ifEmpty { null }
     }
 }.take(max)

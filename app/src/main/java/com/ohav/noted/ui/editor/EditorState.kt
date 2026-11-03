@@ -28,7 +28,7 @@ const val SENTINEL = "​"
 
 val TEXT_TYPES = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 val LIST_TYPES = setOf(BlockType.Bullet, BlockType.Num, BlockType.Check)
-val MEDIA_TYPES = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link)
+val MEDIA_TYPES = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link, BlockType.Place)
 
 @Stable
 class EdBlock(val id: String, type: BlockType, text: String, done: Boolean, indent: Int, spans: List<Span>, extra: String = "") {

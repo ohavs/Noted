@@ -123,6 +123,13 @@ object NoteExport {
             val name = l.title.ifBlank { l.site }.trim()
             if (md) (if (name.isEmpty()) "<${l.url}>" else "[$name](${l.url})") else listOf(name, l.url).filter { it.isNotEmpty() }.joinToString("\n")
         } ?: ""
+        BlockType.Place -> MediaExtra.place(b.extra)?.let { p ->
+            val name = p.name.ifBlank { p.address }.trim()
+            val url = mapsUrl(p)
+            val head = "📍 $name"
+            val addr = p.address.takeIf { it.isNotBlank() && it != p.name }
+            if (md) listOfNotNull("[$head]($url)", addr).joinToString("  \n") else listOfNotNull(head, addr, url).joinToString("\n")
+        } ?: ""
         else -> null
     }
 
@@ -289,6 +296,7 @@ object NoteExport {
                 BlockType.Draw -> drawing(ctx, pg, b)
                 BlockType.Voice -> voice(pg, b, f)
                 BlockType.Link -> link(pg, b, f)
+                BlockType.Place -> place(pg, b, f)
                 else -> textBlock(pg, b, f, counters[b.indent.coerceIn(0, 3)])
             }
             prev = b.type
@@ -504,6 +512,41 @@ object NoteExport {
         c.drawRoundRect(RectF(MX + .5f, pg.y + .5f, MX + CW - .5f, pg.y + h - .5f), 12f, 12f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LINE; style = Paint.Style.STROKE; strokeWidth = 1f })
         var y = pg.y + 14f
         listOfNotNull(tl, dl, ul).forEachIndexed { i, lay ->
+            if (i > 0) y += if (lay === ul) 6f else 4f
+            c.save(); c.translate(MX + 14f, y); lay.draw(c); c.restore()
+            y += lay.height
+        }
+        pg.y += h
+    }
+
+    private fun mapsUrl(p: com.ohav.noted.data.PlaceInfo) = "https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}"
+
+    /** A place card: a pin in the accent, its name and address, and a maps link. */
+    private fun place(pg: Pager, b: Block, f: Fonts) {
+        val p = MediaExtra.place(b.extra) ?: return
+        val pin = 22f
+        val w = CW - 28f - pin - 10f
+        val bold = paint(11.5f, f.body).apply { setFontVariationSettings("'wght' 650") }
+        val tl = layout(TextUtils.ellipsize(p.name.ifBlank { p.address }, bold, w * 2, TextUtils.TruncateAt.END), bold, w, 1.3f)
+        val al = p.address.takeIf { it.isNotBlank() && it != p.name }?.let { layout(TextUtils.ellipsize(it, paint(10f, f.body, INK2), w * 2, TextUtils.TruncateAt.END), paint(10f, f.body, INK2), w, 1.35f) }
+        val url = mapsUrl(p)
+        val ul = layout(TextUtils.ellipsize(url, paint(9.5f, f.body, Ink.Blue.light.toArgb()), w, TextUtils.TruncateAt.END), paint(9.5f, f.body, Ink.Blue.light.toArgb()), w, 1.2f)
+        val h = maxOf(14f + tl.height + (al?.let { 4f + it.height } ?: 0f) + 6f + ul.height + 14f, pin + 28f)
+        pg.ensure(h)
+        val c = pg.canvas
+        c.drawRoundRect(RectF(MX + .5f, pg.y + .5f, MX + CW - .5f, pg.y + h - .5f), 12f, 12f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LINE; style = Paint.Style.STROKE; strokeWidth = 1f })
+        // RTL page: the pin sits at the right edge, the text to its left
+        val px = MX + CW - 14f - pin / 2f
+        val py = pg.y + 14f + pin * .42f
+        val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE0542C.toInt() }
+        val drop = android.graphics.Path().apply {
+            addCircle(px, py, pin * .42f, android.graphics.Path.Direction.CW)
+            moveTo(px - pin * .3f, py + pin * .28f); lineTo(px, py + pin * .62f); lineTo(px + pin * .3f, py + pin * .28f); close()
+        }
+        c.drawPath(drop, accent)
+        c.drawCircle(px, py, pin * .16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE })
+        var y = pg.y + 14f
+        listOfNotNull(tl, al, ul).forEachIndexed { i, lay ->
             if (i > 0) y += if (lay === ul) 6f else 4f
             c.save(); c.translate(MX + 14f, y); lay.draw(c); c.restore()
             y += lay.height
