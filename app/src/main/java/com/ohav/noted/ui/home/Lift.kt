@@ -267,13 +267,19 @@ private fun ActionMenu(
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.inverseInk.copy(alpha = .08f)))
+        val pv = com.ohav.noted.ui.lock.LocalPrivacy.current.of(n.id)
+        val privacyAct = when {
+            pv and com.ohav.noted.data.Privacy.LOCK != 0 -> Act("lock", Ph.Lock, Ph.LockFill, "פרטיות", on = true)
+            pv != 0 -> Act("lock", Ph.EyeSlash, Ph.EyeSlash, "פרטיות", on = true)
+            else -> Act("lock", Ph.EyeSlash, Ph.EyeSlash, "פרטיות")
+        }
         val acts = listOf(
             Act("move", Ph.FolderSimple, Ph.FolderSimple, "קטגוריה"),
             Act("remind", Ph.Bell, Ph.Bell, "תזכורת"),
             Act("share", Ph.ShareNetwork, Ph.ShareNetwork, "שיתוף"),
             Act("pin", Ph.PushPin, Ph.PushPinFill, if (n.pinned) "שחרור" else "נעיצה", n.pinned),
             Act("fav", Ph.Star, Ph.StarFill, "מועדף", n.favorite),
-            Act("lock", Ph.Lock, Ph.LockFill, "נעילה"),
+            privacyAct,
             Act("archive", Ph.Archive, Ph.Archive, "ארכיון"),
             Act("delete", Ph.Trash, Ph.Trash, "מחיקה", danger = true),
         )

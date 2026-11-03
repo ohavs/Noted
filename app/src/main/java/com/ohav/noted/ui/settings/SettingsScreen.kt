@@ -3,6 +3,8 @@ package com.ohav.noted.ui.settings
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -133,7 +135,63 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
                 NotedSwitch(s.haptics)
             }
         }
+        Section("פרטיות") { PrivacyCard(app, toasts) }
         Section("עדכונים") { UpdateCard(app, toasts) }
+    }
+}
+
+/** The app code for locked notes, and whether a fingerprint opens them too. */
+@Composable
+private fun PrivacyCard(app: NotedApp, toasts: ToastState) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val lock = com.ohav.noted.ui.lock.LocalLock.current
+    val flags by app.privacy.flags.collectAsStateWithLifecycle()
+    val lockedCount = flags.values.count { it and com.ohav.noted.data.Privacy.LOCK != 0 }
+    var hasCode by remember { mutableStateOf(app.privacy.hasCode) }
+    var bio by remember { mutableStateOf(app.privacy.biometric) }
+    val bioAvail = remember { app.privacy.biometricAvailable() }
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)) {
+        Row(
+            Modifier.fillMaxWidth()
+                .press(scale = .98f) {
+                    if (hasCode) lock.change { hasCode = true; toasts.show("הקוד הוחלף", Ph.LockFill) }
+                    else lock.ask(null) { hasCode = true; toasts.show("הקוד נשמר", Ph.LockFill) }
+                }
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Ph.Lock, null, Modifier.size(22.dp), tint = c.ink2)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (hasCode) "החלפת קוד" else "הגדרת קוד", style = t.body, color = c.ink)
+                Text(
+                    if (lockedCount > 0) "$lockedCount פתקים נעולים · לנעילה: לחיצה ארוכה על פתק ← פרטיות"
+                    else "לנעילה: לחיצה ארוכה על פתק ← פרטיות",
+                    style = t.caption, color = c.ink3,
+                )
+            }
+            Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.ink3)
+        }
+        if (bioAvail) {
+            Box(Modifier.padding(horizontal = 18.dp).fillMaxWidth().height(1.dp).background(c.line))
+            Row(
+                Modifier.fillMaxWidth()
+                    .press(scale = .98f, haptic = false) {
+                        bio = !bio
+                        app.privacy.biometric = bio
+                        haptics.toggle(bio)
+                    }
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Ph.Fingerprint, null, Modifier.size(22.dp), tint = c.ink2)
+                Spacer(Modifier.width(14.dp))
+                Text("פתיחה בטביעת אצבע", style = t.body, color = c.ink, modifier = Modifier.weight(1f))
+                NotedSwitch(bio)
+            }
+        }
     }
 }
 

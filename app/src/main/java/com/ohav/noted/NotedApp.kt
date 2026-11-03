@@ -30,12 +30,14 @@ class NotedApp : Application() {
     lateinit var account: Account private set
     lateinit var sync: Sync private set
     lateinit var sharing: Sharing private set
+    lateinit var privacy: com.ohav.noted.data.Privacy private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
         super.onCreate()
         val db = NotedDatabase.create(this)
         notes = NotesRepository(db)
+        privacy = com.ohav.noted.data.Privacy(this)
         reminders = Reminders(this, db)
         places = Places(this, db)
         Notifier.ensureChannel(this)
@@ -62,7 +64,7 @@ class NotedApp : Application() {
         scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
         // home-screen widgets follow notes, categories, reminders and the look (a no-op without widgets)
         scope.launch {
-            combine(notes.notes, notes.categories, settings.settings, reminders.all, places.reminders) { _, _, _, _, _ -> }.drop(1).debounce(500)
+            combine(notes.notes, notes.categories, settings.settings, reminders.all, places.reminders, privacy.flags) { _ -> }.drop(1).debounce(500)
                 .collect { NotedWidget.refresh(this@NotedApp) }
         }
     }

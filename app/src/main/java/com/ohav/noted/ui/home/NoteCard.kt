@@ -1,5 +1,6 @@
 package com.ohav.noted.ui.home
 
+import com.ohav.noted.ui.lock.veil
 import androidx.compose.animation.animateColorAsState
 import com.ohav.noted.ui.media.CardMedia
 import androidx.compose.animation.core.Animatable
@@ -175,6 +176,10 @@ fun NoteCard(
     val selFade = animateFloatAsState(if (selecting) 1f else 0f, Motion.glide(), label = "selFade")
     val selShown by remember { derivedStateOf { selFade.value > .005f } }
     val picked by animateFloatAsState(if (selected) 1f else 0f, Motion.touch(), label = "selected")
+    val pv = com.ohav.noted.ui.lock.LocalPrivacy.current
+    val locked = pv.locked(n.id)
+    val blurTitle = pv.blurTitle(n.id)
+    val blurBody = pv.blurBody(n.id)
 
     Box(
         Modifier
@@ -209,19 +214,29 @@ fun NoteCard(
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(
                     n.title.ifBlank { "ללא כותרת" }, style = t.cardTitle, color = c.noteInk,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    // blurred title: clears as the card unfolds (a locked card never does)
+                    modifier = Modifier.weight(1f).then(
+                        if (blurTitle) Modifier.veil(note, 12.dp) { if (locked) 1f else 1f - open.value } else Modifier,
+                    ),
                 )
+                if (locked) Icon(Ph.LockFill, "נעול", Modifier.padding(top = 6.dp).size(16.dp).graphicsLayer { alpha = 1f - sel }, tint = c.noteInk2)
                 if (n.pinned || n.favorite) {
                     Row(Modifier.padding(top = 6.dp).graphicsLayer { alpha = 1f - sel }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (n.pinned) Icon(Ph.PushPinFill, "נעוץ", Modifier.size(16.dp), tint = c.noteInk2)
                         if (n.favorite) Icon(Ph.StarFill, "מועדף", Modifier.size(16.dp), tint = c.noteInk2)
                     }
                 }
-                if (progress != null) ProgressRing(progress.first, progress.second, Modifier.offset(y = (-4).dp).graphicsLayer { alpha = 1f - sel })
+                if (progress != null && !locked) ProgressRing(progress.first, progress.second, Modifier.offset(y = (-4).dp).graphicsLayer { alpha = 1f - sel })
             }
-            Box(Modifier.padding(top = 6.dp)) {
-                if (showSummary) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open.value })
-                if (expanded || showFull) {
+            Box(
+                Modifier.padding(top = 6.dp).then(
+                    if (blurBody && !locked) Modifier.veil(note, 9.dp) { 1f - open.value } else Modifier,
+                ),
+            ) {
+                if (locked) LockedLine()
+                else if (showSummary) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open.value })
+                if (!locked && (expanded || showFull)) {
                     FullContent(n, blocks, onToggleCheck, onOpenEditor, pull, Modifier.graphicsLayer { alpha = open.value })
                 }
             }
@@ -254,6 +269,20 @@ fun NoteCard(
                 contentAlignment = Alignment.Center,
             ) { if (selected) Icon(Ph.Check, null, Modifier.size(15.dp), tint = note) }
         }
+    }
+}
+
+/** A locked note on the stack: nothing of its content, only how to get in. */
+@Composable
+private fun LockedLine() {
+    val c = Noted.colors
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(3) { i ->
+                Box(Modifier.size(width = (54 - i * 12).dp, height = 9.dp).clip(RoundedCornerShape(5.dp)).background(c.noteInk.copy(alpha = .13f)))
+            }
+        }
+        Text("נעול · נגיעה לפתיחה", style = Noted.type.meta, color = c.noteInk2, modifier = Modifier.padding(top = 10.dp))
     }
 }
 

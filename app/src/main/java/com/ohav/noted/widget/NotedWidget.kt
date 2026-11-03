@@ -110,8 +110,9 @@ class NotedWidget : GlanceAppWidget() {
             val notes by app.notes.notes.collectAsState(notes0)
             val cats by app.notes.categories.collectAsState(cats0)
             val settings by app.settings.settings.collectAsState(set0)
+            val priv by app.privacy.flags.collectAsState()
             val state = currentState<Preferences>()
-            Main(notes, cats, settings, state[CAT], state[OPEN] == true)
+            Main(notes, cats, settings, state[CAT], state[OPEN] == true, priv)
         }
     }
 
@@ -223,7 +224,7 @@ internal fun RText(
 }
 
 @Composable
-private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: AppSettings, chosen: String?, open: Boolean) {
+private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: AppSettings, chosen: String?, open: Boolean, priv: Map<String, Int>) {
     val context = LocalContext.current
     val c = remember(settings.theme, settings.accent) { WColors(settings) }
     val tree = remember(cats) { CatTree(cats) }
@@ -279,7 +280,7 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
             shown.isEmpty() -> Empty(c, context, cat.id.takeUnless { all })
             else -> LazyColumn(GlanceModifier.fillMaxSize()) {
                 items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
-                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
+                    Box(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context, priv[n.id] ?: 0) }
                 }
             }
         }
@@ -351,8 +352,12 @@ private fun Empty(c: WColors, context: Context, cat: String?) {
 }
 
 @Composable
-internal fun Card(n: NoteEntity, c: WColors, context: Context) {
-    val blocks = remember(n.blocks) { Blocks.parse(n.blocks) }
+internal fun Card(n: NoteEntity, c: WColors, context: Context, priv: Int = 0) {
+    // privacy on a home screen: no blur here, so a hidden part is simply left out
+    val locked = priv and com.ohav.noted.data.Privacy.LOCK != 0
+    val hideBody = locked || priv and com.ohav.noted.data.Privacy.BLUR_BODY != 0
+    val hideTitle = priv and com.ohav.noted.data.Privacy.BLUR_TITLE != 0
+    val blocks = remember(n.blocks, hideBody) { if (hideBody) emptyList() else Blocks.parse(n.blocks) }
     val canTick = remember(n.share) { Share.parse(n.share).role != Share.ROLE_VIEWER }
     val lines = blocks.filter { it.type != BlockType.Divider && (it.type !in TEXT || clean(it.text).isNotBlank()) }
     val rows = lines.take(MAX_ROWS)
@@ -365,7 +370,7 @@ internal fun Card(n: NoteEntity, c: WColors, context: Context) {
         if (n.title.isNotBlank() || n.pinned) {
             RRow(
                 GlanceModifier.fillMaxWidth(),
-                { RText(n.title.ifBlank { "ללא כותרת" }, c.noteInk, 15f, GlanceModifier.defaultWeight(), weight = W.Bold, maxLines = 2) },
+                { RText(if (hideTitle) "••••••" else n.title.ifBlank { "ללא כותרת" }, c.noteInk, 15f, GlanceModifier.defaultWeight(), weight = W.Bold, maxLines = 2) },
                 { if (n.pinned) Image(ImageProvider(R.drawable.wg_push_pin_fill), "נעוץ", GlanceModifier.size(14.dp), colorFilter = ColorFilter.tint(c.noteInk2.p)) },
             )
         }
@@ -380,6 +385,10 @@ internal fun Card(n: NoteEntity, c: WColors, context: Context) {
         rows.forEachIndexed { i, b ->
             Spacer(GlanceModifier.height(if (i == 0 && n.title.isNotBlank()) 6.dp else 3.dp))
             Line(n, b, c, canTick)
+        }
+        if (hideBody) {
+            Spacer(GlanceModifier.height(4.dp))
+            RText(if (locked) "נעול" else "מוסתר", c.noteInk2, 12f, GlanceModifier.fillMaxWidth(), weight = W.Medium, maxLines = 1)
         }
         if (rest > 0) {
             Spacer(GlanceModifier.height(4.dp))

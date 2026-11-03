@@ -158,6 +158,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val flatIndex = flat.indexOf(cat).coerceAtLeast(0)
 
     val overlays = LocalOverlays.current
+    val lock = com.ohav.noted.ui.lock.LocalLock.current
+    val privacy = com.ohav.noted.ui.lock.LocalPrivacy.current
     val catActions = rememberCategoryActions(app, overlays, toasts)
     // the category on screen was deleted (here or in settings): fall back to all notes
     LaunchedEffect(dbCats) {
@@ -166,11 +168,12 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val lift = remember { LiftState() }
     var selecting by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
-    val baseVisible = remember(notes, shownCat, searching, query, tree) {
+    val baseVisible = remember(notes, shownCat, searching, query, tree, privacy.flags) {
         when {
             searching -> query.trim().let { q ->
                 if (q.isEmpty()) emptyList()
-                else notes.filter { n -> n.title.contains(q, true) || Blocks.parse(n.blocks).any { it.text.contains(q, true) } }
+                // a locked note is found by its title only
+                else notes.filter { n -> n.title.contains(q, true) || !privacy.locked(n.id) && Blocks.parse(n.blocks).any { it.text.contains(q, true) } }
             }
             shownCat == "all" -> notes
             else -> tree.family(shownCat).let { fam -> notes.filter { it.categoryId in fam } }
@@ -354,7 +357,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             "select" -> settleLift { startSelecting(n.id) }
             "remind" -> settleLift { openReminderPicker(app, overlays, toasts, scope, n.id) }
             "share" -> settleLift { com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id) }
-            "lock" -> settleLift { toasts.show("נעילת פתקים מגיעה בהמשך", Ph.Lock) }
+            "lock" -> settleLift { com.ohav.noted.ui.lock.openPrivacySheet(app, overlays, lock, toasts, n) }
         }
     }
 
@@ -670,6 +673,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                             when {
                                 selecting -> { selected = if (n.id in selected) selected - n.id else selected + n.id; haptics.tick() }
                                 expanded == n.id -> openEditor(n)
+                                // locked: nothing to unfold — straight to the code, then the editor
+                                privacy.locked(n.id) -> openEditor(n)
                                 else -> expanded = n.id
                             }
                         },

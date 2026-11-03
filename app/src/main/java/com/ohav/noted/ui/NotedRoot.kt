@@ -80,6 +80,7 @@ import com.ohav.noted.ui.reminders.PlaceChip
 import com.ohav.noted.ui.reminders.PlaceWords
 import com.ohav.noted.ui.reminders.Agenda
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -124,6 +125,9 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
     var catsFrom by rememberSaveable { mutableStateOf("main") }
     val toasts = remember { ToastState() }
     val overlays = remember { Overlays() }
+    val lock = remember { com.ohav.noted.ui.lock.LockState() }
+    val privFlags by app.privacy.flags.collectAsStateWithLifecycle()
+    val privacy = com.ohav.noted.ui.lock.PrivacyView(privFlags, app.privacy.unlocked)
     BackHandler(enabled = screen != "main") { screen = if (screen == "categories") catsFrom else "main" }
     // a reminder notification was tapped: back to the main screen, where the note opens
     LaunchedEffect(openNote.value, invite.value) { if (openNote.value != null || invite.value != null) screen = "main" }
@@ -136,7 +140,10 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
         placeReminders.filter { !it.fired }.associate { it.id to PlaceChip(PlaceWords.chip(it, byId[it.placeId]), it.leave, it.always) }
     }
 
-    CompositionLocalProvider(LocalOverlays provides overlays, LocalReminders provides remindersById, LocalPlaceChips provides placeChips) {
+    CompositionLocalProvider(
+        LocalOverlays provides overlays, LocalReminders provides remindersById, LocalPlaceChips provides placeChips,
+        com.ohav.noted.ui.lock.LocalPrivacy provides privacy, com.ohav.noted.ui.lock.LocalLock provides lock,
+    ) {
     Box(Modifier.fillMaxSize().background(Noted.colors.bg)) {
         AnimatedContent(
             modifier = Modifier.graphicsLayer {
@@ -162,6 +169,7 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableSta
         SheetHost(overlays.sheet)
         DialogHost(overlays.dialog)
         ToastHost(toasts, Modifier.align(Alignment.BottomCenter), lift = if (screen == "main") 90.dp else 0.dp)
+        com.ohav.noted.ui.lock.LockHost(app, lock, overlays)
     }
     }
 }
@@ -171,6 +179,21 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var sharedSeen by rememberSaveable { mutableStateOf(false) }
     val chrome = remember { Chrome() }
+    val lock = com.ohav.noted.ui.lock.LocalLock.current
+    // a locked note opens only after the code / a fingerprint, and locks again once the editor lets go
+    DisposableEffect(chrome.editor) {
+        chrome.editor.gate = { n, retry ->
+            if (app.privacy.open(n.id)) true
+            else {
+                lock.ask(n.title.ifBlank { null }) { app.privacy.unlock(n.id); retry() }
+                false
+            }
+        }
+        onDispose { chrome.editor.gate = null }
+    }
+    LaunchedEffect(chrome.editor) {
+        snapshotFlow { chrome.editor.note?.id }.collect { id -> if (id == null || id != app.privacy.unlocked) app.privacy.relock() }
+    }
     val density = LocalDensity.current
     val shift = with(density) { 28.dp.roundToPx() }
     val config = LocalConfiguration.current

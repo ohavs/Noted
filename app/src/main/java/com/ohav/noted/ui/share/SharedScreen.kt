@@ -1,5 +1,6 @@
 package com.ohav.noted.ui.share
 
+import com.ohav.noted.ui.lock.veil
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -158,8 +159,14 @@ private fun SharedRow(n: NoteEntity, me: String, onOpen: (NoteEntity, Rect?, Boo
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f)) {
-                Text(n.title.ifBlank { "ללא כותרת" }, style = t.noteTitle, color = c.noteInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (preview.isNotEmpty()) Text(preview, style = t.snippet, color = c.noteInk2, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                val pv = com.ohav.noted.ui.lock.LocalPrivacy.current
+                Text(
+                    n.title.ifBlank { "ללא כותרת" }, style = t.noteTitle, color = c.noteInk, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = if (pv.blurTitle(n.id)) Modifier.veil(tint, 12.dp) { 1f } else Modifier,
+                )
+                if (pv.locked(n.id)) Text("נעול · נגיעה לפתיחה", style = t.meta, color = c.noteInk2, modifier = Modifier.padding(top = 6.dp))
+                else if (preview.isNotEmpty()) Text(preview, style = t.snippet, color = c.noteInk2, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp).then(if (pv.blurBody(n.id)) Modifier.veil(tint, 9.dp) { 1f } else Modifier))
             }
             Spacer(Modifier.width(12.dp))
             FacePile(share.members.filter { it.uid != me }.ifEmpty { share.members }, 30.dp, ring = tint)

@@ -206,8 +206,16 @@ class EditorNav {
     /** What to start once the page is up (the quick-create widget): see [Start]. Consumed by the page. */
     internal var start: String? = null
 
+    /**
+     * Asked before a note opens. False = not now: it calls [retry] once it may (a locked note,
+     * after the code or a fingerprint).
+     */
+    var gate: ((NoteEntity, retry: () -> Unit) -> Boolean)? = null
+
     fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false, start: String? = null): Boolean {
         if (note != null) return false
+        val g = gate
+        if (g != null && !g(n) { open(n, rect, fresh, false, start) }) return false
         note = n
         this.start = start
         from = rect ?: Rect.Zero
@@ -263,6 +271,13 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         com.ohav.noted.sync.Push.viewing = n.id
         if (app.account.available) com.ohav.noted.sync.Push.clear(ctx, n.id)
         onDispose { if (com.ohav.noted.sync.Push.viewing == n.id) com.ohav.noted.sync.Push.viewing = null }
+    }
+    // a locked note stays out of the recents thumbnail and screenshots while it's open
+    androidx.compose.runtime.DisposableEffect(n.id) {
+        val w = (ctx as? android.app.Activity)?.window
+        val secure = app.privacy.locked(n.id)
+        if (secure) w?.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose { if (secure) w?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) }
     }
     LaunchedEffect(live?.share, me) {
         state.share = live?.shareInfo ?: com.ohav.noted.data.Share.None
