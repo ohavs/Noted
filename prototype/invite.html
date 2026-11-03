@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F5F1EA" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#12110F" media="(prefers-color-scheme: dark)">
+<title>הזמנה לפתק · noted</title>
+<meta property="og:title" content="הוזמנת לפתק ב-noted">
+<meta property="og:description" content="פותחים את הקישור בטלפון — והפתק המשותף מחכה בלשונית ״משותף״.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F5F1EA; --surface: #FFFDF9; --ink: #1B1915; --ink-2: #6B655C; --ink-3: #A69F94; --line: rgba(27,25,21,.09);
+    --accent: #E0542C; --accent-soft: #F9DDD2; --butter: #F6E7B0; --mint: #CFE8D6; --sky: #D3E2F2;
+    --note-ink: #2A2418; --shadow: 0 18px 40px -16px rgba(60,40,20,.28), 0 2px 6px rgba(60,40,20,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12110F; --surface: #1F1D1A; --ink: #F3EEE6; --ink-2: #A59E93; --ink-3: #6A645B; --line: rgba(243,238,230,.08);
+      --accent: #FF7A4F; --accent-soft: #4A271B; --butter: #4A4128; --mint: #23392B; --sky: #22303F;
+      --note-ink: #F3EEE6; --shadow: 0 18px 40px -16px rgba(0,0,0,.8);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--ink); font-family: "Assistant", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  body { min-height: 100dvh; display: flex; justify-content: center; padding: max(28px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom)); }
+  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; }
+  .brand { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 22px; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+  .brand i { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); display: inline-block; }
+
+  .stack { position: relative; height: 230px; margin: 44px 6px 34px; }
+  .card { position: absolute; inset: 0; border-radius: 30px; box-shadow: var(--shadow); }
+  .card.c3 { background: var(--sky); transform: translateY(-26px) scale(.86) rotate(-4deg); }
+  .card.c2 { background: var(--mint); transform: translateY(-13px) scale(.93) rotate(3deg); }
+  .card.c1 { background: var(--butter); color: var(--note-ink); padding: 26px 24px; animation: rise .9s cubic-bezier(.2,.9,.25,1.15) both; }
+  @keyframes rise { from { transform: translateY(40px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+  .card h2 { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 25px; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 12px; font-size: 17px; margin: 9px 0; }
+  .box { width: 22px; height: 22px; border-radius: 8px; border: 2px solid currentColor; opacity: .6; flex: none; }
+  .box.on { background: currentColor; opacity: 1; position: relative; }
+  .box.on::after { content: ""; position: absolute; inset: 4px 6px 7px 5px; border: solid var(--butter); border-width: 0 0 2.5px 2.5px; transform: rotate(-45deg); }
+  .row.done span { text-decoration: line-through; opacity: .55; }
+  .faces { position: absolute; inset-inline-end: 22px; bottom: 20px; display: flex; }
+  .faces b { width: 30px; height: 30px; border-radius: 50%; border: 2.5px solid var(--butter); margin-inline-start: -9px; display: grid; place-items: center; font-size: 13px; color: #fff; }
+  .faces b:nth-child(1) { background: #E0542C; } .faces b:nth-child(2) { background: #1E7552; } .faces b:nth-child(3) { background: #3442CF; }
+
+  h1 { font-family: "Fredoka", sans-serif; font-weight: 600; font-size: 34px; line-height: 1.1; letter-spacing: -.01em; }
+  p.lead { color: var(--ink-2); font-size: 17px; line-height: 1.5; margin-top: 10px; }
+  .actions { margin-top: auto; padding-top: 30px; display: flex; flex-direction: column; gap: 10px; }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 10px; height: 56px; border-radius: 18px; font: 700 17px "Assistant", sans-serif; text-decoration: none; transition: transform .25s cubic-bezier(.2,.9,.25,1.3); }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: var(--ink); color: var(--bg); }
+  .btn.ghost { background: var(--surface); color: var(--ink); border: 1.5px solid var(--line); }
+  .btn svg { width: 20px; height: 20px; }
+  .hint { display: flex; gap: 12px; align-items: flex-start; background: var(--surface); border: 1.5px solid var(--line); border-radius: 20px; padding: 14px 16px; margin-top: 22px; font-size: 15px; color: var(--ink-2); line-height: 1.45; }
+  .hint .n { flex: none; width: 26px; height: 26px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 800; }
+  .bad h1 { font-size: 28px; }
+</style>
+</head>
+<body>
+<main id="ok">
+  <div class="brand"><i></i>noted</div>
+  <div class="stack" aria-hidden="true">
+    <div class="card c3"></div>
+    <div class="card c2"></div>
+    <div class="card c1">
+      <h2>פתק משותף</h2>
+      <div class="row done"><div class="box on"></div><span>חלה ×2</span></div>
+      <div class="row"><div class="box"></div><span>יין אדום</span></div>
+      <div class="row"><div class="box"></div><span>פרחים לשולחן</span></div>
+      <div class="faces"><b>ד</b><b>א</b><b>+</b></div>
+    </div>
+  </div>
+  <h1>הוזמנת לפתק</h1>
+  <p class="lead">מישהו שיתף איתך פתק ב-noted. פותחים באפליקציה — והפתק מופיע בלשונית ״משותף״, מתעדכן אצל כולם בזמן אמת.</p>
+  <div class="hint"><span class="n">1</span><span>עוד אין לך את noted? מורידים, מתקינים, ואז חוזרים לקישור הזה ולוחצים עליו שוב.</span></div>
+  <div class="actions">
+    <a class="btn primary" id="open" href="#">
+      <svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 104a8 8 0 0 1-16 0V59.32l-66.33 66.34a8 8 0 0 1-11.32-11.32L196.68 48H152a8 8 0 0 1 0-16h64a8 8 0 0 1 8 8Zm-40 24a8 8 0 0 0-8 8v72H48V80h72a8 8 0 0 0 0-16H48a16 16 0 0 0-16 16v128a16 16 0 0 0 16 16h128a16 16 0 0 0 16-16v-72a8 8 0 0 0-8-8Z"/></svg>
+      פתיחה באפליקציה
+    </a>
+    <a class="btn ghost" id="get" href="https://github.com/ohavs/Noted/releases/latest">
+      <svg viewBox="0 0 256 256" fill="currentColor"><path d="M224 144v64a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8v-64a8 8 0 0 1 16 0v56h160v-56a8 8 0 0 1 16 0Zm-101.66 5.66a8 8 0 0 0 11.32 0l40-40a8 8 0 0 0-11.32-11.32L136 124.69V32a8 8 0 0 0-16 0v92.69L93.66 98.34a8 8 0 0 0-11.32 11.32Z"/></svg>
+      הורדת noted לאנדרואיד
+    </a>
+  </div>
+</main>
+<script>
+  // /i/<token> → open the same link inside the app (Android), falling back to the download page
+  const token = (location.pathname.match(/\/i\/([A-Za-z0-9]{12,40})/) || [])[1];
+  const get = document.getElementById('get').href;
+  const open = document.getElementById('open');
+  if (!token) {
+    document.querySelector('h1').textContent = 'הקישור לא שלם';
+    document.querySelector('.lead').textContent = 'נראה שחלק מהקישור נחתך. בקשו ממי ששלח לשלוח אותו שוב.';
+    open.style.display = 'none';
+  } else if (/android/i.test(navigator.userAgent)) {
+    open.href = 'intent://' + location.host + '/i/' + token + '#Intent;scheme=https;package=com.ohav.noted;S.browser_fallback_url=' + encodeURIComponent(get) + ';end';
+  } else {
+    open.style.display = 'none';
+    document.querySelector('.hint span:last-child').textContent = 'noted היא אפליקציית אנדרואיד — פותחים את הקישור הזה בטלפון.';
+  }
+</script>
+</body>
+</html>

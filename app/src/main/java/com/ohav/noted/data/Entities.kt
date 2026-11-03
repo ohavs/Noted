@@ -36,4 +36,6 @@ data class NoteEntity(
     val position: Double,
     val createdAt: Long,
     val updatedAt: Long,
+    /** Who the note is shared with, as sync last saw it ([Share] JSON; "" = only mine). */
+    @ColumnInfo(defaultValue = "") val share: String = "",
 )

@@ -87,6 +87,11 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
     /** Block with keyboard focus (null = title / nothing). */
     var focused by mutableStateOf<String?>(null)
 
+    /** Who the note is shared with (and whether I may only look). */
+    var share by mutableStateOf(com.ohav.noted.data.Share.None)
+    var me by mutableStateOf<String?>(null)
+    val readOnly: Boolean get() = share.readOnly
+
     /** Focus request for the next composition: block id → cursor (text coordinates). */
     var pendingFocus by mutableStateOf<Pair<String, Int>?>(null)
 

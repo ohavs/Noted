@@ -85,6 +85,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ohav.noted.ui.settings.SettingsScreen
+import com.ohav.noted.ui.share.SharedScreen
+import com.ohav.noted.ui.share.openJoinSheet
 
 /** Shared chrome state between the home stack and the floating nav. */
 @Stable
@@ -110,7 +112,7 @@ enum class Tab(val label: String, val icon: ImageVector, val iconOn: ImageVector
 }
 
 @Composable
-fun NotedRoot(app: NotedApp, openNote: MutableState<String?>) {
+fun NotedRoot(app: NotedApp, openNote: MutableState<String?>, invite: MutableState<String?>) {
     var screen by rememberSaveable { mutableStateOf("main") }
     // categories open from settings or from home; back returns to whichever it was
     var catsFrom by rememberSaveable { mutableStateOf("main") }
@@ -118,7 +120,7 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>) {
     val overlays = remember { Overlays() }
     BackHandler(enabled = screen != "main") { screen = if (screen == "categories") catsFrom else "main" }
     // a reminder notification was tapped: back to the main screen, where the note opens
-    LaunchedEffect(openNote.value) { if (openNote.value != null) screen = "main" }
+    LaunchedEffect(openNote.value, invite.value) { if (openNote.value != null || invite.value != null) screen = "main" }
     val reminders by app.reminders.all.collectAsStateWithLifecycle(initialValue = emptyList())
     val remindersById = remember(reminders) { reminders.associateBy { it.id } }
     val placeReminders by app.places.reminders.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -147,7 +149,7 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>) {
             when (s) {
                 "settings" -> SettingsScreen(app, toasts, onBack = { screen = "main" }, onCategories = { catsFrom = "settings"; screen = "categories" })
                 "categories" -> CategoriesScreen(app, toasts, overlays, onBack = { screen = catsFrom })
-                else -> MainScreen(app, toasts, openNote, onSettings = { screen = "settings" }, onCategories = { catsFrom = "main"; screen = "categories" })
+                else -> MainScreen(app, toasts, openNote, invite, onSettings = { screen = "settings" }, onCategories = { catsFrom = "main"; screen = "categories" })
             }
         }
         overlays.layer?.invoke()
@@ -159,7 +161,7 @@ fun NotedRoot(app: NotedApp, openNote: MutableState<String?>) {
 }
 
 @Composable
-private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState<String?>, onSettings: () -> Unit, onCategories: () -> Unit) {
+private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState<String?>, invite: MutableState<String?>, onSettings: () -> Unit, onCategories: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var sharedSeen by rememberSaveable { mutableStateOf(false) }
     val chrome = remember { Chrome() }
@@ -181,6 +183,22 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         }
         chrome.editor.open(n, rect)
     }
+    val overlays = LocalOverlays.current
+    fun midRect() = with(density) {
+        val w = config.screenWidthDp.dp.toPx()
+        val h = config.screenHeightDp.dp.toPx()
+        Rect(16.dp.toPx(), h / 2 - 100.dp.toPx(), w - 16.dp.toPx(), h / 2 + 100.dp.toPx())
+    }
+    // an invite link was opened: join, then the note opens from the shared tab
+    LaunchedEffect(invite.value) {
+        val token = invite.value ?: return@LaunchedEffect
+        invite.value = null
+        openJoinSheet(app, overlays, toasts, token) { n ->
+            tab = Tab.Shared
+            sharedSeen = true
+            chrome.editor.open(n, midRect())
+        }
+    }
     val notes by app.notes.notes.collectAsStateWithLifecycle(initialValue = emptyList())
     val categories by app.notes.categories.collectAsStateWithLifecycle(initialValue = emptyList())
 
@@ -197,13 +215,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         ) { t ->
             when (t) {
                 Tab.Home -> HomeScreen(app, toasts, chrome, onSettings, onCategories)
-                Tab.Shared -> TabPage("משותף") {
-                    EmptyState(
-                        EmptyArt.Shared, "עוד לא שיתפת כלום",
-                        "רשימת קניות משותפת, תיקייה משפחתית — כולם רואים שינויים בזמן אמת.",
-                        Modifier.padding(top = 60.dp),
-                    ) { Btn("הזמנה בלינק", icon = Ph.Link, kind = BtnKind.Dark) { toasts.show("שיתוף מגיע עם החשבון והסנכרון", Ph.Info) } }
-                }
+                Tab.Shared -> SharedScreen(app, toasts, notes) { n, rect, fresh -> chrome.editor.open(n, rect ?: midRect(), fresh) }
                 Tab.Agenda -> TabPage("לוח") {
                     Agenda(notes, categories) { n, rect -> chrome.editor.open(n, rect) }
                 }

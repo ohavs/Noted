@@ -11,16 +11,68 @@ service cloud.firestore {
       }
     }
 
-    // A note lives at the top level so sharing (8b) only edits its member list.
+    // A note lives at the top level; sharing edits its member list.
+    //   memberIds: [uid]           — who can read it
+    //   members:   uid → role      — owner / editor / viewer
+    //   people:    uid → {n, p}    — names and photos, each member writes their own
+    //   u:         uid → {...}     — a non-owner's personal fields (category, pin, …)
     match /notes/{id} {
-      allow read: if me() != null && me() in resource.data.memberIds;
+      function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+      // a map field where only my own key moved (or the field didn't move at all)
+      function onlyMine(f) {
+        return !(f in changed())
+          || request.resource.data.get(f, {}).diff(resource.data.get(f, {})).affectedKeys().hasOnly([me()]);
+      }
+      function member() { return me() in resource.data.memberIds; }
+      function role() { return resource.data.members.get(me(), 'viewer'); }
+      function invite() { return get(/databases/$(database)/documents/invites/$(request.resource.data.inv)).data; }
+
+      allow read: if me() != null && member();
       allow create: if me() != null
         && request.resource.data.owner == me()
         && request.resource.data.memberIds == [me()];
-      allow update: if me() != null && me() in resource.data.memberIds
-        && request.resource.data.owner == resource.data.owner
-        && request.resource.data.memberIds == resource.data.memberIds;
       allow delete: if me() != null && resource.data.owner == me();
+
+      allow update: if me() != null && request.resource.data.owner == resource.data.owner && (
+        // owner: anything, as long as they stay on it as owner
+        (resource.data.owner == me()
+          && me() in request.resource.data.memberIds
+          && request.resource.data.members[me()] == 'owner')
+        // editor: the shared content, plus their own personal fields and profile
+        || (member() && role() == 'editor'
+          && changed().hasOnly(['title', 'color', 'blocks', 'updatedAt', 'by', 'at', 'u', 'people'])
+          && onlyMine('u') && onlyMine('people'))
+        // viewer (anyone on it): only their own personal fields and profile
+        || (member()
+          && changed().hasOnly(['u', 'people'])
+          && onlyMine('u') && onlyMine('people'))
+        // leaving: take only myself off
+        || (member() && resource.data.owner != me()
+          && changed().hasOnly(['memberIds', 'members', 'people', 'u'])
+          && request.resource.data.memberIds == resource.data.memberIds.removeAll([me()])
+          && !(me() in request.resource.data.members)
+          && onlyMine('members') && onlyMine('people') && onlyMine('u'))
+        // joining with a live invite to this note: add only myself, with the invite's role
+        || (!member()
+          && changed().hasOnly(['memberIds', 'members', 'people', 'inv', 'u'])
+          && request.resource.data.inv is string
+          && invite().note == id
+          && invite().exp > request.time
+          && invite().role in ['editor', 'viewer']
+          && request.resource.data.memberIds == resource.data.memberIds.concat([me()])
+          && request.resource.data.members[me()] == invite().role
+          && onlyMine('members') && onlyMine('people') && onlyMine('u'))
+      );
+    }
+
+    // Invite links: readable by token (unguessable), never listed; only the note's owner makes them.
+    match /invites/{token} {
+      allow get: if me() != null;
+      allow create: if me() != null
+        && request.resource.data.by == me()
+        && request.resource.data.role in ['editor', 'viewer']
+        && get(/databases/$(database)/documents/notes/$(request.resource.data.note)).data.owner == me();
+      allow delete: if me() != null && resource.data.by == me();
     }
   }
 }

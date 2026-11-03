@@ -17,6 +17,9 @@ class MainActivity : ComponentActivity() {
     /** A note to open, from a reminder notification; consumed by the UI. */
     private val openNote = mutableStateOf<String?>(null)
 
+    /** An invite link's token, opened from outside; consumed by the UI. */
+    private val invite = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -25,7 +28,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) takeOpen(intent)
         setContent {
             val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = null)
-            settings?.let { NotedTheme(it) { NotedRoot(app, openNote) } }
+            settings?.let { NotedTheme(it) { NotedRoot(app, openNote, invite) } }
         }
     }
 
@@ -52,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     private fun takeOpen(intent: Intent?) {
         intent?.getStringExtra(com.ohav.noted.reminders.Notifier.EXTRA_NOTE)?.let { openNote.value = it }
+        if (intent?.action == Intent.ACTION_VIEW) com.ohav.noted.sync.Sharing.tokenOf(intent.dataString)?.let { invite.value = it }
     }
 
     override fun onResume() {

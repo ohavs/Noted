@@ -103,6 +103,10 @@ interface NoteDao {
     @Query("UPDATE notes SET trashedAt = :trashedAt, updatedAt = :at WHERE id IN (:ids)")
     suspend fun setTrashed(ids: List<String>, trashedAt: Long?, at: Long)
 
+    /** Sync bookkeeping: not an edit, so updatedAt stays. */
+    @Query("UPDATE notes SET share = :share WHERE id = :id")
+    suspend fun setShare(id: String, share: String)
+
     @Query("UPDATE notes SET position = :position WHERE id = :id")
     suspend fun setPosition(id: String, position: Double)
 }

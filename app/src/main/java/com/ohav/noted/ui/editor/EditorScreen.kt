@@ -1,5 +1,7 @@
 package com.ohav.noted.ui.editor
 
+import com.ohav.noted.data.shareInfo
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -239,6 +241,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     }.collectAsState(initial = n)
     val color = NoteColor.of(live?.color ?: n.color)
     val bg = animateColorAsState(c.note(color), Motion.glide(), label = "edBg")
+    val me = app.account.user.collectAsState().value?.uid
+    LaunchedEffect(live?.share, me) {
+        state.share = live?.shareInfo ?: com.ohav.noted.data.Share.None
+        state.me = me
+    }
 
     LaunchedEffect(n.id) {
         if (nav.held) return@LaunchedEffect
@@ -296,6 +303,21 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             val merged = Merge.pick(state.base.first, mine.first, stored.first) to Merge.blocks(state.base.second, mine.second, stored.second)
             state.base = stored
             if (merged != mine) state.absorb(merged.first, merged.second)
+        }
+    }
+    // gone from this device while open (left, removed, or the owner trashed it)
+    LaunchedEffect(state) {
+        snapshotFlow { live == null }.drop(1).collect { missing ->
+            if (!missing || nav.closing) return@collect
+            delay(300)
+            if (app.notes.get(n.id) == null && !nav.closing) {
+                nav.toCard = false
+                nav.closing = true
+                keyboard?.hide()
+                nav.p.animateTo(0f, Motion.glide(0.002f))
+                nav.finish()
+                toasts.show("הפתק כבר לא משותף איתך", Ph.UsersThree)
+            }
         }
     }
     DisposableEffect(state) {
@@ -384,6 +406,12 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         }
     }
 
+    fun share() {
+        keyboard?.hide()
+        focus.clearFocus()
+        com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id, onLeft = { nav.toCard = false; close() })
+    }
+
     BackHandler { close() }
 
     // Every frame of the transform is layout + draw only: nothing here reads p during composition.
@@ -462,7 +490,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                 CompositionLocalProvider(LocalPaper provides c.note(color), LocalRemind provides remind, LocalRemindPlace provides remindPlace) {
                     EditorPage(
                         state, nav,
-                        onBack = { close() }, onMenu = ::menu,
+                        onBack = { close() }, onMenu = ::menu, onShare = ::share,
                         onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
                         onRelease = { open, v -> nav.letGo(open, v) },
                         toasts = toasts,
@@ -530,6 +558,7 @@ private fun EditorPage(
     nav: EditorNav,
     onBack: () -> Unit,
     onMenu: () -> Unit,
+    onShare: () -> Unit,
     onPull: (Float) -> Unit,
     onRelease: (open: Boolean, velocity: Float) -> Unit,
     toasts: ToastState,
@@ -586,9 +615,17 @@ private fun EditorPage(
                 ) {
                     BarIcon(Ph.CaretStart, "חזרה", c.noteInk, onClick = onBack)
                     Spacer(Modifier.weight(1f))
-                    // RTL: "back in time" points right
-                    BarIcon(Ph.ArrowUUpRight, "ברירה", c.noteInk, enabled = state.canUndo) { state.undo(); haptics.tick() }
-                    BarIcon(Ph.ArrowUUpLeft, "חזרה על פעולה", c.noteInk, enabled = state.canRedo) { state.redo(); haptics.tick() }
+                    if (!state.readOnly) {
+                        // RTL: "back in time" points right
+                        BarIcon(Ph.ArrowUUpRight, "ברירה", c.noteInk, enabled = state.canUndo) { state.undo(); haptics.tick() }
+                        BarIcon(Ph.ArrowUUpLeft, "חזרה על פעולה", c.noteInk, enabled = state.canRedo) { state.redo(); haptics.tick() }
+                    }
+                    val others = state.share.members.filter { it.uid != state.me }
+                    if (state.share.shared && others.isNotEmpty()) {
+                        Box(Modifier.height(48.dp).press(scale = .9f, onClick = onShare).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+                            com.ohav.noted.ui.share.FacePile(others, 28.dp, ring = LocalPaper.current, max = 2)
+                        }
+                    } else BarIcon(Ph.UserPlus, "שיתוף", c.noteInk, onClick = onShare)
                     BarIcon(
                         if (LocalReminders.current[state.noteId] != null || LocalPlaceChips.current[state.noteId] != null) Ph.BellRingingFill else Ph.Bell, "תזכורת", c.noteInk,
                     ) { remindNow("", null) }
@@ -609,6 +646,10 @@ private fun EditorPage(
                         .padding(start = 22.dp, end = 22.dp, top = 6.dp),
                 ) {
                     TitleField(state)
+                    if (state.readOnly) {
+                        val owner = state.share.ownerMember
+                        NoteReminderChip(Ph.Eye, "צפייה בלבד" + (owner?.let { " · של ${it.first}" } ?: "")) { onShare() }
+                    }
                     LocalReminders.current[state.noteId]?.let { r -> NoteReminderChip(if (r.repeat.repeats) Ph.Repeat else Ph.BellRinging, r.chip()) { remindNow("", null) } }
                     LocalPlaceChips.current[state.noteId]?.let { pc ->
                         val remindPlaceNow = LocalRemindPlace.current
@@ -621,7 +662,7 @@ private fun EditorPage(
                         Modifier
                             .fillMaxWidth()
                             .heightIn(min = 220.dp)
-                            .clickable(remember { MutableInteractionSource() }, indication = null) {
+                            .clickable(remember { MutableInteractionSource() }, indication = null, enabled = !state.readOnly) {
                                 val last = state.blocks.lastOrNull()
                                 if (last != null && last.type in TEXT_TYPES && last.text.isEmpty()) state.pendingFocus = last.id to 0
                                 else {
@@ -634,7 +675,7 @@ private fun EditorPage(
                 }
                 if (media.recording) {
                     com.ohav.noted.ui.media.RecorderPanel(media.recorder, onCancel = media::cancelRecording, onDone = media::finishRecording)
-                } else SmartBar(state, toasts)
+                } else if (!state.readOnly) SmartBar(state, toasts)
             }
             SelectionBubble(bubble, origin, state)
             MediaOverlays(media)
@@ -726,6 +767,7 @@ private fun TitleField(state: EditorState) {
         BasicTextField(
             value = state.title,
             onValueChange = state::onTitle,
+            readOnly = state.readOnly,
             textStyle = t.title.copy(color = c.noteInk, textDirection = TextDirection.Content),
             cursorBrush = SolidColor(c.noteInk),
             keyboardOptions = KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
@@ -900,6 +942,7 @@ private fun BlockRow(
                 BasicTextField(
                     value = b.value,
                     onValueChange = { state.onValue(b, it) },
+                    readOnly = state.readOnly,
                     textStyle = style,
                     cursorBrush = SolidColor(c.noteInk),
                     visualTransformation = RichTransformation(b.spans, c.isDark, 1),
@@ -941,8 +984,13 @@ private fun BlockRow(
                 }
             }
         }
+        // someone else wrote or ticked this line: their face beside it
+        val who = state.share.takeIf { it.shared }?.let { sh -> sh.by[b.id]?.takeIf { it != state.me }?.let { sh.member(it) } }
+        if (who != null && b.type !in MEDIA_TYPES && b.type != BlockType.Divider && (b.text.isNotBlank() || b.done)) {
+            com.ohav.noted.ui.share.Face(who, 20.dp, Modifier.padding(top = 9.dp, start = 4.dp))
+        }
         // drag handle: tap → block menu, drag → reorder
-        Box(
+        if (!state.readOnly) Box(
             Modifier
                 .padding(top = 4.dp)
                 .size(30.dp, 30.dp)
@@ -985,7 +1033,10 @@ private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toa
                 Modifier
                     .padding(top = 5.dp, end = 10.dp)
                     .size(24.dp)
-                    .press(scale = .82f) { state.toggleCheck(b); if (b.done) haptics.confirm() else haptics.light() }
+                    .press(scale = .82f) {
+                        if (state.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@press }
+                        state.toggleCheck(b); if (b.done) haptics.confirm() else haptics.light()
+                    }
                     .clip(Squircle(8.dp))
                     .background(c.noteInk.copy(alpha = p))
                     .drawBehind {

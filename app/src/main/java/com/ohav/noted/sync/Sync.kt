@@ -22,6 +22,9 @@ import com.ohav.noted.data.MediaSyncEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.ShadowEntity
+import com.ohav.noted.data.Share
+import com.ohav.noted.data.Member
+import com.ohav.noted.data.shareInfo
 import com.ohav.noted.data.Span
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,9 +50,10 @@ import java.io.File
 /**
  * Keeps Room (the source of truth on this device) and Firestore in step while signed in.
  *
- * Cloud layout: `notes/{id}` (owner, memberIds, meta fields and a `blocks` map of
- * id → {o, type, text, done, indent, spans, x}); `users/{uid}/categories/{id}`;
- * media files in Storage at `users/{owner}/media/{name}`.
+ * Cloud layout: `notes/{id}` (owner, memberIds, members uid → role, people uid → {n, p},
+ * the owner's meta fields at the top level and every other member's under `u.<uid>`, and a
+ * `blocks` map of id → {o, type, text, done, indent, spans, x, by}); `users/{uid}/categories/{id}`;
+ * media files in Storage at `users/{uploader}/media/{name}`.
  *
  * Every row keeps a shadow — the cloud state this device last agreed with. Pushing sends
  * only what differs from the shadow (a single block, a single field); pulling merges the
@@ -121,7 +125,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 var serverNotes = false
                 var serverCats = false
                 for ((k, s) in inbox) {
-                    mutex.withLock { if (k == 'n') pullNotes(s) else pullCats(s) }
+                    mutex.withLock { if (k == 'n') pullNotes(s, uid) else pullCats(s) }
                     if (!s.metadata.isFromCache) if (k == 'n') serverNotes = true else serverCats = true
                     if (!primed.value && serverNotes && serverCats) {
                         mutex.withLock { firstContact() }
@@ -151,7 +155,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                     .collect { (ns, cs) ->
                         mutex.withLock {
                             pushCats(fs, uid, cs)
-                            pushNotes(fs, uid, ns)
+                            pushNotes(fs, u, ns)
                         }
                         kick()
                     }
@@ -206,7 +210,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     // ------------------------------------------------------------------ notes
 
-    private suspend fun pullNotes(s: QuerySnapshot) {
+    /** The cloud already has this note (it can be shared). */
+    suspend fun inCloud(id: String): Boolean = mutex.withLock { noteShadows[id]?.let { !it.gone } == true }
+
+    private suspend fun pullNotes(s: QuerySnapshot, uid: String) {
         for (ch in s.documentChanges) {
             val d = ch.document
             if (d.metadata.hasPendingWrites()) continue // our own write; its server echo comes later
@@ -215,13 +222,24 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 noteShadows.remove(d.id)
                 continue
             }
-            val r = NoteShadow.of(d) ?: continue
+            val r = NoteShadow.of(d, uid) ?: continue
             val base = noteShadows[d.id]
             if (base == r) continue
             db.withTransaction {
                 val local = notes.get(d.id)
-                val merged = if (local == null) r.toEntity() else merge(base, local, r)
-                if (merged != local) notes.upsert(merged)
+                if (r.gone) {
+                    // the owner put it in their trash: it leaves everyone else's notes until restored
+                    if (local != null) notes.delete(d.id)
+                } else {
+                    val merged = when {
+                        local == null -> r.toEntity().let {
+                            // joined just now: on top of my stack, until I place it
+                            if (r.owner != uid && !r.personal) it.copy(position = (notes.minPosition() ?: 0.0) - 1.0) else it
+                        }
+                        else -> merge(base?.takeUnless { it.gone }, local, r)
+                    }.copy(share = r.share(uid).encode())
+                    if (merged != local) notes.upsert(merged)
+                }
                 dao.putShadow(ShadowEntity("n:${d.id}", r.encode()))
             }
             noteShadows[d.id] = r
@@ -246,9 +264,13 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         )
     }
 
-    private suspend fun pushNotes(fs: FirebaseFirestore, uid: String, all: List<NoteEntity>) {
+    private suspend fun pushNotes(fs: FirebaseFirestore, u: Account.User, all: List<NoteEntity>) {
+        val uid = u.uid
         for (n in all) {
             val sh = noteShadows[n.id]
+            // someone else's note: never recreate it from here, wait for the cloud to hand it over
+            if (sh == null && n.shareInfo.owner.let { it.isNotEmpty() && it != uid }) continue
+            if (sh?.gone == true) continue
             if (sh != null && sh.sameMeta(n) && sh.blocksJson == n.blocks) continue
             val blocks = Blocks.parse(n.blocks)
             if (sh != null && sh.sameMeta(n) && sh.blocks == blocks) continue
@@ -258,35 +280,63 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 val doc = HashMap<String, Any?>(meta(n))
                 doc["owner"] = uid
                 doc["memberIds"] = listOf(uid)
-                doc["members"] = mapOf(uid to "owner")
+                doc["members"] = mapOf(uid to Share.ROLE_OWNER)
+                doc["people"] = mapOf(uid to person(u))
                 doc["createdAt"] = n.createdAt
                 doc["blocks"] = blocks.associate { it.id to blockMap(it, orders.getValue(it.id)) }
                 doc["by"] = uid
                 doc["at"] = FieldValue.serverTimestamp()
                 ref.set(doc, SetOptions.merge()).addOnFailureListener { forget(n.id) }
-            } else {
-                val upd = HashMap<String, Any?>()
-                meta(n).forEach { (k, v) -> if (sh.metaValue(k) != v) upd[k] = v }
+                val next = NoteShadow.of(n, blocks, orders, uid, null)
+                noteShadows[n.id] = next
+                dao.putShadow(ShadowEntity("n:${n.id}", next.encode()))
+                continue
+            }
+            val mine = sh.owner == uid
+            val canEdit = sh.role(uid) != Share.ROLE_VIEWER
+            val upd = HashMap<String, Any?>()
+            var content = false
+            meta(n).forEach { (k, v) ->
+                if (k == "updatedAt" || sh.metaValue(k) == v) return@forEach
+                when {
+                    k in PERSONAL -> upd[if (mine) k else "u.$uid.$k"] = v
+                    canEdit -> { upd[k] = v; content = true }
+                }
+            }
+            // a viewer's copy can't change the shared content: keep agreeing with the cloud's
+            var keptBlocks = sh.blocks
+            var keptOrders = sh.orders
+            val by = HashMap(sh.by)
+            if (canEdit) {
+                keptBlocks = blocks
+                keptOrders = orders
                 val prev = sh.blocks.associateBy { it.id }
                 for (b in blocks) {
                     val o = orders.getValue(b.id)
                     when {
-                        prev[b.id] != b -> upd["blocks.${b.id}"] = blockMap(b, o)
-                        sh.orders[b.id] != o -> upd["blocks.${b.id}.o"] = o
+                        prev[b.id] != b -> { upd["blocks.${b.id}"] = blockMap(b, o) + ("by" to uid); by[b.id] = uid; content = true }
+                        sh.orders[b.id] != o -> { upd["blocks.${b.id}.o"] = o; content = true }
                     }
                 }
                 val ids = blocks.mapTo(HashSet()) { it.id }
-                prev.keys.filter { it !in ids }.forEach { upd["blocks.$it"] = FieldValue.delete() }
+                prev.keys.filter { it !in ids }.forEach { upd["blocks.$it"] = FieldValue.delete(); by.remove(it); content = true }
+            }
+            if (content || (mine && sh.updatedAt != n.updatedAt)) {
                 upd["updatedAt"] = n.updatedAt
                 upd["by"] = uid
                 upd["at"] = FieldValue.serverTimestamp()
-                ref.update(upd).addOnFailureListener { forget(n.id) }
             }
-            val next = NoteShadow.of(n, blocks, orders, sh?.owner ?: uid)
+            if (upd.isNotEmpty()) ref.update(upd).addOnFailureListener { forget(n.id) }
+            val next = NoteShadow.of(n, keptBlocks, keptOrders, sh.owner, sh).let {
+                if (canEdit) it.copy(by = by) else it.copy(title = sh.title, color = sh.color, updatedAt = sh.updatedAt)
+            }.let { if (!mine && upd.keys.any { k -> k.startsWith("u.") }) it.copy(personal = true) else it }
             noteShadows[n.id] = next
             dao.putShadow(ShadowEntity("n:${n.id}", next.encode()))
+            if (next.by != sh.by) notes.setShare(n.id, next.share(uid).encode())
         }
     }
+
+    private fun person(u: Account.User) = mapOf("n" to u.name.ifBlank { u.email.substringBefore('@') }, "p" to u.photoUrl)
 
     /** A write the cloud refused (document gone, rules): the next push sends the whole note again. */
     private fun forget(id: String) {
@@ -375,31 +425,37 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         val storage = if (bucket.isNullOrEmpty()) null else runCatching { FirebaseStorage.getInstance() }.getOrNull()
         if (storage == null) { _status.value = _status.value.copy(mediaOff = true); return }
         val known = dao.media().associateBy { it.name }
-        // file → owner folder, over every note that has media blocks
-        val wanted = LinkedHashMap<String, String>()
+        // file → folders it may sit in (whoever added it uploads to their own folder), over every note with media
+        val wanted = LinkedHashMap<String, List<String>>()
         for (n in notes.all()) {
             if (!n.blocks.contains("\"x\"")) continue
-            val owner = noteShadows[n.id]?.owner ?: uid
-            Blocks.parse(n.blocks).forEach { b -> if (b.type in MEDIA) MediaExtra.files(b).forEach { wanted.putIfAbsent(it, owner) } }
+            val sh = noteShadows[n.id]
+            Blocks.parse(n.blocks).forEach { b ->
+                if (b.type !in MEDIA) return@forEach
+                val folders = listOfNotNull(sh?.by?.get(b.id), sh?.owner, uid).plus(sh?.members?.keys.orEmpty()).distinct()
+                MediaExtra.files(b).forEach { wanted.putIfAbsent(it, folders) }
+            }
         }
-        val todo = wanted.filter { (name, owner) ->
-            val f = Media.file(ctx, name)
-            if (f.exists()) owner == uid && known[name]?.uploaded != true else true
-        }
+        val todo = wanted.filter { (name, _) -> known[name]?.uploaded != true || !Media.file(ctx, name).exists() }
         _status.value = _status.value.copy(mediaPending = todo.size)
         var left = todo.size
-        for ((name, owner) in todo) {
+        for ((name, folders) in todo) {
             val f = Media.file(ctx, name)
-            val ref = storage.reference.child("users/$owner/media/$name")
             val ok = runCatching {
                 if (f.exists()) {
-                    ref.putFile(android.net.Uri.fromFile(f)).await()
-                    dao.putMedia(MediaSyncEntity(name, owner, true))
+                    storage.reference.child("users/$uid/media/$name").putFile(android.net.Uri.fromFile(f)).await()
+                    dao.putMedia(MediaSyncEntity(name, uid, true))
                 } else {
                     val tmp = File(f.parentFile, "$name.part")
-                    ref.getFile(tmp).await()
+                    var from: String? = null
+                    var last: Exception? = null
+                    for (o in folders) {
+                        try { storage.reference.child("users/$o/media/$name").getFile(tmp).await(); from = o; break }
+                        catch (e: StorageException) { last = e; if (e.errorCode != StorageException.ERROR_OBJECT_NOT_FOUND) break }
+                    }
+                    if (from == null) { tmp.delete(); throw last ?: IllegalStateException(name) }
                     if (!tmp.renameTo(f)) tmp.delete()
-                    dao.putMedia(MediaSyncEntity(name, owner, true))
+                    dao.putMedia(MediaSyncEntity(name, from, true))
                     Media.arrived.tryEmit(name)
                 }
             }
@@ -423,11 +479,20 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     companion object {
         private val MEDIA = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link)
+
+        /** Fields every member keeps for themselves (the owner's at the top level, others' under `u.<uid>`). */
+        val PERSONAL = setOf("categoryId", "pinned", "favorite", "archived", "trashedAt", "position")
         val SEED_TITLES = setOf("קניות לשבת", "שקשוקה של סבתא", "רעיונות לטיול בגליל", "פגישת צוות", "ספרים לקרוא")
     }
 }
 
-/** A note as the cloud has it (and as this device last agreed with it). */
+/** Someone's name and photo as the note document carries them. */
+data class Person(val name: String, val photo: String?)
+
+/**
+ * A note as the cloud has it (and as this device last agreed with it), seen by one account:
+ * the personal fields (category, pin, favorite, archive, trash, position) are that account's.
+ */
 data class NoteShadow(
     val owner: String,
     val title: String,
@@ -442,8 +507,27 @@ data class NoteShadow(
     val position: Double,
     val createdAt: Long,
     val updatedAt: Long,
+    /** uid → role. */
+    val members: Map<String, String> = emptyMap(),
+    val people: Map<String, Person> = emptyMap(),
+    /** block id → uid that last changed it. */
+    val by: Map<String, String> = emptyMap(),
+    /** The owner trashed it and I'm not the owner: it isn't mine to see now. */
+    val gone: Boolean = false,
+    /** A non-owner already has their own personal fields on it. */
+    val personal: Boolean = false,
 ) {
     val blocksJson: String by lazy { Blocks.serialize(blocks) }
+
+    fun role(uid: String): String = members[uid] ?: if (uid == owner) Share.ROLE_OWNER else Share.ROLE_VIEWER
+
+    fun share(uid: String): Share {
+        if (members.size <= 1 && owner == uid) return Share.None.copy(owner = uid, role = Share.ROLE_OWNER, members = listOf(member(uid)), by = by)
+        val list = members.keys.sortedWith(compareBy({ members[it] != Share.ROLE_OWNER }, { it != uid }, { people[it]?.name.orEmpty() })).map(::member)
+        return Share(owner, role(uid), list, by)
+    }
+
+    private fun member(uid: String) = Member(uid, people[uid]?.name.orEmpty(), people[uid]?.photo, members[uid] ?: Share.ROLE_OWNER)
 
     fun sameMeta(n: NoteEntity) = title == n.title && color == n.color && categoryId == n.categoryId && pinned == n.pinned &&
         favorite == n.favorite && archived == n.archived && trashedAt == n.trashedAt && position == n.position
@@ -459,36 +543,57 @@ data class NoteShadow(
         archived = archived, trashedAt = trashedAt, position = position, createdAt = createdAt, updatedAt = updatedAt,
     )
 
-    fun encode(): String = JSONObject()
-        .put("ow", owner).put("t", title).put("b", blocksJson).put("o", JSONObject(orders as Map<*, *>))
-        .put("c", color).put("k", categoryId).put("p", pinned).put("f", favorite).put("a", archived)
-        .put("tr", trashedAt ?: JSONObject.NULL).put("pos", position).put("cr", createdAt).put("u", updatedAt)
-        .toString()
+    fun encode(): String {
+        val ppl = JSONObject()
+        people.forEach { (k, v) -> ppl.put(k, JSONObject().put("n", v.name).put("p", v.photo ?: "")) }
+        return JSONObject()
+            .put("ow", owner).put("t", title).put("b", blocksJson).put("o", JSONObject(orders as Map<*, *>))
+            .put("c", color).put("k", categoryId).put("p", pinned).put("f", favorite).put("a", archived)
+            .put("tr", trashedAt ?: JSONObject.NULL).put("pos", position).put("cr", createdAt).put("u", updatedAt)
+            .put("m", JSONObject(members as Map<*, *>)).put("pp", ppl).put("by", JSONObject(by as Map<*, *>))
+            .put("g", gone).put("pe", personal)
+            .toString()
+    }
 
     companion object {
+        private fun JSONObject?.strings(): Map<String, String> = this?.keys()?.asSequence()?.associateWith { getString(it) }.orEmpty()
+
         fun decode(s: String): NoteShadow? = runCatching {
             val o = JSONObject(s)
             val ord = o.getJSONObject("o")
+            val pp = o.optJSONObject("pp")
             NoteShadow(
                 o.getString("ow"), o.getString("t"), Blocks.parse(o.getString("b")),
                 ord.keys().asSequence().associateWith { ord.getDouble(it) },
                 o.getString("c"), o.getString("k"), o.getBoolean("p"), o.getBoolean("f"), o.getBoolean("a"),
                 if (o.isNull("tr")) null else o.getLong("tr"), o.getDouble("pos"), o.getLong("cr"), o.getLong("u"),
+                members = o.optJSONObject("m").strings(),
+                people = pp?.keys()?.asSequence()?.associateWith { k -> pp.getJSONObject(k).let { Person(it.optString("n"), it.optString("p").ifEmpty { null }) } }.orEmpty(),
+                by = o.optJSONObject("by").strings(),
+                gone = o.optBoolean("g"),
+                personal = o.optBoolean("pe"),
             )
         }.getOrNull()
 
-        fun of(n: NoteEntity, blocks: List<Block>, orders: Map<String, Double>, owner: String) = NoteShadow(
+        /** What this device just pushed: [prev]'s membership carried over. */
+        fun of(n: NoteEntity, blocks: List<Block>, orders: Map<String, Double>, owner: String, prev: NoteShadow?) = NoteShadow(
             owner, n.title, blocks, orders, n.color, n.categoryId, n.pinned, n.favorite, n.archived, n.trashedAt,
             n.position, n.createdAt, n.updatedAt,
+            members = prev?.members ?: mapOf(owner to Share.ROLE_OWNER),
+            people = prev?.people.orEmpty(),
+            by = prev?.by.orEmpty(),
+            personal = prev?.personal ?: false,
         )
 
-        /** Reads a `notes/{id}` document; null if it isn't one of ours yet (half-written). */
-        fun of(d: DocumentSnapshot): NoteShadow? {
+        /** Reads a `notes/{id}` document as [me] sees it; null if it isn't one of ours yet (half-written). */
+        fun of(d: DocumentSnapshot, me: String): NoteShadow? {
             val owner = d.getString("owner") ?: return null
             @Suppress("UNCHECKED_CAST")
             val raw = (d.get("blocks") as? Map<String, Any?>).orEmpty()
+            val by = HashMap<String, String>()
             val list = raw.mapNotNull { (id, v) ->
                 val m = v as? Map<*, *> ?: return@mapNotNull null
+                (m["by"] as? String)?.let { by[id] = it }
                 val o = (m["o"] as? Number)?.toDouble() ?: 0.0
                 val spans = (m["spans"] as? List<*>).orEmpty().mapNotNull { sp ->
                     val x = sp as? Map<*, *> ?: return@mapNotNull null
@@ -500,20 +605,35 @@ data class NoteShadow(
                     m["text"] as? String ?: "", m["done"] as? Boolean ?: false, (m["indent"] as? Number)?.toInt() ?: 0, spans, extra,
                 ))
             }.sortedWith(compareBy({ it.second }, { it.first }))
+            val mine = owner == me
+            @Suppress("UNCHECKED_CAST")
+            val my = if (mine) null else ((d.get("u") as? Map<String, Any?>)?.get(me) as? Map<String, Any?>)
+            fun <T> pick(key: String, top: () -> T?, def: T): T = if (mine) top() ?: def else (my?.get(key) as? T) ?: def
+            val members = (d.get("members") as? Map<*, *>)?.entries?.mapNotNull { (k, v) -> (k as? String)?.let { it to (v as? String ?: Share.ROLE_VIEWER) } }?.toMap().orEmpty()
+            val people = (d.get("people") as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+                val m = v as? Map<*, *> ?: return@mapNotNull null
+                (k as? String)?.let { it to Person(m["n"] as? String ?: "", (m["p"] as? String)?.ifEmpty { null }) }
+            }?.toMap().orEmpty()
+            val topTrash = d.getLong("trashedAt")
             return NoteShadow(
                 owner = owner,
                 title = d.getString("title").orEmpty(),
                 blocks = list.map { it.third },
                 orders = list.associate { it.first to it.second },
                 color = d.getString("color") ?: "Butter",
-                categoryId = d.getString("categoryId").orEmpty(),
-                pinned = d.getBoolean("pinned") ?: false,
-                favorite = d.getBoolean("favorite") ?: false,
-                archived = d.getBoolean("archived") ?: false,
-                trashedAt = d.getLong("trashedAt"),
-                position = d.getDouble("position") ?: 0.0,
+                categoryId = pick("categoryId", { d.getString("categoryId") }, ""),
+                pinned = pick("pinned", { d.getBoolean("pinned") }, false),
+                favorite = pick("favorite", { d.getBoolean("favorite") }, false),
+                archived = pick("archived", { d.getBoolean("archived") }, false),
+                trashedAt = if (mine) topTrash else (my?.get("trashedAt") as? Number)?.toLong(),
+                position = if (mine) d.getDouble("position") ?: 0.0 else (my?.get("position") as? Number)?.toDouble() ?: 0.0,
                 createdAt = d.getLong("createdAt") ?: 0L,
                 updatedAt = d.getLong("updatedAt") ?: 0L,
+                members = members.ifEmpty { mapOf(owner to Share.ROLE_OWNER) },
+                people = people,
+                by = by,
+                gone = !mine && topTrash != null,
+                personal = my != null,
             ).also { it.id = d.id }
         }
     }

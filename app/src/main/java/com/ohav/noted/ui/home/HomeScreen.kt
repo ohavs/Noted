@@ -1,5 +1,7 @@
 package com.ohav.noted.ui.home
 
+import com.ohav.noted.data.shareInfo
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollable
@@ -130,7 +132,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val notesOrNull by app.notes.notes.collectAsStateWithLifecycle(initialValue = null)
     val dbCats by app.notes.categories.collectAsStateWithLifecycle(initialValue = emptyList())
     val update by app.updater.state.collectAsState()
-    val notes = notesOrNull.orEmpty()
+    // a note shared with me shows here only once I've placed it in one of my categories
+    val notes = remember(notesOrNull) { notesOrNull.orEmpty().filter { it.categoryId.isNotEmpty() } }
     val tree = remember(dbCats) { CatTree(dbCats) }
     // the giant title shows top-level categories; subcategories ride a smaller track under it
     val cats = remember(tree) { listOf(Cat("all", "כל הפתקים")) + tree.tops.map { Cat(it.id, it.name) } }
@@ -287,9 +290,14 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     fun confirmDelete(ids: List<String>) {
         scope.launch {
             val one = ids.singleOrNull()?.let { id -> notes.firstOrNull { it.id == id } }
+            val sharedOut = ids.count { id -> notes.firstOrNull { it.id == id }?.shareInfo?.let { s -> s.shared && !s.withMe } == true }
             val ok = overlays.dialog.confirm(
                 title = if (one != null) "להעביר לסל המחזור?" else "להעביר ${ids.size} פתקים לסל?",
-                text = "אפשר לשחזר אותם מסל המחזור.",
+                text = when {
+                    sharedOut > 0 && one != null -> "הפתק משותף — הוא ייעלם גם אצל המשתתפים. שחזור מהסל מחזיר אותו לכולם."
+                    sharedOut > 0 -> "$sharedOut מהם משותפים — הם ייעלמו גם אצל המשתתפים. שחזור מהסל מחזיר אותם לכולם."
+                    else -> "אפשר לשחזר אותם מסל המחזור."
+                },
                 icon = Ph.Trash, danger = true,
                 note = one?.let { it.title.ifBlank { "ללא כותרת" } to c.note(NoteColor.of(it.color)) },
                 confirm = "העבר לסל", cancel = "השאר",
@@ -327,7 +335,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             "delete" -> settleLift { confirmDelete(ids) }
             "select" -> settleLift { startSelecting(n.id) }
             "remind" -> settleLift { openReminderPicker(app, overlays, toasts, scope, n.id) }
-            "share" -> settleLift { toasts.show("שיתוף מגיע עם החשבון והסנכרון", Ph.ShareNetwork) }
+            "share" -> settleLift { com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id) }
             "lock" -> settleLift { toasts.show("נעילת פתקים מגיעה בהמשך", Ph.Lock) }
         }
     }
@@ -641,6 +649,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         },
                         onLongClick = { startLift(n) },
                         onToggleCheck = { blockId ->
+                            if (n.shareInfo.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@NoteCard }
                             scope.launch {
                                 val r = app.notes.toggleCheck(n.id, blockId) ?: return@launch
                                 if (r.first == r.second && r.second > 0) toasts.show("כל הרשימה סומנה. יפה!", Ph.CheckCircleFill)

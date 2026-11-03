@@ -8,6 +8,7 @@ import com.ohav.noted.reminders.Notifier
 import com.ohav.noted.reminders.Reminders
 import com.ohav.noted.settings.SettingsRepository
 import com.ohav.noted.sync.Account
+import com.ohav.noted.sync.Sharing
 import com.ohav.noted.sync.Sync
 import com.ohav.noted.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,7 @@ class NotedApp : Application() {
     lateinit var places: Places private set
     lateinit var account: Account private set
     lateinit var sync: Sync private set
+    lateinit var sharing: Sharing private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
@@ -38,6 +40,7 @@ class NotedApp : Application() {
         updater = Updater(this)
         account = Account(this, scope)
         sync = Sync(this, db, account, scope).also { it.start() }
+        sharing = Sharing(account, sync, notes)
         scope.launch { notes.seedIfEmpty() }
         scope.launch { updater.check(quiet = true) }
         // anything missed while we weren't running rings now; after that, every change re-arms the alarm
