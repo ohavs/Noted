@@ -80,7 +80,14 @@
   - עלויות: מפות דינמיות + lite ב-Maps SDK for Android — חינם בלי הגבלה. Places (New): autocomplete בתוך session שנגמר ב-details לא מחויב; Place Details Essentials (השדות שלנו) — 10K חינם/חודש. ההגנה האמיתית מפני מפתח שנשלף מה-APK: מכסה יומית ב-Cloud Console (פעולה של הבעלים).
   - פתוח: כרטיס מקום כבלוק בתוך פתק (SPEC: "מפה קטנה + ניווט") — לא מומש.
 - **עורך**: העברה לסל מתוך העורך — הפתק מתקפל, מתכווץ ונעלם בהדרגה (במקום להיעלם בחדות בגודל הכרטיס).
-- **הבא:** שלב 9 (וידג'טים); במקביל הבעלים בודק 7b + 8a+8b+8c במכשירים.
+- **הבא (סשן חדש, לפי הסדר):**
+  1. **לענות לבעלים** (שאל לפני ה-clear): למה ואיך אפשר לשלוף את מפתח Maps מה-APK (APK = zip; המפתח ב-`AndroidManifest`/`BuildConfig` בטקסט — apktool/jadx; ה-SHA-1 של החתימה ציבורי בתוך ה-APK, כך שאפשר לזייף `X-Android-Package/Cert` בקריאות REST). מפות ב-Maps SDK חינם → הסיכון הוא רק Places.
+  2. **תיקון השליפה**: Places דרך Cloud Function (Firebase Functions, Blaze קיים) — מפתח שרת נפרד ב-Secret Manager/env, רק למשתמש מחובר (Firebase Auth ID token), מגבלה לכל uid ביום ב-Firestore, ו-App Check (Play Integrity — עובד רק להתקנה מהחנות; ל-APK מ-GitHub — debug/בלי אכיפה עד החנות). מפתח ה-APK מוגבל אחר כך ל-Maps SDK for Android בלבד (להסיר ממנו Places). Geocoder נשאר נפילה.
+  3. **הגנה מלאה (הבעלים ביקש)**: מתג כיבוי — תקציב → Pub/Sub topic → Function שמכבה את `places.googleapis.com` (Service Usage API, לא מנתק billing כדי לא להפיל את Firebase). ידני לבעלים: חיבור התקציב ל-topic + הרשאת `serviceusage.serviceUsageAdmin` ל-SA של הפונקציה — הכל בהודעה אחת.
+  4. **אימות שהבעלים עשה הכל**: הבעלים רוצה שאבדוק בעצמי. דרך: Secret `GCP_SA_KEY` (SA עם Viewer + Service Usage Viewer + Billing viewer) → workflow `gcloud-check` שמדפיס מגבלות API של המפתח, מכסות Places, תקציב. לבקש את ה-SA באותה הודעה מרוכזת עם 3.
+  5. אחר כך שלב 9 (וידג'טים): החלטות ברירת מחדל אם הבעלים לא ענה — ראשי גדול קודם, מראה כמו כרטיסי האפליקציה (צבע פתק, squircle, פונט), בהיר/כהה לפי הגדרת האפליקציה.
+  - במקביל הבעלים בודק 7b + 8a+8b+8c במכשירים.
+- **מכסות Places (New) שהבעלים הגדיר ב-2026-11-03** (אין מכסה יומית ב-New, רק לדקה): `AutocompletePlacesRequest per minute` 30, `... per minute per user` 30, `GetPlaceRequest per minute` 10, `... per minute per user` 10. פרויקט `noted-ce451`.
 - (ל-token בסשן אין הרשאת actions:write → הרצה מחדש של CI רק דרך push.)
 
 ## החלטות מרכזיות (פירוט ב-SPEC)
