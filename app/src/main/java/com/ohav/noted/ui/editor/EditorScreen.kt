@@ -357,6 +357,12 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         if (r.open) nav.p.animateTo(1f, Motion.glide(), initialVelocity = v) else close(v)
     }
 
+    fun share() {
+        keyboard?.hide()
+        focus.clearFocus()
+        com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id, onLeft = { nav.toCard = false; close() })
+    }
+
     fun menu() {
         keyboard?.hide()
         overlays.sheet.show("הפתק") {
@@ -381,6 +387,10 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                     )
                 }
             }
+            SheetRow(Ph.UsersThree, "שיתוף", end = live?.shareInfo?.takeIf { it.shared }?.let { "${it.members.size} משתתפים" }) {
+                overlays.sheet.close()
+                scope.launch { delay(180); share() }
+            }
             SheetRow(Ph.ArrowCounterClockwise, "ביטול כל השינויים מהפתיחה") {
                 overlays.sheet.close()
                 if (!state.changedSinceOpen) { toasts.show("אין שינויים לבטל", Ph.Info); return@SheetRow }
@@ -404,12 +414,6 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                 }
             }
         }
-    }
-
-    fun share() {
-        keyboard?.hide()
-        focus.clearFocus()
-        com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id, onLeft = { nav.toCard = false; close() })
     }
 
     BackHandler { close() }
