@@ -15,6 +15,10 @@ import com.ohav.noted.ui.reminders.openReminderPicker
 import com.ohav.noted.design.SheetRow
 import kotlin.math.roundToInt
 import androidx.compose.animation.AnimatedContent
+import com.ohav.noted.data.CatTree
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -109,8 +113,6 @@ import com.ohav.noted.ui.common.EmptyArt
 import com.ohav.noted.ui.common.EmptyState
 import com.ohav.noted.update.Updater
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.exp
@@ -129,7 +131,12 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val dbCats by app.notes.categories.collectAsStateWithLifecycle(initialValue = emptyList())
     val update by app.updater.state.collectAsState()
     val notes = notesOrNull.orEmpty()
-    val cats = remember(dbCats) { listOf(Cat("all", "כל הפתקים")) + dbCats.map { Cat(it.id, it.name) } }
+    val tree = remember(dbCats) { CatTree(dbCats) }
+    // the giant title shows top-level categories; subcategories ride a smaller track under it
+    val cats = remember(tree) { listOf(Cat("all", "כל הפתקים")) + tree.tops.map { Cat(it.id, it.name) } }
+    // the stack swipe walks this: each category, then its subcategories, then the next one
+    val flat = remember(tree) { listOf("all") + tree.flat.map { it.id } }
+    val names = remember(dbCats) { dbCats.associate { it.id to it.name } + ("all" to "כל הפתקים") }
 
     var cat by rememberSaveable { mutableStateOf("all") }
     var shownCat by rememberSaveable { mutableStateOf("all") }
@@ -137,7 +144,9 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val stack = remember { StackState() }
-    val catIndex = cats.indexOfFirst { it.id == cat }.coerceAtLeast(0)
+    val topId = if (cat == "all") "all" else tree.topOf(cat)
+    val catIndex = cats.indexOfFirst { it.id == topId }.coerceAtLeast(0)
+    val flatIndex = flat.indexOf(cat).coerceAtLeast(0)
 
     val overlays = LocalOverlays.current
     val catActions = rememberCategoryActions(app, overlays, toasts)
@@ -148,14 +157,14 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     val lift = remember { LiftState() }
     var selecting by rememberSaveable { mutableStateOf(false) }
     var selected by remember { mutableStateOf(setOf<String>()) }
-    val baseVisible = remember(notes, shownCat, searching, query) {
+    val baseVisible = remember(notes, shownCat, searching, query, tree) {
         when {
             searching -> query.trim().let { q ->
                 if (q.isEmpty()) emptyList()
                 else notes.filter { n -> n.title.contains(q, true) || Blocks.parse(n.blocks).any { it.text.contains(q, true) } }
             }
             shownCat == "all" -> notes
-            else -> notes.filter { it.categoryId == shownCat }
+            else -> tree.family(shownCat).let { fam -> notes.filter { it.categoryId in fam } }
         }
     }
     val visible = lift.order?.let { ord ->
@@ -178,18 +187,21 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     }
     if (expanded != null && visible.none { it.id == expanded }) expanded = null
 
-    fun goCat(i: Int) {
-        cat = cats[i.coerceIn(0, cats.lastIndex)].id
+    /** Stack swipe: the next / previous stop along categories and their subcategories. */
+    fun goFlat(i: Int) {
+        cat = flat[i.coerceIn(0, flat.lastIndex)]
     }
 
-    /** Long press on the giant title: this category's actions, or new / manage for all notes. */
-    fun catMenu(i: Int) {
-        val id = cats.getOrNull(i)?.id ?: return
+    /** Long press on a title: this category's actions, or new / manage for all notes. */
+    fun catMenu(id: String) {
         haptics.medium()
         val k = dbCats.firstOrNull { it.id == id }
         val count = if (k == null) notes.size else notes.count { it.categoryId == k.id }
         overlays.sheet.show(k?.name ?: "כל הפתקים") {
             if (k != null) SheetRow(Ph.PencilSimple, "שם ואייקון") { catActions.edit(k, dbCats, count) }
+            if (k != null && tree.isTop(k.id)) SheetRow(Ph.Plus, "תת-קטגוריה חדשה") {
+                catActions.create(dbCats, parent = k.id) { made -> cat = made.id }
+            }
             SheetRow(Ph.FolderSimplePlus, "קטגוריה חדשה") {
                 catActions.create(dbCats) { made -> cat = made.id }
             }
@@ -243,8 +255,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
 
     fun openMove(ids: List<String>) {
         overlays.sheet.show(if (ids.size > 1) "להעביר ${ids.size} פתקים ל…" else "להעביר ל…") {
-            dbCats.forEach { k ->
-                SheetRow(CatIcons.of(k.icon), k.name, end = "${notes.count { it.categoryId == k.id }}") {
+            tree.flat.forEach { k ->
+                SheetRow(CatIcons.of(k.icon), k.name, end = "${notes.count { it.categoryId == k.id }}", inset = k.id in tree.parentOf) {
                     scope.launch { app.notes.move(ids, k.id) }
                     overlays.sheet.close()
                     if (selecting) stopSelecting()
@@ -389,8 +401,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         }
         haptics.tick()
         expanded = null
-        val from = cats.indexOfFirst { it.id == shownCat }
-        stack.exitDir = if (catIndex > from) 1f else -1f
+        val from = flat.indexOf(shownCat)
+        stack.exitDir = if (flatIndex > from) 1f else -1f
         val leaving = launch { stack.exit.animateTo(1f, Motion.glide()) }
         delay(200)
         leaving.cancel()
@@ -486,7 +498,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     fun addNote() {
         val draft = notes.firstOrNull { it.isBlankDraft(blocksOf[it.id].orEmpty()) }
         if (draft != null) {
-            if (shownCat != "all" && draft.categoryId != shownCat) cat = "all"
+            if (shownCat != "all" && draft.categoryId !in tree.family(shownCat)) cat = "all"
             focusNew = draft.id
             haptics.light()
             toasts.show("הפתק החדש עוד מחכה לך", Ph.NotePencil)
@@ -494,7 +506,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             return
         }
         scope.launch {
-            val n = newNote(app, if (cat == "all") dbCats.firstOrNull()?.id ?: "home" else cat, notes.size)
+            val n = newNote(app, if (cat == "all") tree.tops.firstOrNull()?.id ?: "home" else cat, notes.size)
             focusNew = n.id
             haptics.confirm()
             chrome.editor.open(n, fabRect, fresh = true)
@@ -554,7 +566,15 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     )
                 }
                 if (!searching) {
-                    CategoryTrack(cats, catIndex, notes, onSelect = ::goCat, onLongPress = ::catMenu)
+                    val counts = remember(notes, tree) {
+                        val direct = notes.groupingBy { it.categoryId }.eachCount()
+                        direct + tree.children.mapValues { (top, kids) -> (direct[top] ?: 0) + kids.sumOf { direct[it.id] ?: 0 } } + ("all" to notes.size)
+                    }
+                    CategoryTrack(
+                        cats, catIndex, { counts[it] ?: 0 },
+                        onSelect = { cat = cats[it].id }, onLongPress = { catMenu(cats[it].id) },
+                    )
+                    SubTrack(tree, topId, cat, { counts[it] ?: 0 }, onSelect = { cat = it }, onLongPress = ::catMenu)
                     CatSub(visible, blocksOf)
                 } else {
                     Spacer(Modifier.height(10.dp))
@@ -581,7 +601,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) { detectTapGestures { expanded = null } }
-                        .pointerInput(searching, selecting, catIndex, cats.size) {
+                        .pointerInput(searching, selecting, flatIndex, flat.size) {
                             if (searching || selecting) return@pointerInput
                             val max = 90.dp.toPx()
                             var total = 0f
@@ -590,8 +610,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                                 onDragEnd = {
                                     scope.launch { stack.swipe.animateTo(0f, Motion.touch()) }
                                     // RTL: the next category sits to the left, so dragging right brings it in
-                                    if (total > 60.dp.toPx()) goCat(catIndex + 1)
-                                    else if (total < -60.dp.toPx()) goCat(catIndex - 1)
+                                    if (total > 60.dp.toPx()) goFlat(flatIndex + 1)
+                                    else if (total < -60.dp.toPx()) goFlat(flatIndex - 1)
                                 },
                                 onDragCancel = { scope.launch { stack.swipe.animateTo(0f, Motion.touch()) } },
                             ) { ch, dx ->
@@ -646,7 +666,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         searching -> EmptyState(EmptyArt.Search, "לא מצאנו", "אין פתק שמכיל את המילים האלה. אולי בכתיב אחר?")
                         else -> EmptyState(
                             EmptyArt.Stack, "ריק כאן, בינתיים",
-                            "פתק חדש ב״${cats.getOrNull(catIndex)?.name ?: ""}״ יופיע בראש הערימה.",
+                            "פתק חדש ב״${names[cat] ?: ""}״ יופיע בראש הערימה.",
                             Modifier.padding(top = 10.dp),
                         ) { Btn("פתק חדש", icon = Ph.Plus) { addNote() } }
                     }
@@ -844,10 +864,18 @@ private fun SearchBar(query: String, onQuery: (String) -> Unit, onCancel: () -> 
 
 /**
  * The giant category title: a snapping horizontal track. The item nearest the start edge is
- * "current" (ink, with its count); the category switches once the track settles there.
+ * "current" (ink, with its count); the category switches once a drag of the track settles
+ * there. With [small] it's the subcategory track under the title — same behaviour, smaller type.
  */
 @Composable
-private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, onSelect: (Int) -> Unit, onLongPress: (Int) -> Unit) {
+private fun CategoryTrack(
+    cats: List<Cat>,
+    index: Int,
+    count: (String) -> Int,
+    small: Boolean = false,
+    onSelect: (Int) -> Unit,
+    onLongPress: (Int) -> Unit,
+) {
     val c = Noted.colors
     val t = Noted.type
     val state = rememberLazyListState(initialFirstVisibleItemIndex = index)
@@ -858,41 +886,47 @@ private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, 
     val select by rememberUpdatedState(onSelect)
     val hold by rememberUpdatedState(onLongPress)
 
+    // Only a drag of the track itself picks a category, and only once the whole gesture is over:
+    // the drag hands over to its snap fling a frame later, and a drag the system takes away
+    // (a mostly vertical swipe) stops without a fling — that one still lands where it shows.
     LaunchedEffect(state) {
-        snapshotFlow { if (state.isScrollInProgress) null else nearestItem(state) }
-            .filterNotNull()
-            .distinctUntilChanged()
-            .collect { if (it != currentIndex) select(it) }
+        var touched = false
+        launch { state.interactionSource.interactions.collect { if (it is DragInteraction.Start) touched = true } }
+        snapshotFlow { state.isScrollInProgress }.collectLatest { busy ->
+            if (busy || !touched) return@collectLatest
+            withFrameNanos { }
+            withFrameNanos { }
+            if (state.isScrollInProgress) return@collectLatest
+            touched = false
+            val n = nearestItem(state)
+            if (n != currentIndex) select(n) else state.alignTo(n)
+        }
     }
-    LaunchedEffect(index) {
-        if (nearestItem(state) == index && !state.isScrollInProgress) return@LaunchedEffect
-        val item = state.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
-        if (item != null) state.animateScrollBy(item.offset.toFloat(), Motion.glide()) else state.scrollToItem(index)
-    }
+    LaunchedEffect(index) { state.alignTo(index) }
 
     LazyRow(
         state = state,
         flingBehavior = fling,
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(26.dp),
+        contentPadding = if (small) PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 4.dp)
+        else PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (small) 20.dp else 26.dp),
     ) {
         itemsIndexed(cats, key = { _, it -> it.id }) { i, cat ->
             val on = i == nearest
             val col by animateColorAsState(if (on) c.ink else c.ink3, Motion.glide(), label = "cat")
             val show by animateFloatAsState(if (on) 1f else 0f, Motion.glide(), label = "count")
-            val count = if (cat.id == "all") notes.size else notes.count { it.categoryId == cat.id }
             Row(
                 Modifier
                     .then(if (i == cats.lastIndex) Modifier.padding(end = tail) else Modifier)
                     .pointerInput(i) { detectTapGestures(onLongPress = { hold(i) }) { select(i) } },
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (small) 4.dp else 6.dp),
             ) {
-                Text(cat.name, style = t.cat, color = col, maxLines = 1, softWrap = false)
+                Text(cat.name, style = if (small) t.subCat else t.cat, color = col, maxLines = 1, softWrap = false)
                 Text(
-                    "$count", style = t.label.copy(fontSize = 14.sp), color = c.accent,
+                    "${count(cat.id)}", style = t.label.copy(fontSize = if (small) 12.sp else 14.sp), color = c.accent,
                     modifier = Modifier
-                        .padding(top = 10.dp)
-                        .widthIn(min = 22.dp)
+                        .padding(top = if (small) 4.dp else 10.dp)
+                        .widthIn(min = if (small) 16.dp else 22.dp)
                         .graphicsLayer { alpha = show; translationY = (1f - show) * 4.dp.toPx() },
                 )
             }
@@ -900,8 +934,40 @@ private fun CategoryTrack(cats: List<Cat>, index: Int, notes: List<NoteEntity>, 
     }
 }
 
-private fun nearestItem(state: LazyListState): Int =
-    state.layoutInfo.visibleItemsInfo.minByOrNull { abs(it.offset) }?.index ?: state.firstVisibleItemIndex
+/** Brings item [i] to the start edge (glides there if it's on screen). */
+private suspend fun LazyListState.alignTo(i: Int) {
+    if (isScrollInProgress) return
+    val item = layoutInfo.visibleItemsInfo.firstOrNull { it.index == i }
+    if (item == null) scrollToItem(i)
+    else if (abs(item.offset) > 1) animateScrollBy(item.offset.toFloat(), Motion.glide())
+}
+
+/**
+ * Subcategories of the current category, under the giant title: "הכל" (the category with all
+ * of them), then each one. Absent — not even its height — for a category without any.
+ */
+@Composable
+private fun SubTrack(tree: CatTree, top: String, current: String, count: (String) -> Int, onSelect: (String) -> Unit, onLongPress: (String) -> Unit) {
+    AnimatedContent(
+        targetState = top,
+        transitionSpec = {
+            (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()))
+                .using(SizeTransform(clip = false) { _, _ -> Motion.glide() })
+        },
+        label = "subTrack",
+    ) { t ->
+        val kids = tree.children[t].orEmpty()
+        if (kids.isEmpty()) Spacer(Modifier.fillMaxWidth().height(0.dp))
+        else {
+            val items = remember(kids, t) { listOf(Cat(t, "הכל")) + kids.map { Cat(it.id, it.name) } }
+            val index = items.indexOfFirst { it.id == current }.coerceAtLeast(0)
+            CategoryTrack(
+                items, index, count, small = true,
+                onSelect = { onSelect(items[it].id) }, onLongPress = { onLongPress(items[it].id) },
+            )
+        }
+    }
+}
 
 /** "6 פתקים · 3 פריטים פתוחים · 1 תזכורות" under the title. */
 @Composable

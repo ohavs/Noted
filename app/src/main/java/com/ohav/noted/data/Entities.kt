@@ -12,6 +12,8 @@ data class CategoryEntity(
     val position: Int,
     /** Key into the category icon set (see ui/categories). */
     @ColumnInfo(defaultValue = "folder") val icon: String = "folder",
+    /** The category this one sits under ("" = top level). One level only — see [CatTree]. */
+    @ColumnInfo(defaultValue = "") val parent: String = "",
 )
 
 /**

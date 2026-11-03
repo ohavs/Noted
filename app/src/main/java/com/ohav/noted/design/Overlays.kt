@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 
@@ -181,14 +182,15 @@ fun SheetHost(state: SheetState) {
 
 /** A list row inside a sheet — icon, label, trailing hint, hairline under it. */
 @Composable
-fun SheetRow(icon: ImageVector, label: String, end: String? = null, danger: Boolean = false, last: Boolean = false, onClick: () -> Unit) {
+fun SheetRow(icon: ImageVector, label: String, end: String? = null, danger: Boolean = false, last: Boolean = false, inset: Boolean = false, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val ink = if (danger) c.danger else c.ink
     Column(Modifier.fillMaxWidth().press(scale = .97f, onClick = onClick)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(icon, null, Modifier.size(22.dp), tint = if (danger) c.danger else c.ink2)
-            Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = ink, modifier = Modifier.weight(1f))
+        // inset = a subcategory under the row above it
+        Row(Modifier.fillMaxWidth().padding(start = if (inset) 30.dp else 0.dp).padding(vertical = if (inset) 12.dp else 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Icon(icon, null, Modifier.size(if (inset) 19.dp else 22.dp), tint = if (danger) c.danger else c.ink2)
+            Text(label, style = if (inset) t.body.copy(fontSize = 16.sp, fontWeight = FontWeight.Medium) else t.body.copy(fontWeight = FontWeight.SemiBold), color = ink, modifier = Modifier.weight(1f))
             if (end != null) Text(end, style = t.label.copy(fontWeight = FontWeight.SemiBold), color = c.ink3)
         }
         if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))

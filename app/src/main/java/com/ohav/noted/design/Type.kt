@@ -64,6 +64,7 @@ class NotedType(val pair: FontPair) {
 
     // home / stack (sizes from the prototype CSS)
     val cat = display(58f, 1.05f)
+    val subCat = display(27f, 1.1f)
     val cardTitle = display(25f, 1.15f)
     val emptyTitle = display(26f, 1.15f)
     val barTitle = display(24f, 1.1f)

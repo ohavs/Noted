@@ -2,6 +2,7 @@ package com.ohav.noted.ui.categories
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -60,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ohav.noted.NotedApp
+import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.NotesRepository
 import com.ohav.noted.design.Btn
@@ -83,6 +85,7 @@ import com.ohav.noted.design.softShadow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /** The icons a category can wear. Keys are stored in the database; never rename one. */
 object CatIcons {
@@ -113,17 +116,25 @@ class CategoryActions(
     private val haptics: Haptics,
     private val scope: CoroutineScope,
 ) {
-    fun create(all: List<CategoryEntity>, onCreated: (CategoryEntity) -> Unit = {}) {
-        overlays.sheet.show("קטגוריה חדשה") {
+    /** Names already used next to a category under [parent] (siblings may not repeat; cousins may). */
+    private fun taken(all: List<CategoryEntity>, parent: String, except: String? = null): Set<String> {
+        val tree = CatTree(all)
+        return all.filter { it.id != except && (tree.parentOf[it.id] ?: "") == parent }.map { it.name.trim() }.toSet()
+    }
+
+    /** New category; with [parent], a subcategory under it. */
+    fun create(all: List<CategoryEntity>, parent: String = "", onCreated: (CategoryEntity) -> Unit = {}) {
+        val under = all.firstOrNull { it.id == parent }
+        overlays.sheet.show(if (under == null) "קטגוריה חדשה" else "תת-קטגוריה ב״${under.name}״") {
             CategoryForm(
-                name = "", icon = "folder", fresh = true,
-                taken = all.map { it.name.trim() }.toSet(), confirm = "יצירה",
+                name = "", icon = under?.icon ?: "folder", fresh = true,
+                taken = taken(all, under?.id ?: ""), confirm = "יצירה",
             ) { name, icon ->
                 overlays.sheet.close()
                 haptics.confirm()
                 scope.launch {
-                    val k = repo.createCategory(name, icon)
-                    toasts.show("״${k.name}״ נוספה", CatIcons.of(icon))
+                    val k = repo.createCategory(name, icon, under?.id ?: "")
+                    toasts.show(if (under == null) "״${k.name}״ נוספה" else "״${k.name}״ נוספה ל״${under.name}״", CatIcons.of(icon))
                     onCreated(k)
                 }
             }
@@ -131,22 +142,54 @@ class CategoryActions(
     }
 
     fun edit(k: CategoryEntity, all: List<CategoryEntity>, count: Int) {
+        val tree = CatTree(all)
+        val parent = tree.parentOf[k.id]
+        val homes = tree.tops.filter { it.id != k.id && it.id != parent }
         overlays.sheet.show("עריכת קטגוריה") {
             CategoryForm(
                 name = k.name, icon = k.icon, fresh = false,
-                taken = all.filter { it.id != k.id }.map { it.name.trim() }.toSet(), confirm = "שמירה",
+                taken = taken(all, parent ?: "", except = k.id), confirm = "שמירה",
             ) { name, icon ->
                 overlays.sheet.close()
                 haptics.light()
                 scope.launch { repo.editCategory(k.id, name, icon) }
             }
             VSpace(6.dp)
+            // a category with subcategories stays on top (one level only)
+            if (!tree.hasChildren(k.id) && homes.isNotEmpty()) {
+                SheetRow(Ph.FolderSimple, if (parent == null) "להכניס לתוך קטגוריה" else "להעביר לקטגוריה אחרת") { place(k, all) }
+            }
+            if (parent != null) SheetRow(Ph.ArrowUp, "להוציא לרמה הראשית") { overlays.sheet.close(); moveTo(k, null) }
             SheetRow(Ph.Trash, "מחיקת הקטגוריה", danger = true, last = true) { delete(k, all, count) }
         }
     }
 
+    /** Pick the top-level category [k] goes under. */
+    fun place(k: CategoryEntity, all: List<CategoryEntity>) {
+        val tree = CatTree(all)
+        val parent = tree.parentOf[k.id]
+        val homes = tree.tops.filter { it.id != k.id && it.id != parent }
+        overlays.sheet.show("להכניס את ״${k.name}״ לתוך…") {
+            homes.forEachIndexed { i, h ->
+                SheetRow(CatIcons.of(h.icon), h.name, last = i == homes.lastIndex) { overlays.sheet.close(); moveTo(k, h) }
+            }
+        }
+    }
+
+    private fun moveTo(k: CategoryEntity, home: CategoryEntity?) {
+        haptics.confirm()
+        scope.launch {
+            repo.moveCategory(k.id, home?.id ?: "")
+            toasts.show(
+                if (home == null) "״${k.name}״ בקטגוריות הראשיות" else "״${k.name}״ עברה לתוך ״${home.name}״",
+                CatIcons.of(k.icon), action = "ביטול", millis = 5000,
+            ) { scope.launch { repo.placeCategory(k.id, k.parent, k.position) } }
+        }
+    }
+
     fun delete(k: CategoryEntity, all: List<CategoryEntity>, count: Int) {
-        val others = all.filter { it.id != k.id }
+        val tree = CatTree(all)
+        val others = tree.flat.filter { it.id != k.id }
         if (others.isEmpty()) {
             overlays.sheet.close()
             haptics.reject()
@@ -171,7 +214,8 @@ class CategoryActions(
                 modifier = Modifier.padding(bottom = 6.dp),
             )
             others.forEach { o ->
-                SheetRow(CatIcons.of(o.icon), "להעביר ל״${o.name}״") { overlays.sheet.close(); remove(k, o) }
+                val inset = o.id in tree.parentOf
+                SheetRow(CatIcons.of(o.icon), if (inset) o.name else "להעביר ל״${o.name}״", inset = inset) { overlays.sheet.close(); remove(k, o) }
             }
             SheetRow(Ph.Trash, if (count == 1) "לסל, יחד עם הקטגוריה" else "כולם לסל, יחד עם הקטגוריה", danger = true, last = true) {
                 overlays.sheet.close()
@@ -191,7 +235,11 @@ class CategoryActions(
         haptics.confirm()
         scope.launch {
             val r = repo.deleteCategory(k, moveTo?.id)
-            val msg = if (moveTo != null && r.noteIds.isNotEmpty()) "״${k.name}״ נמחקה, הפתקים ב״${moveTo.name}״" else "״${k.name}״ נמחקה"
+            val msg = when {
+                moveTo != null && r.noteIds.isNotEmpty() -> "״${k.name}״ נמחקה, הפתקים ב״${moveTo.name}״"
+                r.children.isNotEmpty() -> "״${k.name}״ נמחקה, תתי-הקטגוריות עלו לרמה הראשית"
+                else -> "״${k.name}״ נמחקה"
+            }
             toasts.show(msg, Ph.Trash, action = "ביטול", millis = 5000) { scope.launch { repo.undoDeleteCategory(r) } }
         }
     }
@@ -313,8 +361,10 @@ private fun IconGrid(selected: String, onPick: (String) -> Unit) {
 }
 
 /**
- * Settings → categories: the order here is the order of the giant title on home. Drag a row by
- * its handle to reorder (rows make room on the glide spring), tap it to rename or change icon.
+ * Settings → categories: the order here is the order of the giant title on home, subcategories
+ * inset under their category. Drag a row by its handle to reorder (rows make room on the glide
+ * spring); hold it over another category to drop it inside. Tap a row to rename / change icon;
+ * + on a top-level row adds a subcategory.
  */
 @Composable
 fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBack: () -> Unit) {
@@ -327,21 +377,40 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
     val notes by app.notes.notes.collectAsStateWithLifecycle(initialValue = emptyList())
     val actions = rememberCategoryActions(app, overlays, toasts)
     val counts = remember(notes) { notes.groupingBy { it.categoryId }.eachCount() }
+    val tree = remember(cats) { CatTree(cats) }
+    val rows = remember(tree) { tree.flat.map { it.id to (tree.parentOf[it.id] ?: "") } }
+    val parents = remember(rows) { rows.toMap() }
 
-    // local order while dragging, dropped once the database has caught up
+    // while dragging: local order (the dragged parent's children folded into it) and the top it
+    // hovers over; after the drop: the arrangement, until the database has caught up
     var order by remember { mutableStateOf<List<String>?>(null) }
+    var pending by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
     var dragId by remember { mutableStateOf<String?>(null) }
+    var into by remember { mutableStateOf<String?>(null) }
+    var hidden by remember { mutableStateOf<List<String>>(emptyList()) }
     val dragDy = remember { mutableFloatStateOf(0f) }
     val settle = remember { Animatable(0f) }
     val rowH = with(density) { (RowHeight + RowGap).toPx() }
     val byId = cats.associateBy { it.id }
-    val shown = order?.mapNotNull { byId[it] } ?: cats
+    val shownIds = order ?: pending?.map { it.first } ?: rows.map { it.first }
+    val shown = shownIds.mapNotNull { byId[it] }
+    fun nested(id: String): Boolean {
+        val o = order
+        if (id == dragId && o != null) return into != null || CatTree.predict(o, id, parents, hidden.isNotEmpty()).isNotEmpty()
+        return (pending?.firstOrNull { it.first == id }?.second ?: parents[id]).orEmpty().isNotEmpty()
+    }
     // the drag handlers outlive compositions: read the lists through these
-    val shownNow by rememberUpdatedState(shown)
+    val shownNow by rememberUpdatedState(shownIds)
     val catsNow by rememberUpdatedState(cats)
-    LaunchedEffect(cats) {
-        val o = order ?: return@LaunchedEffect
-        if (dragId == null && cats.map { it.id } == o) order = null
+    val rowsNow by rememberUpdatedState(rows)
+    val parentsNow by rememberUpdatedState(parents)
+    val treeNow by rememberUpdatedState(tree)
+    LaunchedEffect(rows) {
+        if (pending == rows) pending = null
+    }
+    // a write that never shows up (or was merged differently by sync) must not pin the list
+    LaunchedEffect(pending) {
+        if (pending != null) { delay(2500); pending = null }
     }
 
     LazyColumn(
@@ -356,7 +425,7 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
                 }
                 Text("קטגוריות", style = t.hero, color = c.ink, modifier = Modifier.padding(horizontal = 20.dp))
                 Text(
-                    "הסדר כאן הוא הסדר בכותרת של הבית. גוררים בידית כדי לסדר, נוגעים כדי לשנות שם או אייקון.",
+                    "הסדר כאן הוא הסדר בכותרת של הבית. גוררים בידית כדי לסדר, או משהים מעל קטגוריה כדי להכניס לתוכה. + מוסיף תת-קטגוריה.",
                     style = t.sub, color = c.ink2,
                     modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
                 )
@@ -365,48 +434,77 @@ fun CategoriesScreen(app: NotedApp, toasts: ToastState, overlays: Overlays, onBa
         items(shown, key = { it.id }) { k ->
             val dragging = dragId == k.id
             val up = animateFloatAsState(if (dragging) 1f else 0f, Motion.glide(), label = "catLift")
+            // over a drop target the dragged row tucks in a little
+            val tuck by animateFloatAsState(if (dragging && into != null) 1f else 0f, Motion.touch(), label = "catTuck")
+            val sub = nested(k.id)
+            val isTop = !sub && !dragging
+            val kids = if (dragging) hidden.size else treeNow.children[k.id]?.size ?: 0
+            val total = (counts[k.id] ?: 0) + (treeNow.children[k.id]?.sumOf { counts[it.id] ?: 0 } ?: 0)
             CategoryRow(
-                k, counts[k.id] ?: 0,
+                k, total, kids, sub = sub, target = into == k.id,
                 modifier = Modifier
                     .then(if (dragging) Modifier else Modifier.animateItem(fadeInSpec = Motion.glide(), placementSpec = Motion.glide(IntOffset(1, 1)), fadeOutSpec = Motion.glide()))
                     .zIndex(if (dragging || up.value > .01f) 1f else 0f)
                     .graphicsLayer {
                         translationY = if (dragging) dragDy.floatValue else 0f
-                        val s = 1f + .03f * up.value.coerceIn(0f, 1f)
+                        val s = 1f + .03f * up.value.coerceIn(0f, 1f) - .06f * tuck
                         scaleX = s; scaleY = s
                     }
                     .softShadow { ShadowFrame(Shadows.float(c.isDark).fade(up.value * .8f), 18.dp, c.surface) },
                 onClick = { actions.edit(k, cats, counts[k.id] ?: 0) },
+                onAdd = if (isTop && tree.isTop(k.id)) ({ actions.create(cats, parent = k.id) }) else null,
                 handle = Modifier.pointerInput(k.id) {
                     detectDragGestures(
                         onDragStart = {
-                            order = shownNow.map { it.id }
+                            val folded = treeNow.children[k.id].orEmpty().map { it.id }
+                            hidden = folded
+                            order = shownNow.filter { it !in folded }
+                            pending = null
+                            into = null
                             dragId = k.id
                             dragDy.floatValue = 0f
                             haptics.medium()
                         },
                         onDragEnd = {
                             val o = order
+                            val target = into
+                            val result = o?.let { CatTree.arrange(it, k.id, target, parentsNow, hidden) }
                             scope.launch {
                                 settle.snapTo(dragDy.floatValue)
                                 settle.animateTo(0f, Motion.glide()) { dragDy.floatValue = value }
+                                if (result != null && result != rowsNow) {
+                                    pending = result
+                                    app.notes.arrangeCategories(result, catsNow)
+                                }
+                                if (target != null) haptics.confirm() else haptics.light()
+                                order = null
+                                into = null
+                                hidden = emptyList()
                                 dragId = null
-                                haptics.light()
-                                val now = catsNow
-                                if (o != null && o != now.map { it.id }) app.notes.reorderCategories(o, now) else order = null
                             }
                         },
-                        onDragCancel = { dragId = null; dragDy.floatValue = 0f; order = null },
+                        onDragCancel = { dragId = null; dragDy.floatValue = 0f; order = null; into = null; hidden = emptyList() },
                     ) { ch, d ->
                         ch.consume()
                         val o = order?.toMutableList() ?: return@detectDragGestures
                         dragDy.floatValue += d.y
                         val i = o.indexOf(k.id)
-                        // swap once the row passes half of its neighbour; the finger keeps it in place
-                        if (dragDy.floatValue > rowH / 2 && i < o.lastIndex) {
-                            o.add(i + 1, o.removeAt(i)); order = o; dragDy.floatValue -= rowH; haptics.tick()
-                        } else if (dragDy.floatValue < -rowH / 2 && i > 0) {
-                            o.add(i - 1, o.removeAt(i)); order = o; dragDy.floatValue += rowH; haptics.tick()
+                        val f = dragDy.floatValue / rowH
+                        val next = when {
+                            f > 0f -> o.getOrNull(i + 1)
+                            f < 0f -> o.getOrNull(i - 1)
+                            else -> null
+                        }
+                        // a top-level neighbour can take the row in: hovering over its middle aims there,
+                        // so the swap waits a bit longer; a category with children never nests
+                        val nestable = next != null && hidden.isEmpty() && parentsNow[next].isNullOrEmpty()
+                        val aim = if (nestable && abs(f) >= .35f && abs(f) < .7f) next else null
+                        if (aim != into) { into = aim; if (aim != null) haptics.tick() }
+                        val swapAt = if (nestable) .7f else .5f
+                        if (f > swapAt && i < o.lastIndex) {
+                            o.add(i + 1, o.removeAt(i)); order = o; dragDy.floatValue -= rowH; into = null; haptics.tick()
+                        } else if (f < -swapAt && i > 0) {
+                            o.add(i - 1, o.removeAt(i)); order = o; dragDy.floatValue += rowH; into = null; haptics.tick()
                         }
                     }
                 },
@@ -425,34 +523,57 @@ private val RowHeight = 72.dp
 private val RowGap = 8.dp
 
 @Composable
-private fun CategoryRow(k: CategoryEntity, count: Int, modifier: Modifier, onClick: () -> Unit, handle: Modifier) {
+private fun CategoryRow(
+    k: CategoryEntity,
+    count: Int,
+    kids: Int,
+    sub: Boolean,
+    target: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+    onAdd: (() -> Unit)?,
+    handle: Modifier,
+) {
     val c = Noted.colors
     val t = Noted.type
+    val inset by animateDpAsState(if (sub) 30.dp else 0.dp, Motion.glide(), label = "catInset")
+    val hot by animateFloatAsState(if (target) 1f else 0f, Motion.glide(), label = "catHot")
+    val bg by animateColorAsState(if (target) c.accentSoft else c.surface, Motion.glide(), label = "catBg")
     Row(
         Modifier
             .padding(horizontal = 16.dp)
+            .padding(start = inset)
             .then(modifier)
             .fillMaxWidth()
             .height(RowHeight)
             .clip(Shapes.md)
-            .background(c.surface)
+            .background(bg)
+            .drawBehind {
+                if (hot > .01f) drawOutline(Shapes.md.createOutline(size, layoutDirection, this), c.accent.copy(alpha = hot), style = Stroke(2.5.dp.toPx()))
+            }
             .press(scale = .98f, onClick = onClick)
             .padding(start = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(48.dp).clip(Squircle(15.dp)).background(c.accentSoft), contentAlignment = Alignment.Center) {
-            Icon(CatIcons.of(k.icon), null, Modifier.size(24.dp), tint = c.accent)
+        val tile = if (sub) 40.dp else 48.dp
+        Box(Modifier.size(tile).clip(Squircle(if (sub) 13.dp else 15.dp)).background(if (sub) c.bg else c.accentSoft), contentAlignment = Alignment.Center) {
+            Icon(CatIcons.of(k.icon), null, Modifier.size(if (sub) 20.dp else 24.dp), tint = c.accent)
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(k.name, style = t.body.copy(fontWeight = FontWeight.Bold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                when (count) { 0 -> "ריקה"; 1 -> "פתק אחד"; else -> "$count פתקים" },
-                style = t.caption, color = c.ink2,
-            )
+            Text(k.name, style = t.body.copy(fontWeight = if (sub) FontWeight.SemiBold else FontWeight.Bold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val notes = when (count) { 0 -> "ריקה"; 1 -> "פתק אחד"; else -> "$count פתקים" }
+            val subs = when (kids) { 0 -> null; 1 -> "תת-קטגוריה אחת"; else -> "$kids תתי-קטגוריות" }
+            Text(listOfNotNull(notes, subs).joinToString(" · "), style = t.caption, color = c.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (onAdd != null) {
+            Box(
+                Modifier.size(44.dp).clip(Squircle(14.dp)).press(scale = .86f, onClick = onAdd),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Ph.Plus, "תת-קטגוריה חדשה", Modifier.size(20.dp), tint = c.ink2) }
         }
         // the handle owns its drag; the rest of the row is a tap target
-        Box(Modifier.width(56.dp).fillMaxHeight().then(handle), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(52.dp).fillMaxHeight().then(handle), contentAlignment = Alignment.Center) {
             Icon(Ph.DotsSixVertical, "גרירה לסידור", Modifier.size(22.dp), tint = c.ink3)
         }
     }

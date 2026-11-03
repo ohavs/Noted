@@ -78,38 +78,54 @@ class NotesRepository(private val db: NotedDatabase) {
 
     // ------------------------------------------------------------ categories
 
-    suspend fun createCategory(name: String, icon: String): CategoryEntity {
-        val k = CategoryEntity(UUID.randomUUID().toString(), name.trim(), (dao.maxCategoryPosition() ?: -1) + 1, icon)
+    suspend fun createCategory(name: String, icon: String, parent: String = ""): CategoryEntity {
+        val k = CategoryEntity(UUID.randomUUID().toString(), name.trim(), (dao.maxCategoryPosition() ?: -1) + 1, icon, parent)
         dao.upsertCategory(k)
         return k
     }
 
     suspend fun editCategory(id: String, name: String, icon: String) = dao.editCategory(id, name.trim(), icon)
 
-    /** [ids] in the wanted order; rewrites only the rows whose slot changed. */
-    suspend fun reorderCategories(ids: List<String>, current: List<CategoryEntity>) {
+    /** [rows] = (id, parent) in the wanted order; rewrites only the rows whose slot or parent changed. */
+    suspend fun arrangeCategories(rows: List<Pair<String, String>>, current: List<CategoryEntity>) {
         val byId = current.associateBy { it.id }
-        db.withTransaction { ids.forEachIndexed { i, id -> if (byId[id]?.position != i) dao.setCategoryPosition(id, i) } }
+        db.withTransaction {
+            rows.forEachIndexed { i, (id, parent) ->
+                val k = byId[id] ?: return@forEachIndexed
+                if (k.position != i || k.parent != parent) dao.placeCategory(id, parent, i)
+            }
+        }
     }
 
+    /** Puts a category under [parent] ("" = top level), last among its new siblings. */
+    suspend fun moveCategory(id: String, parent: String) = db.withTransaction {
+        dao.placeCategory(id, parent, (dao.maxCategoryPosition() ?: -1) + 1)
+    }
+
+    suspend fun placeCategory(id: String, parent: String, position: Int) = dao.placeCategory(id, parent, position)
+
     /** What a category deletion did, so it can be undone exactly. */
-    class CategoryRemoval(val category: CategoryEntity, val noteIds: List<String>, val movedTo: String?)
+    class CategoryRemoval(val category: CategoryEntity, val noteIds: List<String>, val movedTo: String?, val children: List<String> = emptyList())
 
     /**
-     * Deletes a category. Its notes move to [moveTo], or go to the trash with it when null.
-     * Positions of the categories after it are left alone (gaps are harmless; order is relative).
+     * Deletes a category. Its notes move to [moveTo], or go to the trash with it when null; its
+     * subcategories step up to the top level. Positions of the categories after it are left
+     * alone (gaps are harmless; order is relative).
      */
     suspend fun deleteCategory(k: CategoryEntity, moveTo: String?): CategoryRemoval = db.withTransaction {
         val ids = dao.liveNoteIdsIn(k.id)
         if (ids.isNotEmpty()) {
             if (moveTo != null) dao.setCategory(ids, moveTo, now()) else now().let { dao.setTrashed(ids, it, it) }
         }
+        val kids = dao.categories().filter { it.parent == k.id }.map { it.id }
+        if (kids.isNotEmpty()) dao.setCategoryParent(kids, "")
         dao.deleteCategory(k.id)
-        CategoryRemoval(k, ids, moveTo)
+        CategoryRemoval(k, ids, moveTo, kids)
     }
 
     suspend fun undoDeleteCategory(r: CategoryRemoval) = db.withTransaction {
         dao.upsertCategory(r.category)
+        if (r.children.isNotEmpty()) dao.setCategoryParent(r.children, r.category.id)
         if (r.noteIds.isNotEmpty()) {
             if (r.movedTo != null) dao.setCategory(r.noteIds, r.category.id, now()) else dao.setTrashed(r.noteIds, null, now())
         }

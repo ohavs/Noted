@@ -328,11 +328,11 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                         if (rest != null) notes.deleteCategory(d.id)
                     }
                 } else if (local == null) {
-                    if (base == null || base.deleted) notes.upsertCategory(CategoryEntity(d.id, r.name, r.position, r.icon))
+                    if (base == null || base.deleted) notes.upsertCategory(CategoryEntity(d.id, r.name, r.position, r.icon, r.parent))
                 } else {
                     val m = if (base == null) local else CategoryEntity(
                         d.id, Merge.pick(base.name, local.name, r.name), Merge.pick(base.position, local.position, r.position),
-                        Merge.pick(base.icon, local.icon, r.icon),
+                        Merge.pick(base.icon, local.icon, r.icon), Merge.pick(base.parent, local.parent, r.parent),
                     )
                     if (m != local) notes.upsertCategory(m)
                 }
@@ -347,12 +347,13 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         val live = cats.associateBy { it.id }
         for (k in cats) {
             val sh = catShadows[k.id]
-            val now = CatShadow(k.name, k.icon, k.position, false)
+            val now = CatShadow(k.name, k.icon, k.position, false, k.parent)
             if (sh == now) continue
             val upd = HashMap<String, Any?>()
             if (sh == null || sh.deleted || sh.name != k.name) upd["name"] = k.name
             if (sh == null || sh.deleted || sh.icon != k.icon) upd["icon"] = k.icon
             if (sh == null || sh.deleted || sh.position != k.position) upd["position"] = k.position
+            if (sh == null || sh.deleted || sh.parent != k.parent) upd["parent"] = k.parent
             if (sh == null || sh.deleted) upd["deleted"] = false
             col.document(k.id).set(upd, SetOptions.merge())
             catShadows[k.id] = now
@@ -521,17 +522,18 @@ data class NoteShadow(
     var id: String = ""
 }
 
-data class CatShadow(val name: String, val icon: String, val position: Int, val deleted: Boolean) {
-    fun encode(): String = JSONObject().put("n", name).put("i", icon).put("p", position).put("d", deleted).toString()
+data class CatShadow(val name: String, val icon: String, val position: Int, val deleted: Boolean, val parent: String = "") {
+    fun encode(): String = JSONObject().put("n", name).put("i", icon).put("p", position).put("d", deleted).put("r", parent).toString()
 
     companion object {
         fun decode(s: String): CatShadow? = runCatching {
             val o = JSONObject(s)
-            CatShadow(o.getString("n"), o.getString("i"), o.getInt("p"), o.getBoolean("d"))
+            CatShadow(o.getString("n"), o.getString("i"), o.getInt("p"), o.getBoolean("d"), o.optString("r"))
         }.getOrNull()
 
         fun of(d: DocumentSnapshot) = CatShadow(
             d.getString("name").orEmpty(), d.getString("icon") ?: "folder", (d.getLong("position") ?: 0L).toInt(), d.getBoolean("deleted") ?: false,
+            d.getString("parent").orEmpty(),
         )
     }
 }
