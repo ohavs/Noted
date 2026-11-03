@@ -168,6 +168,9 @@ report() {
   echo "--- Functions runtime may disable services:"
   api POST "https://cloudresourcemanager.googleapis.com/v1/projects/$P:getIamPolicy" '{}' |
     jq -r '.bindings[]? | select(.role=="roles/serviceusage.serviceUsageAdmin") | .members | join(",")'
+  echo "--- places function, no sign-in (expect UNAUTHENTICATED):"
+  curl -sS -m 20 -X POST -H "Content-Type: application/json" -d '{"data":{"op":"auto","input":"x","session":"s"}}' \
+    "https://me-west1-$P.cloudfunctions.net/places" | jq -c '.error.status // .'
   echo "==============================================================="
 }
 

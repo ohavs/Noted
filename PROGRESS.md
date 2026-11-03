@@ -80,12 +80,14 @@
   - עלויות: מפות דינמיות + lite ב-Maps SDK for Android — חינם בלי הגבלה. Places (New): autocomplete בתוך session שנגמר ב-details לא מחויב; Place Details Essentials (השדות שלנו) — 10K חינם/חודש. ההגנה האמיתית מפני מפתח שנשלף מה-APK: מכסה יומית ב-Cloud Console (פעולה של הבעלים).
   - פתוח: כרטיס מקום כבלוק בתוך פתק (SPEC: "מפה קטנה + ניווט") — לא מומש.
 - **עורך**: העברה לסל מתוך העורך — הפתק מתקפל, מתכווץ ונעלם בהדרגה (במקום להיעלם בחדות בגודל הכרטיס).
-- **הבא (סשן חדש, לפי הסדר):**
-  1. **לענות לבעלים** (שאל לפני ה-clear): למה ואיך אפשר לשלוף את מפתח Maps מה-APK (APK = zip; המפתח ב-`AndroidManifest`/`BuildConfig` בטקסט — apktool/jadx; ה-SHA-1 של החתימה ציבורי בתוך ה-APK, כך שאפשר לזייף `X-Android-Package/Cert` בקריאות REST). מפות ב-Maps SDK חינם → הסיכון הוא רק Places.
-  2. **תיקון השליפה**: Places דרך Cloud Function (Firebase Functions, Blaze קיים) — מפתח שרת נפרד ב-Secret Manager/env, רק למשתמש מחובר (Firebase Auth ID token), מגבלה לכל uid ביום ב-Firestore, ו-App Check (Play Integrity — עובד רק להתקנה מהחנות; ל-APK מ-GitHub — debug/בלי אכיפה עד החנות). מפתח ה-APK מוגבל אחר כך ל-Maps SDK for Android בלבד (להסיר ממנו Places). Geocoder נשאר נפילה.
-  3. **הגנה מלאה (הבעלים ביקש)**: מתג כיבוי — תקציב → Pub/Sub topic → Function שמכבה את `places.googleapis.com` (Service Usage API, לא מנתק billing כדי לא להפיל את Firebase). ידני לבעלים: חיבור התקציב ל-topic + הרשאת `serviceusage.serviceUsageAdmin` ל-SA של הפונקציה — הכל בהודעה אחת.
-  4. **אימות שהבעלים עשה הכל**: הבעלים רוצה שאבדוק בעצמי. דרך: Secret `GCP_SA_KEY` (SA עם Viewer + Service Usage Viewer + Billing viewer) → workflow `gcloud-check` שמדפיס מגבלות API של המפתח, מכסות Places, תקציב. לבקש את ה-SA באותה הודעה מרוכזת עם 3.
-  5. אחר כך שלב 9 (וידג'טים): החלטות ברירת מחדל אם הבעלים לא ענה — ראשי גדול קודם, מראה כמו כרטיסי האפליקציה (צבע פתק, squircle, פונט), בהיר/כהה לפי הגדרת האפליקציה.
+- **2026-11-03 v0.2.37 — Places דרך השרת + מתג כיבוי (אומת ב-CI)**:
+  - למה: APK = zip; `MAPS_API_KEY` יושב בטקסט ב-manifest/`BuildConfig` (apktool/jadx), וה-SHA-1 של החתימה ציבורי — אז אפשר לזייף `X-Android-Package/Cert` ב-REST. מפות ב-Maps SDK חינם; הסיכון היה רק Places.
+  - `functions/places.js`: callable `places` (me-west1) — רק משתמש מחובר, מפתח שרת `noted-places-server` (Places בלבד) ב-Secret Manager `PLACES_KEY`, תקרה יומית (שעון ישראל) ב-`usage/places-<date>`: autocomplete 200 לאדם / 600 לכולם, details 40 / 150. האפליקציה (`PlacesApi`) קוראת לו דרך `firebase-functions`; לא מחובר / תקרה / Places כבוי → Geocoder.
+  - מתג כיבוי: תקציב "noted places kill switch" (10 ILS לחודש, הפרויקט) → topic `budget-alerts` → `budgetGuard` מכבה את `places.googleapis.com` (billing נשאר). הדלקה מחדש — ידנית בכוונה (ה-CI לא מדליק את Places). נבדק מקצה לקצה: `[kill-test]` בהודעת commit מריץ `places-guard.sh killtest` (הודעה מדומה → DISABLED → הדלקה).
+  - `scripts/places-guard.sh` (ב-`firebase-backend.yml`, עם `FIREBASE_TOKEN` — אין צורך ב-`GCP_SA_KEY`): prep (APIs, מפתח שרת, סוד, `serviceUsageAdmin` ל-compute SA) / after (תקציב + topic, מפתח ה-APK) / report (מצב Places, הגבלות מפתחות, מכסות, תקציבים).
+  - מפתח ה-APK (`noted-maps`) **לא היה נעול לאפליקציה** בפועל — עכשיו Maps SDK בלבד + `com.ohav.noted`/SHA-1, נאכף בכל ריצה.
+  - פתוח: App Check (Play Integrity) — אחרי Google Play (שלב 11). חיפוש Places רק למחוברים.
+- **הבא**: שלב 9 (וידג'טים). החלטות ברירת מחדל אם הבעלים לא ענה — ראשי גדול קודם, מראה כמו כרטיסי האפליקציה (צבע פתק, squircle, פונט), בהיר/כהה לפי הגדרת האפליקציה.
   - במקביל הבעלים בודק 7b + 8a+8b+8c במכשירים.
 - **מכסות Places (New) שהבעלים הגדיר ב-2026-11-03** (אין מכסה יומית ב-New, רק לדקה): `AutocompletePlacesRequest per minute` 30, `... per minute per user` 30, `GetPlaceRequest per minute` 10, `... per minute per user` 10. פרויקט `noted-ce451`.
 - (ל-token בסשן אין הרשאת actions:write → הרצה מחדש של CI רק דרך push.)
@@ -103,7 +105,7 @@
 - שלב 2: keystore נוצר (RSA 2048, alias `noted`), SHA-256: `3A:8A:46:7A:9C:0A:22:76:45:2F:A5:DD:F7:88:7F:D7:1E:4F:A1:85:D6:F3:75:58:A2:98:D2:EA:0D:13:FA:A2`, SHA-1: `45:1F:6A:59:5D:7A:AA:F8:25:B1:C0:F9:DF:E9:CE:A6:C0:CE:67:BE` (לנעילת מפתח Maps). `google-services.json`, sign-in, Maps — בשלבים 7–8.
 
 ## סודות שהוגדרו (שמות בלבד)
-- `FIREBASE_TOKEN` ✅ (משמש גם ליצירת `google-services.json` ב-CI — אין צורך ב-`GOOGLE_SERVICES_JSON`), `KEYSTORE_BASE64` ✅, `KEYSTORE_PASSWORD` ✅ (alias `noted`, סיסמת מפתח = סיסמת מאגר). `MAPS_API_KEY` ✅ (2026-11-03, נעול ל-`com.ohav.noted` + SHA-1, Maps SDK for Android + Places API (New)).
+- `FIREBASE_TOKEN` ✅ (משמש גם ליצירת `google-services.json` ב-CI — אין צורך ב-`GOOGLE_SERVICES_JSON`), `KEYSTORE_BASE64` ✅, `KEYSTORE_PASSWORD` ✅ (alias `noted`, סיסמת מפתח = סיסמת מאגר). `MAPS_API_KEY` ✅ (Maps SDK for Android בלבד + `com.ohav.noted`/SHA-1, נאכף ב-CI). Secret Manager (לא GitHub): `PLACES_KEY` — נוצר ומתעדכן ב-CI.
 
 ## פתוח באב-טיפוס (לא חוסם)
 - גרירה של פתק על שם קטגוריה להעברה — לא מומש (יש העברה דרך התפריט).
