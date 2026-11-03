@@ -5,7 +5,19 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.content.res.Configuration
 import android.graphics.Typeface
+import android.os.Build
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StrikethroughSpan
+import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
+import android.view.View
+import android.widget.RemoteViews
+import androidx.compose.ui.unit.Dp
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.glance.appwidget.AndroidRemoteViews
 import android.net.Uri
 import android.text.TextPaint
 import android.text.TextUtils
@@ -58,7 +70,6 @@ import androidx.glance.state.GlanceStateDefinition
 import androidx.glance.state.PreferencesGlanceStateDefinition
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
-import androidx.glance.text.TextDecoration
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.ohav.noted.MainActivity
@@ -82,7 +93,7 @@ import kotlinx.coroutines.flow.first
 
 /**
  * The big home-screen widget: one category's stack, as cards in the note colours.
- * Tap the title → next category; tick a row in place; tap a card → that note in the editor;
+ * Tap the title → a dropdown of the categories; tick a row in place; tap a card → that note in the editor;
  * + → a new note in this category. Light/dark and accent follow the app's settings.
  */
 class NotedWidget : GlanceAppWidget() {
@@ -97,13 +108,14 @@ class NotedWidget : GlanceAppWidget() {
             val notes by app.notes.notes.collectAsState(notes0)
             val cats by app.notes.categories.collectAsState(cats0)
             val settings by app.settings.settings.collectAsState(set0)
-            val chosen = currentState<Preferences>()[CAT]
-            Main(notes, cats, settings, chosen)
+            val state = currentState<Preferences>()
+            Main(notes, cats, settings, state[CAT], state[OPEN] == true)
         }
     }
 
     companion object {
         val CAT = stringPreferencesKey("cat")
+        val OPEN = booleanPreferencesKey("open")
         suspend fun refresh(context: Context) = runCatching { NotedWidget().updateAll(context) }
     }
 }
@@ -112,14 +124,21 @@ class NotedWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = NotedWidget()
 }
 
+/** One colour, day and night (equal when the app forces light or dark). */
+private class Tone(val day: Color, val night: Color) {
+    val p: ColorProvider = if (day == night) ColorProvider(day) else androidx.glance.color.ColorProvider(day = day, night = night)
+    fun now(context: Context): Color =
+        if ((context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES) night else day
+}
+
 /** The palette the widget draws with: fixed by the app setting, or day/night when it follows the system. */
 private class WColors(s: AppSettings) {
     private val mode = s.theme
     private val accent = s.accent
-    private fun pick(light: Color, dark: Color): ColorProvider = when (mode) {
-        ThemeMode.Light -> ColorProvider(light)
-        ThemeMode.Dark -> ColorProvider(dark)
-        ThemeMode.System -> androidx.glance.color.ColorProvider(day = light, night = dark)
+    private fun pick(light: Color, dark: Color): Tone = when (mode) {
+        ThemeMode.Light -> Tone(light, light)
+        ThemeMode.Dark -> Tone(dark, dark)
+        ThemeMode.System -> Tone(light, dark)
     }
     val bg = pick(Color(0xFFF5F1EA), Color(0xFF12110F))
     val ink = pick(Color(0xFF1B1915), Color(0xFFF3EEE6))
@@ -136,8 +155,65 @@ private class WColors(s: AppSettings) {
 
 private const val MAX_ROWS = 5
 
+/*
+ * RTL, whatever the device language. RemoteViews lay out by the launcher's locale and Glance's Text
+ * pins textDirection="locale", so on an English phone everything flipped. Instead: every row sits in
+ * an RTL frame ([Rtl]), all text goes through [RText] (right-aligned, direction from the content),
+ * and paddings go through [padRtl] (Glance resolves start/end by the app's locale, not the frame's).
+ */
+
 @Composable
-private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: AppSettings, chosen: String?) {
+private fun Rtl(modifier: GlanceModifier = GlanceModifier, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    AndroidRemoteViews(RemoteViews(context.packageName, R.layout.widget_rtl), R.id.wrtl, modifier) { content() }
+}
+
+@Composable
+private fun GlanceModifier.padRtl(start: Dp = 0.dp, end: Dp = 0.dp, top: Dp = 0.dp, bottom: Dp = 0.dp): GlanceModifier {
+    val ctxRtl = LocalContext.current.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+    return if (ctxRtl) padding(start = start, end = end, top = top, bottom = bottom)
+    else padding(start = end, end = start, top = top, bottom = bottom)
+}
+
+private enum class W { Normal, Medium, Bold }
+
+@Composable
+private fun RText(
+    text: String,
+    color: Tone,
+    size: Float,
+    modifier: GlanceModifier = GlanceModifier,
+    weight: W = W.Normal,
+    maxLines: Int = Int.MAX_VALUE,
+    strike: Boolean = false,
+    center: Boolean = false,
+) {
+    val context = LocalContext.current
+    val id = R.id.wtext
+    val rv = RemoteViews(context.packageName, if (center) R.layout.widget_text_center else R.layout.widget_text).apply {
+        val s = SpannableString(text)
+        if (text.isNotEmpty()) {
+            when (weight) {
+                W.Bold -> s.setSpan(StyleSpan(Typeface.BOLD), 0, s.length, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+                W.Medium -> s.setSpan(TypefaceSpan("sans-serif-medium"), 0, s.length, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+                W.Normal -> Unit
+            }
+            if (strike) s.setSpan(StrikethroughSpan(), 0, s.length, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+        }
+        setTextViewText(id, s)
+        setTextViewTextSize(id, TypedValue.COMPLEX_UNIT_SP, size)
+        setInt(id, "setMaxLines", maxLines)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && color.day != color.night) {
+            setColorInt(id, "setTextColor", color.day.toArgb(), color.night.toArgb())
+        } else {
+            setTextColor(id, color.now(context).toArgb())
+        }
+    }
+    AndroidRemoteViews(rv, modifier)
+}
+
+@Composable
+private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: AppSettings, chosen: String?, open: Boolean) {
     val context = LocalContext.current
     val c = remember(settings.theme, settings.accent) { WColors(settings) }
     val tree = remember(cats) { CatTree(cats) }
@@ -145,39 +221,76 @@ private fun Main(notes: List<NoteEntity>, cats: List<CategoryEntity>, settings: 
     val cat = tops.firstOrNull { it.id == chosen } ?: tops.firstOrNull { !it.foreign } ?: tops.firstOrNull()
     val family = cat?.let { tree.family(it.id) }.orEmpty()
     val shown = notes.filter { it.categoryId in family }
+    val canPick = tops.size > 1
+    val menu = open && canPick
 
     Column(
-        GlanceModifier.fillMaxSize().background(c.bg).cornerRadius(28.dp).padding(start = 12.dp, end = 12.dp, top = 10.dp),
+        GlanceModifier.fillMaxSize().background(c.bg.p).cornerRadius(28.dp).padding(start = 12.dp, end = 12.dp, top = 10.dp),
     ) {
-        Row(GlanceModifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(
-                GlanceModifier.defaultWeight().clickable(actionRunCallback<NextCategory>()),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                val title = remember(cat?.name, settings.fontPair) { titleBitmap(context, cat?.name ?: "noted", settings.fontPair) }
-                Image(ImageProvider(title), contentDescription = cat?.name, colorFilter = ColorFilter.tint(c.ink))
-                Spacer(GlanceModifier.width(8.dp))
-                Text("${shown.size}", style = TextStyle(color = c.ink3, fontSize = 14.sp, fontWeight = FontWeight.Medium))
-                if (tops.size > 1) {
-                    Spacer(GlanceModifier.width(2.dp))
-                    Image(ImageProvider(R.drawable.wg_caret_down), "הקטגוריה הבאה", GlanceModifier.size(16.dp), colorFilter = ColorFilter.tint(c.ink3))
+        Rtl(GlanceModifier.fillMaxWidth().padRtl(start = 4.dp, bottom = 8.dp)) {
+            Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    GlanceModifier.defaultWeight().let { if (canPick) it.clickable(actionRunCallback<ToggleMenu>()) else it },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val title = remember(cat?.name, settings.fontPair) { titleBitmap(context, cat?.name ?: "noted", settings.fontPair) }
+                    Image(ImageProvider(title), contentDescription = cat?.name, colorFilter = ColorFilter.tint(c.ink.p))
+                    Spacer(GlanceModifier.width(8.dp))
+                    Text("${shown.size}", style = TextStyle(color = c.ink3.p, fontSize = 14.sp, fontWeight = FontWeight.Medium))
+                    if (canPick) {
+                        Spacer(GlanceModifier.width(2.dp))
+                        Image(
+                            ImageProvider(if (menu) R.drawable.wg_caret_up else R.drawable.wg_caret_down),
+                            if (menu) "סגירת רשימת הקטגוריות" else "בחירת קטגוריה",
+                            GlanceModifier.size(16.dp),
+                            colorFilter = ColorFilter.tint(if (menu) c.ink.p else c.ink3.p),
+                        )
+                    }
                 }
-            }
-            Box(
-                GlanceModifier.size(44.dp).cornerRadius(22.dp).background(c.accentC)
-                    .clickable(actionStartActivity(newNoteIntent(context, cat?.id))),
-                contentAlignment = Alignment.Center,
-            ) {
-                Image(ImageProvider(R.drawable.wg_plus), "פתק חדש", GlanceModifier.size(22.dp), colorFilter = ColorFilter.tint(c.accentInk))
+                Box(
+                    GlanceModifier.size(44.dp).cornerRadius(22.dp).background(c.accentC.p)
+                        .clickable(actionStartActivity(newNoteIntent(context, cat?.id))),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(ImageProvider(R.drawable.wg_plus), "פתק חדש", GlanceModifier.size(22.dp), colorFilter = ColorFilter.tint(c.accentInk.p))
+                }
             }
         }
 
-        if (shown.isEmpty()) {
-            Empty(c, context, cat?.id)
-        } else {
-            LazyColumn(GlanceModifier.fillMaxSize()) {
+        when {
+            menu -> Menu(tops, notes, tree, cat?.id, c)
+            shown.isEmpty() -> Empty(c, context, cat?.id)
+            else -> LazyColumn(GlanceModifier.fillMaxSize()) {
                 items(shown, itemId = { it.id.hashCode().toLong() }) { n ->
-                    Column(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
+                    Rtl(GlanceModifier.fillMaxWidth().padding(bottom = 8.dp)) { Card(n, c, context) }
+                }
+            }
+        }
+    }
+}
+
+/** The category dropdown: drops open under the title, in place of the stack. */
+@Composable
+private fun Menu(tops: List<CategoryEntity>, notes: List<NoteEntity>, tree: CatTree, current: String?, c: WColors) {
+    val counts = remember(notes, tops) { tops.associate { t -> tree.family(t.id).let { f -> t.id to notes.count { it.categoryId in f } } } }
+    Column(GlanceModifier.fillMaxSize().padding(bottom = 12.dp)) {
+        LazyColumn(GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.surface.p).padding(vertical = 6.dp)) {
+            items(tops, itemId = { it.id.hashCode().toLong() }) { t ->
+                val sel = t.id == current
+                Rtl(GlanceModifier.fillMaxWidth()) {
+                    Row(
+                        GlanceModifier.fillMaxWidth().height(46.dp).padding(horizontal = 16.dp)
+                            .clickable(actionRunCallback<SelectCategory>(actionParametersOf(CAT_P to t.id))),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RText(t.name, if (sel) c.ink else c.ink2, 15.5f, GlanceModifier.defaultWeight(), weight = if (sel) W.Bold else W.Medium, maxLines = 1)
+                        Spacer(GlanceModifier.width(10.dp))
+                        Text("${counts[t.id] ?: 0}", style = TextStyle(color = c.ink3.p, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+                        Spacer(GlanceModifier.width(10.dp))
+                        Box(GlanceModifier.size(18.dp), contentAlignment = Alignment.Center) {
+                            if (sel) Image(ImageProvider(R.drawable.wg_check), "נבחרה", GlanceModifier.size(18.dp), colorFilter = ColorFilter.tint(c.accentC.p))
+                        }
+                    }
                 }
             }
         }
@@ -191,13 +304,13 @@ private fun Empty(c: WColors, context: Context, cat: String?) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Box(GlanceModifier.size(52.dp).cornerRadius(18.dp).background(c.surface), contentAlignment = Alignment.Center) {
-            Image(ImageProvider(R.drawable.wg_note_pencil), null, GlanceModifier.size(26.dp), colorFilter = ColorFilter.tint(c.ink2))
+        Box(GlanceModifier.size(52.dp).cornerRadius(18.dp).background(c.surface.p), contentAlignment = Alignment.Center) {
+            Image(ImageProvider(R.drawable.wg_note_pencil), null, GlanceModifier.size(26.dp), colorFilter = ColorFilter.tint(c.ink2.p))
         }
         Spacer(GlanceModifier.height(10.dp))
-        Text("הערימה ריקה", style = TextStyle(color = c.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold))
+        RText("הערימה ריקה", c.ink, 16f, GlanceModifier.fillMaxWidth(), weight = W.Bold, center = true)
         Spacer(GlanceModifier.height(2.dp))
-        Text("נגיעה כאן — והפתק הראשון נפתח", style = TextStyle(color = c.ink2, fontSize = 13.sp))
+        RText("נגיעה כאן — והפתק הראשון נפתח", c.ink2, 13f, GlanceModifier.fillMaxWidth(), center = true)
     }
 }
 
@@ -209,26 +322,21 @@ private fun Card(n: NoteEntity, c: WColors, context: Context) {
     val rows = lines.take(MAX_ROWS)
     val rest = lines.size - rows.size
     Column(
-        GlanceModifier.fillMaxWidth().cornerRadius(22.dp).background(c.note(NoteColor.of(n.color)))
+        GlanceModifier.fillMaxWidth().cornerRadius(22.dp).background(c.note(NoteColor.of(n.color)).p)
             .padding(horizontal = 14.dp, vertical = 12.dp)
             .clickable(actionStartActivity(openNoteIntent(context, n.id))),
     ) {
         if (n.title.isNotBlank() || n.pinned) {
             Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    n.title.ifBlank { "ללא כותרת" },
-                    GlanceModifier.defaultWeight(),
-                    style = TextStyle(color = c.noteInk, fontSize = 15.sp, fontWeight = FontWeight.Bold),
-                    maxLines = 2,
-                )
-                if (n.pinned) Image(ImageProvider(R.drawable.wg_push_pin_fill), "נעוץ", GlanceModifier.size(14.dp), colorFilter = ColorFilter.tint(c.noteInk2))
+                RText(n.title.ifBlank { "ללא כותרת" }, c.noteInk, 15f, GlanceModifier.defaultWeight(), weight = W.Bold, maxLines = 2)
+                if (n.pinned) Image(ImageProvider(R.drawable.wg_push_pin_fill), "נעוץ", GlanceModifier.size(14.dp), colorFilter = ColorFilter.tint(c.noteInk2.p))
             }
         }
         n.reminderAt?.let { at ->
-            Row(GlanceModifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Image(ImageProvider(R.drawable.wg_bell), null, GlanceModifier.size(12.dp), colorFilter = ColorFilter.tint(c.noteInk2))
+            Row(GlanceModifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Image(ImageProvider(R.drawable.wg_bell), null, GlanceModifier.size(12.dp), colorFilter = ColorFilter.tint(c.noteInk2.p))
                 Spacer(GlanceModifier.width(4.dp))
-                Text(fmtRel(at), style = TextStyle(color = c.noteInk2, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+                RText(fmtRel(at), c.noteInk2, 12f, GlanceModifier.defaultWeight(), weight = W.Medium, maxLines = 1)
             }
         }
         rows.forEachIndexed { i, b ->
@@ -237,7 +345,7 @@ private fun Card(n: NoteEntity, c: WColors, context: Context) {
         }
         if (rest > 0) {
             Spacer(GlanceModifier.height(4.dp))
-            Text("ועוד $rest", style = TextStyle(color = c.noteInk2, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            RText("ועוד $rest", c.noteInk2, 12f, GlanceModifier.fillMaxWidth(), weight = W.Medium, maxLines = 1)
         }
     }
 }
@@ -252,46 +360,39 @@ private fun Line(n: NoteEntity, b: Block, c: WColors, canTick: Boolean) {
     val indent = (b.indent.coerceIn(0, 3) * 12).dp
     when (b.type) {
         BlockType.Check -> Row(
-            GlanceModifier.fillMaxWidth().padding(start = indent).let {
+            GlanceModifier.fillMaxWidth().padRtl(start = indent).let {
                 if (canTick) it.clickable(actionRunCallback<ToggleCheck>(actionParametersOf(NOTE to n.id, BLOCK to b.id))) else it
             },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(GlanceModifier.size(20.dp), contentAlignment = Alignment.Center) {
                 if (b.done) {
-                    Image(ImageProvider(R.drawable.wg_box_fill), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.noteInk))
-                    Image(ImageProvider(R.drawable.wg_tick), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.note(NoteColor.of(n.color))))
+                    Image(ImageProvider(R.drawable.wg_box_fill), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.noteInk.p))
+                    Image(ImageProvider(R.drawable.wg_tick), null, GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.note(NoteColor.of(n.color)).p))
                 } else {
-                    Image(ImageProvider(R.drawable.wg_box), if (b.done) "בוצע" else "לסמן", GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.boxOff))
+                    Image(ImageProvider(R.drawable.wg_box), "לסמן", GlanceModifier.size(20.dp), colorFilter = ColorFilter.tint(c.boxOff.p))
                 }
             }
             Spacer(GlanceModifier.width(9.dp))
-            Text(
-                text,
+            RText(
+                text, if (b.done) c.noteInk2 else c.noteInk, 14f,
                 GlanceModifier.defaultWeight().padding(vertical = 2.dp),
-                style = TextStyle(
-                    color = if (b.done) c.noteInk2 else c.noteInk, fontSize = 14.sp,
-                    textDecoration = if (b.done) TextDecoration.LineThrough else TextDecoration.None,
-                ),
-                maxLines = 2,
+                maxLines = 2, strike = b.done,
             )
         }
-        BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link -> Text(
+        BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link -> RText(
             when (b.type) { BlockType.Images -> "תמונה"; BlockType.Voice -> "הקלטה"; BlockType.Draw -> "ציור"; else -> "קישור" },
-            GlanceModifier.padding(start = indent),
-            style = TextStyle(color = c.noteInk2, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+            c.noteInk2, 13f, GlanceModifier.fillMaxWidth().padRtl(start = indent), weight = W.Medium, maxLines = 1,
         )
         else -> {
             val h = b.type == BlockType.H1 || b.type == BlockType.H2 || b.type == BlockType.H3
             val lead = when (b.type) { BlockType.Bullet -> "•  "; BlockType.Num -> "–  "; else -> "" }
-            Text(
+            RText(
                 lead + text,
-                GlanceModifier.fillMaxWidth().padding(start = indent),
-                style = TextStyle(
-                    color = if (b.type == BlockType.Quote) c.noteInk2 else c.noteInk,
-                    fontSize = if (h) 14.5.sp else 13.5.sp,
-                    fontWeight = if (h) FontWeight.Bold else FontWeight.Normal,
-                ),
+                if (b.type == BlockType.Quote) c.noteInk2 else c.noteInk,
+                if (h) 14.5f else 13.5f,
+                GlanceModifier.fillMaxWidth().padRtl(start = indent),
+                weight = if (h) W.Bold else W.Normal,
                 maxLines = if (h) 1 else 3,
             )
         }
@@ -321,14 +422,23 @@ class ToggleCheck : ActionCallback {
     }
 }
 
-/** Title tap: the next top-level category (wraps around). */
-class NextCategory : ActionCallback {
+private val CAT_P = ActionParameters.Key<String>("cat")
+
+/** Title tap: drops the category list open (or closes it). */
+class ToggleMenu : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        val tops = CatTree((context.applicationContext as NotedApp).notes.categoriesNow()).tops
-        if (tops.size < 2) return
+        updateAppWidgetState(context, glanceId) { p -> p[NotedWidget.OPEN] = p[NotedWidget.OPEN] != true }
+        NotedWidget().update(context, glanceId)
+    }
+}
+
+/** A row in the list: show that category and fold the list away. */
+class SelectCategory : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val id = parameters[CAT_P] ?: return
         updateAppWidgetState(context, glanceId) { p ->
-            val cur = tops.indexOfFirst { it.id == p[NotedWidget.CAT] }.let { if (it < 0) tops.indexOfFirst { t -> !t.foreign }.coerceAtLeast(0) else it }
-            p[NotedWidget.CAT] = tops[(cur + 1) % tops.size].id
+            p[NotedWidget.CAT] = id
+            p[NotedWidget.OPEN] = false
         }
         NotedWidget().update(context, glanceId)
     }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget text: always right-aligned, paragraph direction from the content (Glance's own Text follows the device locale). -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/wtext"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layoutDirection="rtl"
+    android:textDirection="firstStrong"
+    android:textAlignment="viewStart"
+    android:gravity="start|center_vertical"
+    android:ellipsize="end"
+    android:includeFontPadding="true" />
