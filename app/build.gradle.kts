@@ -95,5 +95,6 @@ dependencies {
     implementation(libs.credentials.play)
     implementation(libs.googleid)
     implementation(libs.glance.appwidget)
+    implementation(libs.play.wearable)
     testImplementation(libs.junit)
 }

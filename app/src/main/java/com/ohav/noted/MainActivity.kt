@@ -79,6 +79,10 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra(com.ohav.noted.reminders.Notifier.EXTRA_NOTE)?.let { openNote.value = it }
         intent?.getStringExtra(EXTRA_NEW_IN)?.let { openNote.value = NEW_PREFIX + (intent.getStringExtra(EXTRA_NEW_MODE) ?: "text") + ":" + it }
         if (intent?.action == Intent.ACTION_VIEW) com.ohav.noted.sync.Sharing.tokenOf(intent.dataString)?.let { invite.value = it }
+        // from the watch ("open on the phone"): noted://note/<id>
+        if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == "noted" && intent.data?.host == "note") {
+            intent.data?.lastPathSegment?.let { openNote.value = it }
+        }
     }
 
     override fun onResume() {

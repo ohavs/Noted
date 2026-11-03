@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the tile picker's preview: three pinned notes over the mic button -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="192dp" android:height="192dp" android:viewportWidth="192" android:viewportHeight="192">
+    <path android:fillColor="#FF000000" android:pathData="M96,0a96,96 0,1 1,0 192a96,96 0,1 1,0 -192z" />
+    <path android:fillColor="#FFFAE5A0" android:pathData="M42,44h108a12,12 0,0 1,12 12v14a12,12 0,0 1,-12 12h-108a12,12 0,0 1,-12 -12v-14a12,12 0,0 1,12 -12z" />
+    <path android:fillColor="#FFC6EAD5" android:pathData="M42,88h108a12,12 0,0 1,12 12v14a12,12 0,0 1,-12 12h-108a12,12 0,0 1,-12 -12v-14a12,12 0,0 1,12 -12z" />
+    <path android:fillColor="#FF2A2622" android:pathData="M112,58h34v8h-34z M120,102h26v8h-26z" />
+    <path android:fillColor="#FFE0542C" android:pathData="M96,136a20,20 0,1 1,0 40a20,20 0,1 1,0 -40z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M96,146a5,5 0,0 1,5 5v9a5,5 0,0 1,-10 0v-9a5,5 0,0 1,5 -5z M86,158h3a7,7 0,0 0,14 0h3a10,10 0,0 1,-8.5 9.9v3.1h-3v-3.1a10,10 0,0 1,-8.5 -9.9z" />
+</vector>

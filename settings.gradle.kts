@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "noted"
 include(":app")
+include(":wear")

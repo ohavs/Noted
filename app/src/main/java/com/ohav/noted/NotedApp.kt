@@ -35,6 +35,7 @@ class NotedApp : Application() {
     lateinit var privacy: com.ohav.noted.data.Privacy private set
     lateinit var backup: com.ohav.noted.backup.Backup private set
     lateinit var templates: com.ohav.noted.data.Templates private set
+    lateinit var wear: com.ohav.noted.wear.WearLink private set
 
     @OptIn(FlowPreview::class)
     override fun onCreate() {
@@ -53,6 +54,8 @@ class NotedApp : Application() {
         sharing = Sharing(account, sync, notes)
         backup = com.ohav.noted.backup.Backup(this)
         bin = com.ohav.noted.sync.Bin(this, notes, reminders, places, account, sync, sharing)
+        // the watch app's copy of the notes follows every change (a no-op without Wear OS)
+        wear = com.ohav.noted.wear.WearLink(this).also { it.start() }
         scope.launch { notes.seedIfEmpty() }
         // a new note left empty when the app went away with it open: gone, like closing it would have
         val launched = System.currentTimeMillis()

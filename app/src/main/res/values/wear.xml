@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@array/android_wear_capabilities">
+    <!-- the watch app looks for this to know which node is the phone with noted -->
+    <string-array name="android_wear_capabilities">
+        <item>noted_phone</item>
+    </string-array>
+</resources>

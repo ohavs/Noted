@@ -53,7 +53,7 @@ class Updater(private val context: Context) {
                     val tag = o.getString("tag_name").removePrefix("v")
                     val code = tag.substringAfterLast('.').toIntOrNull() ?: 0
                     val assets = o.getJSONArray("assets")
-                    val apk = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.getString("name").endsWith(".apk") }
+                    val apk = (0 until assets.length()).map { assets.getJSONObject(it) }.firstOrNull { it.getString("name").let { n -> n.endsWith(".apk") && "watch" !in n } }
                     if (code <= BuildConfig.VERSION_CODE || apk == null) State.UpToDate
                     else State.Available(tag, code, apk.getString("browser_download_url"), apk.optLong("size"), o.optString("body"))
                 } finally { c.disconnect() }

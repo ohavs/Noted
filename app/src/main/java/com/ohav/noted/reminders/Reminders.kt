@@ -265,12 +265,27 @@ object Notifier {
             .setContentIntent(open)
             .addAction(0, "סמן כבוצע", done)
             .addAction(0, "נודניק", snooze)
+            // on the watch the phone's snooze sheet can't open: done + two fixed snoozes, all handled on the phone
+            .extend(
+                NotificationCompat.WearableExtender()
+                    .addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat_reminder, "סמן כבוצע", done).build())
+                    .addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat_reminder, "עוד 10 דק׳", snoozeIn(ctx, r.id, code, 10)).build())
+                    .addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat_reminder, "עוד שעה", snoozeIn(ctx, r.id, code, 60)).build()),
+            )
             .build()
         try {
             NotificationManagerCompat.from(ctx).notify(code, n)
         } catch (_: SecurityException) {
         }
     }
+
+    private fun snoozeIn(ctx: Context, id: String, code: Int, minutes: Int): PendingIntent = PendingIntent.getBroadcast(
+        ctx, code * 31 + minutes,
+        Intent(ctx, ReminderReceiver::class.java).setAction(ReminderReceiver.SNOOZE)
+            .putExtra(ReminderReceiver.EXTRA_ID, id)
+            .putExtra(ReminderReceiver.EXTRA_AT, System.currentTimeMillis() + minutes * 60_000L),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
 
     fun summary(blocks: List<Block>): String {
         val checks = blocks.filter { it.type == BlockType.Check }
