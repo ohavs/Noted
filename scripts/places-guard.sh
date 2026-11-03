@@ -11,6 +11,8 @@ P=noted-ce451
 TOPIC=budget-alerts
 SERVER_KEY=noted-places-server
 KILL_NAME="noted places kill switch"
+# release keystore (public — it's in every APK)
+APP_SHA1=45:1F:6A:59:5D:7A:AA:F8:25:B1:C0:F9:DF:E9:CE:A6:C0:CE:67:BE
 
 AT=$(node -e "require('$(npm root -g)/firebase-tools/lib/auth').getAccessToken(process.env.FIREBASE_TOKEN, []).then(t => console.log(t.access_token))")
 echo "::add-mask::$AT"
@@ -132,11 +134,16 @@ after() {
   name=$(api GET "https://apikeys.googleapis.com/v2/keys:lookupKey?keyString=$MAPS_API_KEY" | jq -r '.name // empty')
   [ -z "$name" ] && { fail "APK key not found in the project"; return 1; }
   k=$(api GET "https://apikeys.googleapis.com/v2/$name")
-  if jq -e '[.restrictions.apiTargets[]?.service] == ["maps-android-backend.googleapis.com"]' <<<"$k" >/dev/null; then
-    echo "APK key already Maps SDK only"
+  echo "APK key before: $(jq -c '.restrictions' <<<"$k")"
+  # Maps SDK only, and only from this app signed with our keystore
+  body=$(jq -nc --arg pkg com.ohav.noted --arg sha "$APP_SHA1" '{restrictions: {
+    androidKeyRestrictions: {allowedApplications: [{packageName: $pkg, sha1Fingerprint: $sha}]},
+    apiTargets: [{service: "maps-android-backend.googleapis.com"}]}}')
+  if [ "$(jq -cS '.restrictions' <<<"$k")" = "$(jq -cS '.restrictions' <<<"$body")" ]; then
+    echo "APK key already locked (app + Maps SDK only)"
   else
-    body=$(jq -c '{restrictions: (.restrictions + {apiTargets: [{service: "maps-android-backend.googleapis.com"}]})}' <<<"$k")
     wait_op "$(api PATCH "https://apikeys.googleapis.com/v2/$name?updateMask=restrictions" "$body")" | jq -c '{done, error}'
+    echo "APK key after: $(api GET "https://apikeys.googleapis.com/v2/$name" | jq -c '.restrictions')"
   fi
 }
 
@@ -147,7 +154,7 @@ report() {
   echo "--- API keys (restrictions):"
   api GET "https://apikeys.googleapis.com/v2/projects/$P/locations/global/keys" | jq -r '.keys[]? |
     "\(.displayName // .uid): apis=\([.restrictions.apiTargets[]?.service] | join(",") | if .=="" then "ANY" else . end)" +
-    " android=\([.restrictions.androidKeyRestrictions.allowedApplications[]? | "\(.packageName)/\(.sha1Fingerprint[0:8])…"] | join(","))" +
+    " android=\([.restrictions.androidKeyRestrictions.allowedApplications[]? | "\(.packageName)/\(.sha1Fingerprint)"] | join(","))" +
     " browser=\(.restrictions.browserKeyRestrictions.allowedReferrers // [] | join(","))"'
   echo "--- Places quotas (effective limits):"
   api GET "https://serviceusage.googleapis.com/v1beta1/projects/$P/services/places.googleapis.com/consumerQuotaMetrics" | jq -r '
