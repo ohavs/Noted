@@ -91,6 +91,45 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
         remove(r.noteId, r.blockId)
     }
 
+    /**
+     * ✓ on an upcoming reminder (the widget): a one-shot is done like from the notification; a
+     * series lets go of a pending snooze, or else skips its coming occurrence for the next one.
+     */
+    suspend fun skip(id: String) {
+        val r = dao.get(id) ?: return
+        if (!r.repeat.repeats || (r.snoozeAt != null && (r.fired || r.snoozeAt <= r.occAt))) { done(id); return }
+        clear(id)
+        val next = r.repeat.next(r.anchorTime, r.occTime)
+        val nr = (if (next != null) r.copy(occ = next.toString()) else r.copy(fired = true)).copy(snoozeAt = null)
+        dao.upsert(nr)
+        if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)
+    }
+
+    /**
+     * Pushes the next ring [ms] later (the widget's snooze, before or after it rang). A one-shot
+     * that hasn't rung just moves; a series' coming occurrence becomes a snooze and the series
+     * moves on, so the rest of it stays on its days.
+     */
+    suspend fun later(id: String, ms: Long) {
+        val r = dao.get(id) ?: return
+        val due = r.dueAt ?: return
+        val at = maxOf(due, System.currentTimeMillis()) + ms
+        val nr = when {
+            !r.repeat.repeats && !r.fired && r.occAt <= due -> {
+                val t = LocalDateTime.ofInstant(Instant.ofEpochMilli(at), r.zoneId).withSecond(0).withNano(0)
+                r.copy(occ = t.toString(), anchor = t.toString(), snoozeAt = null)
+            }
+            !r.fired && r.occAt <= due -> {
+                val next = r.repeat.next(r.anchorTime, r.occTime)
+                (if (next != null) r.copy(occ = next.toString()) else r.copy(fired = true)).copy(snoozeAt = at)
+            }
+            else -> r.copy(snoozeAt = at)
+        }
+        clear(id)
+        dao.upsert(nr)
+        if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)
+    }
+
     /** Rings every reminder that is due, moves series to their next occurrence, arms the next alarm. */
     suspend fun fireDue() {
         val now = System.currentTimeMillis()

@@ -117,6 +117,42 @@
                 android:resource="@xml/noted_quick_widget_info" />
         </receiver>
 
+        <receiver
+            android:name=".widget.DeckWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_deck_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/noted_deck_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.AgendaWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_agenda_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/noted_agenda_widget_info" />
+        </receiver>
+
+        <!-- the stack widget's setup: which notes it holds -->
+        <activity
+            android:name=".widget.PickDeckActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Noted">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <!-- the single-note widget's setup (the launcher starts it when the widget is added) -->
         <activity
             android:name=".widget.PickNoteActivity"

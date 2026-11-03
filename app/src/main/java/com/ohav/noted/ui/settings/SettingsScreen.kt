@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -193,9 +194,11 @@ private fun AccentOption(a: Accent, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** The three home-screen widgets, each with a small likeness in the current theme; pinned straight from here. */
+/** The home-screen widgets, each with a small likeness in the current theme; pinned straight from here. */
 private enum class WKind(val title: String, val desc: String) {
-    Stack("ערימה", "קטגוריה אחת (או כל הפתקים) על המסך — סימון משימות במקום, פתק חדש בנגיעה"),
+    Stack("ראשי", "קטגוריה אחת (או כל הפתקים) על המסך — סימון משימות במקום, פתק חדש בנגיעה"),
+    Deck("ערימה", "הערימה כמו באפליקציה: פסי הכותרות מעל, הפתק העליון פתוח. נגיעה בפס מעלה אותו לראש. בוחרים בהוספה: הכל, נעוצים, מועדפים או קטגוריה"),
+    Agenda("תזכורות קרובות", "שבעה ימים קדימה — היום, מחר, השבוע — ותזכורות המקום שמחכות. ✓ ו״עוד שעה״ ישר מהמסך"),
     Note("פתק בודד", "פתק אחד שלם על המסך, נבחר בהוספה — השורות שלו מסומנות ישר מהוידג'ט"),
     Quick("יצירה מהירה", "פתק, רשימה, הקלטה, צילום או תזכורת — כל כפתור פותח פתק חדש שכבר עושה את זה"),
 }
@@ -208,12 +211,16 @@ private fun WidgetCard(toasts: ToastState) {
     val context = LocalContext.current
     var kind by rememberSaveable { mutableStateOf(WKind.Stack) }
     Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface).padding(18.dp)) {
-        Row(Modifier.fillMaxWidth().height(116.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // five likenesses: they scroll sideways, each wide enough to read
+        Row(
+            Modifier.fillMaxWidth().height(116.dp).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             WKind.entries.forEach { k ->
                 val on = k == kind
                 val ring by androidx.compose.animation.animateColorAsState(if (on) c.ink else Color.Transparent, Motion.glide(), label = "wring")
                 Box(
-                    Modifier.weight(1f).fillMaxHeight()
+                    Modifier.width(96.dp).fillMaxHeight()
                         .press(scale = .95f) { kind = k }
                         .border(2.dp, ring, Shapes.md)
                         .padding(4.dp)
@@ -239,6 +246,8 @@ private fun WidgetCard(toasts: ToastState) {
                 WKind.Stack -> NotedWidgetReceiver::class.java
                 WKind.Note -> com.ohav.noted.widget.NoteWidgetReceiver::class.java
                 WKind.Quick -> com.ohav.noted.widget.QuickWidgetReceiver::class.java
+                WKind.Deck -> com.ohav.noted.widget.DeckWidgetReceiver::class.java
+                WKind.Agenda -> com.ohav.noted.widget.AgendaWidgetReceiver::class.java
             }
             val ok = mgr.isRequestPinAppWidgetSupported &&
                 runCatching { mgr.requestPinAppWidget(ComponentName(context, receiver), null, null) }.getOrDefault(false)
@@ -277,6 +286,36 @@ private fun Likeness(k: WKind) {
                     Box(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).let { if (i == 2) it.background(c.noteInk) else it.border(1.2.dp, c.noteInk.copy(alpha = .45f), RoundedCornerShape(2.dp)) })
                     Spacer(Modifier.width(5.dp))
                     Box(Modifier.fillMaxWidth(w).height(4.dp).clip(CircleShape).background(bar))
+                }
+            }
+        }
+        WKind.Deck -> Box(Modifier.fillMaxSize()) {
+            // title strips peeking over the open front note
+            listOf(NoteColor.Mint, NoteColor.Sky).forEachIndexed { i, col ->
+                Box(Modifier.padding(top = (i * 14).dp).fillMaxSize().clip(Shapes.sm).background(note(col))) {
+                    Box(Modifier.padding(start = 7.dp, top = 5.dp).fillMaxWidth(.5f).height(4.dp).clip(CircleShape).background(bar))
+                }
+            }
+            Column(Modifier.padding(top = 28.dp).fillMaxSize().clip(Shapes.sm).background(note(NoteColor.Butter)).padding(7.dp)) {
+                Box(Modifier.fillMaxWidth(.55f).height(7.dp).clip(CircleShape).background(c.noteInk))
+                VSpace(7.dp)
+                listOf(.8f, .6f, .7f).forEach { w ->
+                    Box(Modifier.padding(bottom = 5.dp).fillMaxWidth(w).height(4.dp).clip(CircleShape).background(bar))
+                }
+            }
+        }
+        WKind.Agenda -> Column(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxWidth(.4f).height(8.dp).clip(CircleShape).background(c.ink))
+            VSpace(8.dp)
+            listOf(NoteColor.Butter, NoteColor.Peach, NoteColor.Mint).forEach { col ->
+                Row(
+                    Modifier.fillMaxWidth().height(20.dp).padding(bottom = 4.dp).clip(Shapes.sm).background(note(col)).padding(horizontal = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.width(12.dp).height(4.dp).clip(CircleShape).background(c.noteInk))
+                    Spacer(Modifier.width(5.dp))
+                    Box(Modifier.weight(1f)) { Box(Modifier.fillMaxWidth(.7f).height(4.dp).clip(CircleShape).background(bar)) }
+                    Box(Modifier.size(9.dp).clip(CircleShape).background(c.noteInk))
                 }
             }
         }

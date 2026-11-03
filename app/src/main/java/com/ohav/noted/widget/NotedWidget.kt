@@ -118,11 +118,13 @@ class NotedWidget : GlanceAppWidget() {
     companion object {
         val CAT = stringPreferencesKey("cat")
         val OPEN = booleanPreferencesKey("open")
-        /** Every noted widget on the home screen (main, single note, quick create). */
+        /** Every noted widget on the home screen (main, single note, quick create, stack, upcoming). */
         suspend fun refresh(context: Context) {
             runCatching { NotedWidget().updateAll(context) }
             runCatching { NoteWidget().updateAll(context) }
             runCatching { QuickWidget().updateAll(context) }
+            runCatching { DeckWidget().updateAll(context) }
+            runCatching { AgendaWidget().updateAll(context) }
         }
     }
 }

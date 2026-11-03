@@ -60,9 +60,9 @@ class NotedApp : Application() {
         }
         // fences follow every change to places / place reminders / notes (throttled inside)
         scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
-        // home-screen widgets follow notes, categories and the look (a no-op without widgets)
+        // home-screen widgets follow notes, categories, reminders and the look (a no-op without widgets)
         scope.launch {
-            combine(notes.notes, notes.categories, settings.settings) { _, _, _ -> }.drop(1).debounce(500)
+            combine(notes.notes, notes.categories, settings.settings, reminders.all, places.reminders) { _, _, _, _, _ -> }.drop(1).debounce(500)
                 .collect { NotedWidget.refresh(this@NotedApp) }
         }
     }
