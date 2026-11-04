@@ -1,6 +1,7 @@
 package com.ohav.noted.ui.home
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
@@ -9,11 +10,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.layout.Layout
@@ -21,8 +25,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.ohav.noted.data.NoteEntity
+import com.ohav.noted.design.Drift
 import com.ohav.noted.design.Motion
 import com.ohav.noted.design.Paced
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -40,20 +46,92 @@ object StackDims {
     val Tail = 150.dp      // room under the last card (nav + FAB)
 }
 
-/** Per-card motion: layout slot, height, depth behind the open card, staggered entrance. */
+/**
+ * Per-card motion. The layout itself never animates: every change (a card unfolding, the scroll
+ * jumping to it, a card leaving the stack) lands at once, and these screen-space offsets take up
+ * the jump and glide it out (FLIP) — so each card travels in a straight line from exactly where it
+ * was shown, whatever the pile did in between. The drifts are plain fields stepped by the stack's
+ * frame loop; [StackState.tick] invalidates the layout that reads them.
+ */
 @Stable
-class CardAnim(top: Float, height: Float, enter: Float) {
-    // frame-paced: the first frames of an unfold are heavy and must not swallow the move
-    val top = Paced(top)
-    val height = Paced(height)
-    val depth = Paced(0f, .001f)
+class CardAnim(enter: Float) {
+    val y = Drift()
+    val h = Drift()
+    val scale = Drift(.0005f)
+    val alpha = Drift(.002f)
     val enter = Animatable(enter)
+    val moving: Boolean get() = y.active || h.active || scale.active || alpha.active
+    fun step(dt: Float) { y.step(dt); h.step(dt); scale.step(dt); alpha.step(dt) }
+}
+
+/** Where every card belongs: content tops and heights, and which one is open. */
+@Immutable
+data class StackTargets(val ids: List<String>, val open: Int, val tops: List<Float>, val heights: List<Float>)
+
+internal class StackGeo(val step: Float, val peek: Float, val pad: Float, val pn: Int)
+
+/**
+ * Screen pose (y, scale, alpha per card) of [t] at scroll [s]. Cards that scrolled past the pile
+ * line fold into [StackGeo.pn] title strips; `t` counts (fractionally) how many crossed, so every
+ * position is continuous in the scroll. The line eases down from the viewport top over the first
+ * stretch of scroll — at the top of the list nothing is piled and the first card sits where it is.
+ */
+internal fun StackTargets.pose(g: StackGeo, s: Float): FloatArray {
+    val n = ids.size
+    val out = FloatArray(n * 3)
+    if (n == 0) return out
+    val r = g.pad + g.pn * g.peek
+    val v = s.coerceIn(0f, 2f * r)
+    val base = s + v - v * v / (4f * r)
+    val non = IntArray(if (open in 0 until n) n - 1 else n)
+    val pileIndex = IntArray(n) { -1 }
+    var c = 0
+    for (i in 0 until n) if (i != open) { pileIndex[i] = c; non[c++] = i }
+    var t = -1f
+    for (j in non.indices) {
+        val ai = non[j]
+        val top = tops[ai]
+        if (top > base) break
+        val next = if (j + 1 < non.size) tops[non[j + 1]] else Float.POSITIVE_INFINITY
+        if (next > base) {
+            val gp = min(g.step, (if (ai + 1 < n) tops[ai + 1] else Float.POSITIVE_INFINITY) - top)
+            t = j + if (gp <= 0f) 1f else min(1f, (base - top) / gp)
+            break
+        }
+        t = (j + 1).toFloat()
+    }
+    val pn = g.pn.toFloat()
+    for (i in 0 until n) {
+        var d = tops[i]
+        val depth = if (open >= 0 && i < open) (open - i).toFloat() else 0f
+        var sc = if (depth > 0f) max(.88f, 1f - depth * .03f) else 1f
+        var op = (1f - (depth - pn)).coerceIn(0f, 1f)
+        val j = pileIndex[i]
+        val k = if (j < 0) 0f else t - j
+        if (k > 0f) {
+            d = base - min(k, pn) * g.peek
+            sc = min(sc, 1f - min(k, pn + 1f) * .03f)
+            if (k > pn) op = max(0f, 1f - (k - pn))
+        }
+        out[i * 3] = d - s
+        out[i * 3 + 1] = sc
+        out[i * 3 + 2] = op
+    }
+    return out
 }
 
 @Stable
 class StackState {
     val holders = HashMap<String, CardAnim>()
     val fullHeights = mutableStateMapOf<String, Int>()
+
+    /** Bumped every frame while a card drifts — the layout reads it. */
+    internal var tick by mutableIntStateOf(0)
+    internal val wake = Channel<Unit>(Channel.CONFLATED)
+    internal var wokeAt = 0L
+    /** Programmatic scroll jumps since the last layout — taken up by the drifts, not shown as a jump. */
+    internal var jumped = 0f
+    internal var shownTargets: StackTargets? = null
 
     /** 0→1 while the old category's cards leave sideways. */
     val exit = Animatable(0f)
@@ -75,9 +153,6 @@ class StackState {
     var viewport by mutableIntStateOf(0)
     var content = 0f
         internal set
-
-    /** Visual offset added to every card; eases out a shift of [value] so nothing jumps. */
-    val bias = Animatable(0f)
 
     /** Called with every user-driven delta (drag + its fling), never for programmatic scrolls. */
     var onUserScroll: ((Float) -> Unit)? = null
@@ -125,11 +200,27 @@ class StackState {
         try { return scrollable.scrollBy(d) } finally { auto = false }
     }
 
-    /** Shifts the scroll by [d] while the cards keep their place on screen, then eases the shift out. */
-    suspend fun shift(d: Float) {
+    /**
+     * Moves the scroll to [target] in one go while every card stays where it is on screen and then
+     * glides to its place from there — for layout changes (a card opening or closing), where a
+     * scroll animation would run the stack through the pile on the way.
+     */
+    suspend fun jumpTo(target: Float) {
+        try {
+            scrollable.scroll(MutatePriority.PreventUserInput) {
+                auto = true
+                shift(target.coerceIn(0f, maxValue) - this@StackState.value)
+            }
+        } finally {
+            auto = false
+        }
+    }
+
+    /** Shifts the scroll by [d] (even mid-drag) while the cards keep their place on screen. */
+    fun shift(d: Float) {
+        if (d == 0f) return
         value += d
-        bias.snapTo(bias.value + d)
-        bias.animateTo(0f, Motion.glide())
+        jumped += d
     }
 
     /** Target slots of the last composition, px, aligned with the visible list. */
@@ -143,9 +234,9 @@ class StackState {
 
 /**
  * The card pile. Cards are absolutely placed on [StackDims.Step] intervals so each covers the
- * lower part of the one before. Placement reads the stack's own scroll, so cards scrolling past
- * the top collect into a pile that keeps [StackDims.PEEK_N] title strips — only re-placement runs
- * per frame, never recomposition. The open card is taken out of the pile; the cards above it fold
+ * lower part of the one before. Layout reads the stack's own scroll, so cards scrolling past
+ * the top collect into a pile that keeps [StackDims.PEEK_N] title strips — only layout runs per
+ * frame, never recomposition (a child whose size didn't change isn't re-measured). The open card is taken out of the pile; the cards above it fold
  * into the strips. An open card never grows past the viewport: [card] gets `clipped` and the
  * rest lives in the editor.
  */
@@ -189,9 +280,9 @@ fun NoteStack(
             else -> step
         }
     }
-    val holders = notes.mapIndexed { i, n ->
-        state.holders.getOrPut(n.id) { CardAnim(tops[i], heights[i], if (state.enterArmed) 0f else 1f) }
-    }
+    val targets = remember(notes, ei, tops, heights) { StackTargets(notes.map { it.id }, ei, tops, heights) }
+    val geo = remember(step, peek, pad) { StackGeo(step, peek, pad, pn) }
+    val holders = notes.map { n -> state.holders.getOrPut(n.id) { CardAnim(if (state.enterArmed) 0f else 1f) } }
     SideEffect {
         state.tops = tops
         state.heights = heights
@@ -201,12 +292,21 @@ fun NoteStack(
         state.fullHeights.keys.filter { it !in ids }.forEach { state.fullHeights.remove(it) }
     }
 
-    // existing cards glide to their new slots; new ones were created in place
-    LaunchedEffect(tops, heights, ei) {
-        holders.forEachIndexed { i, h ->
-            launch { h.top.glideTo(tops[i]) }
-            launch { h.height.glideTo(heights[i]) }
-            launch { h.depth.glideTo(if (ei >= 0 && i < ei) (ei - i).toFloat() else 0f) }
+    // the drifts' frame loop: frame-paced like [Paced] (a heavy first frame doesn't eat the move)
+    LaunchedEffect(state) {
+        for (signal in state.wake) {
+            // the jump was taken up during the last layout: the first frame already moves
+            var last = state.wokeAt
+            while (true) {
+                val now = withFrameNanos { it }
+                if (last in 1..now) {
+                    val dt = (now - last) / 1e9f
+                    state.holders.values.forEach { it.step(dt) }
+                }
+                last = now
+                state.tick++
+                if (state.holders.values.none { it.moving }) break
+            }
         }
     }
     LaunchedEffect(state.enterGen) {
@@ -221,58 +321,52 @@ fun NoteStack(
     }
 
     val total = if (notes.isEmpty()) 0f else tops.last() + heights.last()
-    val nonExp = notes.indices.filter { it != ei }
-    val pileIndex = IntArray(notes.size) { -1 }.also { a -> nonExp.forEachIndexed { j, i -> a[i] = j } }
 
     Layout(
         content = { notes.forEachIndexed { i, n -> key(n.id) { card(n, i, i == ei && clipped) } } },
         modifier = modifier,
     ) { measurables, constraints ->
+        state.tick
+        val s = state.value
+        val pose = targets.pose(geo, s)
+        // the targets (or the scroll, programmatically) changed since the last frame: whatever moved
+        // is taken up by the drifts, measured from the old pose at the scroll it was shown at
+        val was = state.shownTargets
+        if (was != null && (state.jumped != 0f || (was !== targets && was != targets))) {
+            val old = was.pose(geo, s - state.jumped)
+            val at = HashMap<String, Int>(was.ids.size * 2)
+            was.ids.forEachIndexed { k, id -> at[id] = k }
+            targets.ids.forEachIndexed { i, id ->
+                val k = at[id] ?: return@forEachIndexed
+                val h = holders.getOrNull(i) ?: return@forEachIndexed
+                h.y.add(old[k * 3] - pose[i * 3])
+                h.scale.add(old[k * 3 + 1] - pose[i * 3 + 1])
+                h.alpha.add(old[k * 3 + 2] - pose[i * 3 + 2])
+                h.h.add(was.heights[k] - heights[i])
+            }
+            state.wokeAt = System.nanoTime()
+            state.wake.trySend(Unit)
+        }
+        state.shownTargets = targets
+        state.jumped = 0f
+
         val w = constraints.maxWidth
         val placeables = measurables.mapIndexed { i, m ->
-            val h = holders.getOrNull(i)?.height?.value ?: hc
+            val h = (heights.getOrNull(i) ?: hc) + (holders.getOrNull(i)?.h?.value ?: 0f)
             m.measure(Constraints.fixed(w, h.roundToInt().coerceAtLeast(1)))
         }
         val vh = if (constraints.hasBoundedHeight) constraints.maxHeight else (total + tail).roundToInt()
         layout(w, vh) {
-            val s = state.value
-            val base = s + pad + pn * peek
-            val bias = state.bias.value
-            val cur = FloatArray(holders.size) { holders[it].top.value + bias }
-
-            // how many (fractional) cards have crossed the pile line — keeps every position continuous
-            var t = -1f
-            for (j in nonExp.indices) {
-                val ai = nonExp[j]
-                val top = cur[ai]
-                if (top > base) break
-                val next = if (j + 1 < nonExp.size) cur[nonExp[j + 1]] else Float.POSITIVE_INFINITY
-                if (next > base) {
-                    val g = min(step, (if (ai + 1 < cur.size) cur[ai + 1] else Float.POSITIVE_INFINITY) - top)
-                    t = j + if (g <= 0f) 1f else min(1f, (base - top) / g)
-                    break
-                }
-                t = (j + 1).toFloat()
-            }
-
             val swipe = state.swipe.value
             val exit = state.exit.value
             val dir = state.exitDir
             placeables.forEachIndexed { i, p ->
                 val h = holders.getOrNull(i) ?: return@forEachIndexed
-                var d = cur[i]
-                val depth = h.depth.value
-                var sc = if (depth > 0f) max(.88f, 1f - depth * .03f) else 1f
-                var op = (1f - (depth - pn)).coerceIn(0f, 1f)
-                val j = pileIndex[i]
-                val k = if (j < 0) 0f else t - j
-                if (k > 0f) {
-                    d = base - min(k, pn.toFloat()) * peek
-                    sc = min(sc, 1f - min(k, pn + 1f) * .03f)
-                    if (k > pn) op = max(0f, 1f - (k - pn))
-                }
+                val y = pose[i * 3] + h.y.value
+                val sc = pose[i * 3 + 1] + h.scale.value
+                val op = pose[i * 3 + 2] + h.alpha.value
                 val e = h.enter.value
-                p.placeWithLayer(0, (d - s).roundToInt(), zIndex = i.toFloat()) {
+                p.placeWithLayer(0, y.roundToInt(), zIndex = i.toFloat()) {
                     transformOrigin = TransformOrigin(.5f, 0f)
                     val ss = sc * (.96f + .04f * e) * (1f - .04f * exit)
                     scaleX = ss

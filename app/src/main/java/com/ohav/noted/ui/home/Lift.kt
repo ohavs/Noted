@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -59,12 +60,15 @@ import com.ohav.noted.design.softShadow
 import com.ohav.noted.design.ShadowFrame
 import com.ohav.noted.design.fade
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * Long press lifts a card out of the stack: a clone floats above a blurred scrim with the action
  * menu beside it. Dragging past a few dp closes the menu and turns it into a reorder; letting go
- * flies the clone back into its (new) slot.
+ * flies the clone back into its (new) slot. Dragged up onto a category name (the giant title or
+ * the subcategory track), the clone shrinks around the finger and the name lights up; letting go
+ * there drops the note into that category — the clone flies into the name.
  */
 @Stable
 class LiftState {
@@ -72,7 +76,9 @@ class LiftState {
         internal set
     var from by mutableStateOf(Rect.Zero)
         internal set
+    var touchX by mutableFloatStateOf(0f)
     var touchY by mutableFloatStateOf(0f)
+    var dx by mutableFloatStateOf(0f)
     var dy by mutableFloatStateOf(0f)
     var dragging by mutableStateOf(false)
     var menu by mutableStateOf(false)
@@ -97,12 +103,41 @@ class LiftState {
     /** Last known coordinates of every card in the stack. */
     val coords = HashMap<String, LayoutCoordinates>()
 
+    /** Category names a card can be dropped on: key → (category id, coordinates). */
+    val targets = HashMap<String, Pair<String, LayoutCoordinates>>()
+    /** The category name under the finger, if it can take the card. */
+    var hover by mutableStateOf<String?>(null)
+    /** 0→1: the clone flies from the finger into [dropAt] (root px) and fades. */
+    val drop = Animatable(0f)
+    var dropAt by mutableStateOf(Offset.Zero)
+    /** Top of the stack's viewport (root px): above it the finger is over the header, not a slot. */
+    var stackTop = 0f
+
+    /** Root position of the finger while dragging. */
+    fun finger() = Offset(from.left + touchX + dx, from.top + touchY + dy)
+
+    /** The droppable category under [p], by its name's bounds (a little forgiving). */
+    fun targetAt(p: Offset, slop: Float, ok: (String) -> Boolean): Pair<String, Rect>? {
+        var best: Pair<String, Rect>? = null
+        for ((cat, lc) in targets.values) {
+            if (!lc.isAttached || !ok(cat)) continue
+            val r = lc.boundsInRoot()
+            if (r.width < 1f) continue
+            if (p.x in r.left - slop..r.right + slop && p.y in r.top - slop..r.bottom + slop) {
+                if (best == null || abs(r.center.x - p.x) < abs(best.second.center.x - p.x)) best = cat to r
+            }
+        }
+        return best
+    }
+
     fun slotRect(): Rect? = id?.let { coords[it] }?.takeIf { it.isAttached }?.boundsInRoot()
 
     internal fun begin(noteId: String, rect: Rect) {
         id = noteId
         from = rect
+        dx = 0f
         dy = 0f
+        hover = null
         dragging = false
         dragged = false
         settling = false
@@ -111,6 +146,7 @@ class LiftState {
 
     internal fun clear() {
         id = null
+        hover = null
         menu = false
         dragging = false
         settling = false
@@ -138,16 +174,20 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
     // absolute top-left: the clone and the menu are placed by left edges in root coordinates
     // (a plain Box would park them against the right edge in RTL and then add the offset)
     Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.AbsoluteAlignment.TopLeft) {
-        // scrim — taps dismiss while the menu is up
+        // scrim — taps dismiss while the menu is up; it lifts while dragging, so the category names
+        // the card can be dropped on read clearly
+        val dim by androidx.compose.animation.core.animateFloatAsState(if (lift.dragging) .3f else 1f, Motion.glide(), label = "dim")
         Box(
             Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = lift.pop.value.coerceIn(0f, 1f) }
+                .graphicsLayer { alpha = (lift.pop.value * dim).coerceIn(0f, 1f) }
                 .background(c.scrim)
                 .pointerInput(Unit) { detectTapGestures { ui.onDismiss() } },
         )
 
-        // the clone
+        // the clone: over a category name it shrinks around the finger, as if about to go in
+        val shrink = androidx.compose.runtime.remember { Animatable(0f) }
+        androidx.compose.runtime.LaunchedEffect(lift.hover != null) { shrink.animateTo(if (lift.hover != null) 1f else 0f, Motion.touch()) }
         val floatShadow = Shadows.float(c.isDark)
         val noteFill = c.note(NoteColor.of(n.color))
         Box(
@@ -160,8 +200,17 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
                     val r = currentRect(lift)
                     transformOrigin = TransformOrigin(.5f, .3f)
                     val k = 1f + .045f * lift.pop.value
-                    scaleX = k; scaleY = k
-                    alpha = if (r.width > 0f) 1f else 0f
+                    val p = lift.drop.value
+                    val sh = (1f - .58f * shrink.value) * (1f - .7f * p)
+                    scaleX = k * sh; scaleY = k * sh
+                    // keep the finger's point of the card under the finger while it shrinks, then
+                    // carry that point into the name
+                    val fx = lift.touchX.coerceIn(0f, size.width) - size.width * .5f
+                    val fy = lift.touchY.coerceIn(0f, size.height) - size.height * .3f
+                    val f = lift.finger()
+                    translationX = fx * k * (1f - sh) + (lift.dropAt.x - f.x) * p
+                    translationY = fy * k * (1f - sh) + (lift.dropAt.y - f.y) * p
+                    alpha = if (r.width > 0f) (1f - p * p).coerceIn(0f, 1f) else 0f
                 }
                 .then(with(density) { Modifier.size(lift.from.width.toDp(), lift.height.value.toDp()) })
                 // the float shadow leaves with the pop; the card's own shadow (inside) stays, so the
@@ -201,7 +250,7 @@ fun LiftLayer(lift: LiftState, ui: LiftUi) {
 /** Where the clone is drawn right now (root px). */
 private fun currentRect(lift: LiftState): Rect {
     val f = lift.from
-    val start = Rect(f.left, f.top + lift.dy, f.right, f.top + lift.dy + lift.height.value)
+    val start = Rect(f.left + lift.dx, f.top + lift.dy, f.right + lift.dx, f.top + lift.dy + lift.height.value)
     val p = lift.settle.value
     if (p <= 0f) return start
     val to = lift.slotRect() ?: return start

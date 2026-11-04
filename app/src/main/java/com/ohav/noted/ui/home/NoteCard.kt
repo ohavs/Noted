@@ -107,7 +107,7 @@ import kotlin.math.hypot
 import kotlin.math.min
 
 /** Long-press-then-drag hooks (reordering a lifted card). */
-class LiftGestures(val onStart: (Offset) -> Unit, val onDrag: (Float) -> Unit, val onEnd: () -> Unit)
+class LiftGestures(val onStart: (Offset) -> Unit, val onDrag: (Offset) -> Unit, val onEnd: () -> Unit)
 
 /**
  * Pulling the open card up into the editor, under the finger: [start] hands the card to the
@@ -201,7 +201,7 @@ fun NoteCard(
                         onDragStart = { liftNow?.onStart?.invoke(it) },
                         onDragEnd = { liftNow?.onEnd?.invoke() },
                         onDragCancel = { liftNow?.onEnd?.invoke() },
-                    ) { ch, d -> ch.consume(); liftNow?.onDrag?.invoke(d.y) }
+                    ) { ch, d -> ch.consume(); liftNow?.onDrag?.invoke(d) }
                 },
             )
             .softShadow(Shadows.card(c.isDark), 30.dp, note)

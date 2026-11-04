@@ -64,6 +64,7 @@ class Paced(initial: Float, private val eps: Float = .5f) {
     private var leadV = 0f
     private var stoppedAt = 0L
     private var runs = 0
+    private var lastFrame = -1L
 
     /** Jump without motion. */
     fun snapTo(v: Float) {
@@ -78,20 +79,22 @@ class Paced(initial: Float, private val eps: Float = .5f) {
 
     suspend fun glideTo(to: Float, onStep: ((Float) -> Unit)? = null) {
         target = to
-        // momentum carries over only from a run still going or cut a moment ago
-        if (runs == 0 && System.nanoTime() - stoppedAt > 60_000_000L) {
+        // momentum carries over only from a run still going or cut a moment ago — and then so does
+        // the frame clock, or the first frame of the new run would stand still (a one-frame hitch)
+        val carry = runs > 0 || System.nanoTime() - stoppedAt <= 60_000_000L
+        if (!carry) {
             velocity = 0f; lead = value; leadV = 0f
         }
-        var last = -1L
+        var last = if (carry) lastFrame else -1L
         runs++
         try {
             while (true) {
                 val now = withFrameNanos { it }
                 if (last >= 0) {
-                    var dt = min((now - last) / 1e9f, MAX_DT)
+                    var dt = min((now - last) / 1e9f, PACE_MAX_DT)
                     // semi-implicit Euler in small slices: stable for these constants at any dt
                     while (dt > 0f) {
-                        val h = min(dt, SLICE)
+                        val h = min(dt, PACE_SLICE)
                         leadV += (-Motion.LEAD_K * (lead - to) - Motion.LEAD_C * leadV) * h
                         lead += leadV * h
                         velocity += (-Motion.GLIDE_K * (value - lead) - Motion.GLIDE_C * velocity) * h
@@ -101,6 +104,7 @@ class Paced(initial: Float, private val eps: Float = .5f) {
                     onStep?.invoke(value)
                 }
                 last = now
+                lastFrame = now
                 if (abs(value - to) < eps && abs(velocity) < eps * 4f && abs(lead - to) < eps) {
                     snapTo(to)
                     onStep?.invoke(value)
@@ -115,8 +119,45 @@ class Paced(initial: Float, private val eps: Float = .5f) {
         }
     }
 
-    private companion object {
-        const val MAX_DT = 1f / 60f
-        const val SLICE = 1f / 480f
+}
+
+internal const val PACE_MAX_DT = 1f / 60f
+internal const val PACE_SLICE = 1f / 480f
+
+/**
+ * A screen-space offset that glides back to 0 on [Paced]'s curve (lead + glide, frame-paced by its
+ * owner). FLIP: the layout jumps straight to where things belong and [add] takes up the jump, so
+ * every element travels from exactly where it was shown — a new target mid-flight just adds to
+ * the offset, momentum kept. Plain fields: the owner steps it and invalidates what reads it.
+ */
+class Drift(private val eps: Float = .5f) {
+    var value = 0f
+        private set
+    private var velocity = 0f
+    private var lead = 0f
+    private var leadV = 0f
+
+    val active: Boolean get() = value != 0f || velocity != 0f || lead != 0f || leadV != 0f
+
+    fun add(d: Float) {
+        if (d == 0f || d.isNaN()) return
+        value += d
+        lead += d
+    }
+
+    fun step(dt: Float) {
+        if (!active) return
+        var left = min(dt, PACE_MAX_DT)
+        while (left > 0f) {
+            val h = min(left, PACE_SLICE)
+            leadV += (-Motion.LEAD_K * lead - Motion.LEAD_C * leadV) * h
+            lead += leadV * h
+            velocity += (-Motion.GLIDE_K * (value - lead) - Motion.GLIDE_C * velocity) * h
+            value += velocity * h
+            left -= h
+        }
+        if (abs(value) < eps && abs(velocity) < eps * 4f && abs(lead) < eps) {
+            value = 0f; velocity = 0f; lead = 0f; leadV = 0f
+        }
     }
 }

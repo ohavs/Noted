@@ -7,7 +7,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.ui.draw.clipToBounds
-import kotlinx.coroutines.CoroutineStart
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.withFrameNanos
@@ -84,6 +83,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -259,8 +259,45 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         }
     }
 
+    /** A lifted note can go into any category but the one it's in ("all" isn't one; nor a folder I only view). */
+    fun canDrop(catId: String): Boolean {
+        val n = lift.id?.let { id -> notes.firstOrNull { it.id == id } } ?: return false
+        if (catId == "all" || catId == n.categoryId) return false
+        val k = tree.flat.firstOrNull { it.id == catId } ?: return false
+        return !(k.foreign && k.shareInfo.readOnly)
+    }
+
+    /** Let go over a category name: the clone flies into it, the note moves there (undo in the toast). */
+    fun dropLift(catId: String) {
+        val id = lift.id ?: return
+        val n = notes.firstOrNull { it.id == id } ?: return
+        val k = tree.flat.firstOrNull { it.id == catId } ?: return
+        val from = n.categoryId
+        val to = lift.targets.values.firstOrNull { it.first == catId && it.second.isAttached }?.second?.boundsInRoot()
+        lift.menu = false
+        lift.dragging = false
+        lift.settling = true
+        lift.order = null
+        lift.dropAt = to?.center ?: lift.finger()
+        haptics.confirm()
+        scope.launch {
+            launch { lift.pop.animateTo(0f, Motion.glide()) }
+            // the note leaves the stack while the clone is still on its way into the name
+            launch { delay(140); app.notes.move(listOf(id), catId) }
+            lift.drop.animateTo(1f, Motion.glide())
+            // still shown here (all notes, or the parent of where it went): rise back into the slot
+            stack.holders[id]?.let { h -> h.enter.snapTo(0f); launch { h.enter.animateTo(1f, Motion.glide()) } }
+            lift.clear()
+            lift.drop.snapTo(0f)
+            toasts.show("עבר ל״${k.name}״", CatIcons.of(k.icon), action = "ביטול") {
+                scope.launch { app.notes.move(listOf(id), from) }
+            }
+        }
+    }
+
     fun settleLift(after: (() -> Unit)? = null) {
         if (lift.id == null || lift.settling) { after?.invoke(); return }
+        lift.hover?.takeIf { lift.dragging && canDrop(it) }?.let { dropLift(it); after?.invoke(); return }
         val order = if (lift.dragging) lift.order else null
         lift.menu = false
         lift.dragging = false
@@ -413,9 +450,11 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             while (lift.dragging) {
                 withFrameNanos { }
                 val y = lift.from.top + lift.touchY + lift.dy
+                // near the stack's top edge it scrolls up; above it is the header (drop on a name)
                 val v = when {
+                    lift.hover != null -> 0f
                     y > screenH - 110.dp.toPx() -> speed
-                    y < 90.dp.toPx() -> -speed
+                    y >= lift.stackTop && y < lift.stackTop + 56.dp.toPx() -> -speed
                     else -> 0f
                 }
                 if (v != 0f) lift.startTop += stack.scrollBy(v)
@@ -443,9 +482,20 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         stack.exit.snapTo(0f)
     }
 
-    // open card: keep it in view, leaving room above for the strips of the cards folded behind it
+    // open card: keep it in view, leaving room above for the strips of the cards folded behind it.
+    // The scroll jumps and the cards drift there from where they are (FLIP), so the card simply
+    // rises to its place; closing it (back, a tap beside it) lowers it back to where it came from.
+    val openMem = remember { OpenMem() }
     LaunchedEffect(expanded, expanded?.let { stack.fullHeights[it] }) {
-        val id = expanded ?: return@LaunchedEffect
+        val id = expanded
+        if (id == null) {
+            val back = openMem.from
+            if (openMem.open != null && !openMem.byScroll && back != null && openMem.cat == cat) stack.jumpTo(back)
+            openMem.open = null; openMem.from = null; openMem.byScroll = false
+            return@LaunchedEffect
+        }
+        if (openMem.open == null) { openMem.from = stack.value; openMem.cat = cat }
+        openMem.open = id
         val i = visible.indexOfFirst { it.id == id }
         if (i < 0 || i >= stack.tops.size) return@LaunchedEffect
         with(density) {
@@ -457,7 +507,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             val room = StackDims.PilePad.toPx() + minOf(StackDims.PEEK_N, i) * StackDims.Peek.toPx()
             target = minOf(target, top - room)
             if (top < stack.value + room) target = top - room
-            if (abs(target - stack.value) > 2f) stack.animateTo(target)
+            if (abs(target - stack.value) > 2f) stack.jumpTo(target)
         }
     }
 
@@ -493,9 +543,10 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     dragged = 0f
                     val i = visibleNow.indexOfFirst { it.id == id }
                     val old = stack.tops.getOrNull(i)
+                    openMem.byScroll = true
                     expanded = null
                     haptics.tick()
-                    if (old != null) scope.launch(start = CoroutineStart.UNDISPATCHED) { stack.shift(i * stepPx - old) }
+                    if (old != null) stack.shift(i * stepPx - old)
                 }
             }
         }
@@ -628,9 +679,9 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     }
                     CategoryTrack(
                         cats, catIndex, { counts[it] ?: 0 },
-                        onSelect = { cat = cats[it].id }, onLongPress = { catMenu(cats[it].id) },
+                        onSelect = { cat = cats[it].id }, onLongPress = { catMenu(cats[it].id) }, lift = lift,
                     )
-                    SubTrack(tree, topId, cat, { counts[it] ?: 0 }, onSelect = { cat = it }, onLongPress = ::catMenu)
+                    SubTrack(tree, topId, cat, { counts[it] ?: 0 }, onSelect = { cat = it }, onLongPress = ::catMenu, lift = lift)
                     CatSub(visible, blocksOf)
                 } else {
                     Spacer(Modifier.height(10.dp))
@@ -647,6 +698,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     .weight(1f)
                     .clipToBounds()
                     .onSizeChanged { stack.viewport = it.height }
+                    .onGloballyPositioned { lift.stackTop = it.boundsInRoot().top }
                     .scrollable(stack.scrollable, Orientation.Vertical, reverseDirection = true)
                     .padding(horizontal = 16.dp),
             ) {
@@ -712,8 +764,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                         selected = n.id in selected,
                         clipped = clipped,
                         lift = LiftGestures(
-                            onStart = { lift.touchY = it.y },
-                            onDrag = { d -> liftDrag(lift, n.id, d, visible, density, scope, haptics) { expanded = null } },
+                            onStart = { lift.touchX = it.x; lift.touchY = it.y },
+                            onDrag = { d -> liftDrag(lift, n.id, d, visible, density, scope, haptics, ::canDrop) { openMem.byScroll = true; expanded = null } },
                             onEnd = { if (lift.id == n.id && lift.dragging) settleLift() },
                         ),
                     )
@@ -771,16 +823,20 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     }
 }
 
-/** One step of a lifted card's drag: after a few dp it becomes a reorder; slots follow the finger. */
+/**
+ * One step of a lifted card's drag: after a few dp it becomes a reorder; slots follow the finger.
+ * Up over the header the slots hold still, and a category name under the finger lights up to take it.
+ */
 private fun liftDrag(
-    lift: LiftState, id: String, d: Float, visible: List<NoteEntity>,
+    lift: LiftState, id: String, d: androidx.compose.ui.geometry.Offset, visible: List<NoteEntity>,
     density: androidx.compose.ui.unit.Density, scope: kotlinx.coroutines.CoroutineScope,
-    haptics: com.ohav.noted.design.Haptics, collapse: () -> Unit,
+    haptics: com.ohav.noted.design.Haptics, canDrop: (String) -> Boolean, collapse: () -> Unit,
 ) {
     if (lift.id != id || lift.settling) return
-    lift.dy += d
+    lift.dx += d.x
+    lift.dy += d.y
     val step = with(density) { StackDims.Step.toPx() }
-    if (!lift.dragging && abs(lift.dy) > with(density) { 10.dp.toPx() }) {
+    if (!lift.dragging && kotlin.math.hypot(lift.dx, lift.dy) > with(density) { 10.dp.toPx() }) {
         lift.dragging = true
         lift.dragged = true
         lift.menu = false
@@ -794,6 +850,13 @@ private fun liftDrag(
         scope.launch { lift.height.animateTo(hc, Motion.glide()) }
     }
     if (!lift.dragging) return
+    val finger = lift.finger()
+    val over = lift.targetAt(finger, with(density) { 10.dp.toPx() }) { canDrop(it) }?.first
+    if (over != lift.hover) {
+        lift.hover = over
+        if (over != null) haptics.tick()
+    }
+    if (finger.y < lift.stackTop || over != null) return
     val ord = lift.order ?: return
     val pos = lift.startTop + lift.dy - lift.dyAtDrag
     val to = (pos / step).roundToInt().coerceIn(0, ord.lastIndex)
@@ -938,9 +1001,11 @@ private fun CategoryTrack(
     small: Boolean = false,
     onSelect: (Int) -> Unit,
     onLongPress: (Int) -> Unit,
+    lift: LiftState? = null,
 ) {
     val c = Noted.colors
     val t = Noted.type
+    val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val state = rememberLazyListState(initialFirstVisibleItemIndex = index)
     val fling = rememberSnapFlingBehavior(state, SnapPosition.Start)
     val nearest by remember { derivedStateOf { nearestItem(state) } }
@@ -976,11 +1041,22 @@ private fun CategoryTrack(
     ) {
         itemsIndexed(cats, key = { _, it -> it.id }) { i, cat ->
             val on = i == nearest
-            val col by animateColorAsState(if (on) c.ink else c.ink3, Motion.glide(), label = "cat")
+            // a lifted note held over this name: it lights up and leans in to take it
+            val hot = lift != null && lift.hover == cat.id
+            val col by animateColorAsState(if (hot) c.accent else if (on) c.ink else c.ink3, Motion.glide(), label = "cat")
             val show by animateFloatAsState(if (on) 1f else 0f, Motion.glide(), label = "count")
+            val lean by animateFloatAsState(if (hot) 1f else 0f, Motion.touch(), label = "drop")
+            val key = if (small) "s:${cat.id}" else cat.id
+            if (lift != null) DisposableEffect(key) { onDispose { lift.targets.remove(key) } }
             Row(
                 Modifier
                     .then(if (i == cats.lastIndex) Modifier.padding(end = tail) else Modifier)
+                    .then(if (lift != null && cat.id != "all") Modifier.onGloballyPositioned { lift.targets[key] = cat.id to it } else Modifier)
+                    .graphicsLayer {
+                        val k = 1f + .08f * lean
+                        scaleX = k; scaleY = k
+                        transformOrigin = TransformOrigin(if (rtl) 1f else 0f, .6f)
+                    }
                     .pointerInput(i) { detectTapGestures(onLongPress = { hold(i) }) { select(i) } },
                 horizontalArrangement = Arrangement.spacedBy(if (small) 4.dp else 6.dp),
             ) {
@@ -1018,7 +1094,7 @@ private suspend fun LazyListState.alignTo(i: Int) {
  * of them), then each one. Absent — not even its height — for a category without any.
  */
 @Composable
-private fun SubTrack(tree: CatTree, top: String, current: String, count: (String) -> Int, onSelect: (String) -> Unit, onLongPress: (String) -> Unit) {
+private fun SubTrack(tree: CatTree, top: String, current: String, count: (String) -> Int, onSelect: (String) -> Unit, onLongPress: (String) -> Unit, lift: LiftState? = null) {
     AnimatedContent(
         targetState = top,
         transitionSpec = {
@@ -1034,7 +1110,7 @@ private fun SubTrack(tree: CatTree, top: String, current: String, count: (String
             val index = items.indexOfFirst { it.id == current }.coerceAtLeast(0)
             CategoryTrack(
                 items, index, count, small = true,
-                onSelect = { onSelect(items[it].id) }, onLongPress = { onLongPress(items[it].id) },
+                onSelect = { onSelect(items[it].id) }, onLongPress = { onLongPress(items[it].id) }, lift = lift,
             )
         }
     }
@@ -1081,4 +1157,12 @@ private fun UpdateBanner(version: String, onClick: () -> Unit) {
         }
         Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.inverseInk2)
     }
+}
+
+/** What the open card came from: the scroll to lower it back to when it closes (not by scrolling). */
+private class OpenMem {
+    var open: String? = null
+    var from: Float? = null
+    var cat: String? = null
+    var byScroll = false
 }
