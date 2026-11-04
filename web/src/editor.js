@@ -5,7 +5,7 @@ import { S, canEdit, setMeta, writeBlocks, sameBlock, uuid, between, sinkChecked
 import { h, $, $$, icon, animate, toast, haptic, sheet, fmtRel } from './ui.js';
 import { toHTML, fromDOM, clean, esc, INKS, INK_NAMES } from './rich.js';
 import { noteMenu, CHECK_SVG, longPress } from './main.js';
-import { openReminder, reminderChip } from './reminders.js';
+import { openReminder, reminderChip, placeChip } from './reminders.js';
 
 let ed = null;
 
@@ -89,6 +89,7 @@ function build() {
   const { panel, n, readOnly } = ed;
   panel.style.background = `var(--n-${n.color.toLowerCase()})`;
   const rem = S.reminders.get(remId(n.id));
+  const prem = S.placeRems.get(remId(n.id));
   panel.replaceChildren(h('div.ed-inner',
     h('header.ed-head',
       h('button.icon-btn.press.ink', { 'aria-label': 'חזרה', on: { click: () => closeEditor() } }, icon('caret-right')),
@@ -98,7 +99,7 @@ function build() {
     ),
     h('div.ed-scroll',
       h('div.ed-title', { contenteditable: readOnly ? 'false' : 'true', 'data-ph': 'כותרת', spellcheck: 'true', on: { input: onTitle, keydown: titleKeys }, html: esc(clean(n.title)) }),
-      h('div.ed-meta', rem ? reminderChip(rem) : null, peopleLine(n), h('span.ed-when', n.updatedAt ? 'נערך ' + fmtRel(n.updatedAt) : '')),
+      h('div.ed-meta', rem ? reminderChip(rem) : null, prem ? placeChip(prem) : null, peopleLine(n), h('span.ed-when', n.updatedAt ? 'נערך ' + fmtRel(n.updatedAt) : '')),
       h('div.ed-blocks', ...ed.blocks.map(row)),
       h('div.ed-tail', { on: { click: tailClick } }),
     ),
@@ -143,6 +144,8 @@ function row(b) {
       h('button.row-tool.press', { 'aria-label': 'מחיקת השורה', title: 'מחיקת השורה', on: { click: () => removeBlock(b, true) } }, icon('x')),
     ));
     const rr = S.reminders.get(remId(ed.n.id, b.id));
+    const pr = S.placeRems.get(remId(ed.n.id, b.id));
+    if (pr) t.after(placeChip(pr, true));
     if (rr) t.after(reminderChip(rr, true));
   } else {
     r.append(media(b));

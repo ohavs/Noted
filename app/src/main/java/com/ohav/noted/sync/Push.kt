@@ -127,6 +127,17 @@ class PushService : FirebaseMessagingService() {
             kotlinx.coroutines.runBlocking { runCatching { app.sync.applyPushedReminder(data["id"] ?: return@runBlocking, f) } }
             return
         }
+        // a place or place reminder set / changed on another device: into Room and onto the fences
+        if (data["kind"] == "pl") {
+            val app = applicationContext as? com.ohav.noted.NotedApp ?: return
+            val o = runCatching { org.json.JSONObject(data["doc"].orEmpty()) }.getOrNull() ?: return
+            val f = HashMap<String, Any?>()
+            o.keys().forEach { k -> f[k] = o.opt(k).takeUnless { it == org.json.JSONObject.NULL } }
+            kotlinx.coroutines.runBlocking {
+                runCatching { app.sync.applyPushedPlace(data["col"] ?: return@runBlocking, data["id"] ?: return@runBlocking, f) }
+            }
+            return
+        }
         Push.show(this, data)
     }
 }

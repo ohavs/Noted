@@ -310,4 +310,16 @@ exports.reminderWritten = onDocumentWritten('users/{uid}/reminders/{id}', async 
     logger.warn('reminder push failed', e);
   }
 });
+// Places and place reminders set on one device reach the others' fences while they sleep.
+for (const col of ['places', 'placeReminders']) {
+  exports[col === 'places' ? 'placeWritten' : 'placeReminderWritten'] = onDocumentWritten(`users/{uid}/${col}/{id}`, async (ev) => {
+    const after = ev.data?.after;
+    if (!after?.exists) return;
+    try {
+      await send(ev.params.uid, { kind: 'pl', col, id: ev.params.id, doc: JSON.stringify(after.data()), folder: '', note: `pl:${ev.params.id}` });
+    } catch (e) {
+      logger.warn('place push failed', e);
+    }
+  });
+}
 Object.assign(exports, require('./account'));

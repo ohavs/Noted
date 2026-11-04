@@ -23,6 +23,8 @@ import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.ShadowEntity
 import com.ohav.noted.data.ReminderEntity
+import com.ohav.noted.data.PlaceEntity
+import com.ohav.noted.data.PlaceReminderEntity
 import com.ohav.noted.data.TemplateEntity
 import com.ohav.noted.data.Share
 import com.ohav.noted.data.Member
@@ -90,6 +92,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     private val catShadows = HashMap<String, CatShadow>()
     /** Time reminders: the `at` of the copy last agreed with the cloud (negative = a tombstone). */
     private val remShadows = HashMap<String, Long>()
+    /** Places and place reminders: the copy last agreed with the cloud, keyed `p:<id>` / `q:<id>` (see [PlShadow]). */
+    private val plShadows = HashMap<String, PlShadow>()
     /** My templates as the cloud has them: id → `at` (last write wins, see [pullTemplates]). */
     private val tplCloud = HashMap<String, Long>()
     /** The templates listener has delivered once: only then is it known what the cloud lacks. */
@@ -147,6 +151,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('t' to s) else failed(e) },
             fs.collection("users").document(uid).collection("reminders")
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('r' to s) else failed(e) },
+            fs.collection("users").document(uid).collection(PLACES)
+                .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('p' to s) else failed(e) },
+            fs.collection("users").document(uid).collection(PLACE_REMINDERS)
+                .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('q' to s) else failed(e) },
         )
         launch { runCatching { Push.register(ctx, uid) } }
         // nothing is pushed before this device has seen the cloud once, so a second phone merges instead of duplicating
@@ -162,13 +170,15 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                             'c' -> pullCats(s, uid)
                             't' -> pullTemplates(s)
                             'r' -> pullReminders(s)
+                            'p' -> pullPlaces(s)
+                            'q' -> pullPlaceReminders(s)
                             else -> pullFolders(s, uid)
                         }
                     }
                     if (!s.metadata.isFromCache) when (k) {
                         'n' -> serverNotes = true
                         'c' -> serverCats = true
-                        't', 'r' -> Unit
+                        't', 'r', 'p', 'q' -> Unit
                         else -> foldersSeen = true
                     }
                     if (!primed.value && serverNotes && serverCats) {
@@ -194,15 +204,18 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             }
             launch {
                 primed.first { it }
-                combine(notes.observeAll(), notes.observeCategories(), db.templates().observeAll(), db.reminders().observeAll(), repush) { a, b, t, r, _ -> Pushes(a, b, t, r) }
+                val placed = combine(db.places().observePlaces(), db.places().observeReminders()) { p, q -> p to q }
+                val timed = combine(db.reminders().observeAll(), placed) { r, pq -> Triple(r, pq.first, pq.second) }
+                combine(notes.observeAll(), notes.observeCategories(), db.templates().observeAll(), timed, repush) { a, b, t, r, _ -> Pushes(a, b, t, r.first, r.second, r.third) }
                     .debounce(700)
-                    .collect { (ns, cs, ts, rs) ->
+                    .collect { (ns, cs, ts, rs, ps, qs) ->
                         mutex.withLock {
                             pushCats(fs, uid, cs)
                             pushFolders(fs, u, cs)
                             pushNotes(fs, u, ns, cs)
                             pushTemplates(fs, uid, ts)
                             pushReminders(fs, uid, rs)
+                            pushPlaces(fs, uid, ps, qs)
                         }
                         kick()
                     }
@@ -236,13 +249,14 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             dao.clearMedia()
             prefs.edit().putString("uid", uid).apply()
         }
-        noteShadows.clear(); catShadows.clear(); remShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
+        noteShadows.clear(); catShadows.clear(); remShadows.clear(); plShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
         tplCloud.clear(); tplSeen = false
         dao.shadows().forEach { s ->
             when {
                 s.id.startsWith("n:") -> NoteShadow.decode(s.json)?.let { noteShadows[s.id.drop(2)] = it }
                 s.id.startsWith("c:") -> CatShadow.decode(s.json)?.let { catShadows[s.id.drop(2)] = it }
                 s.id.startsWith("r:") -> s.json.toLongOrNull()?.let { remShadows[s.id.drop(2)] = it }
+                s.id.startsWith("p:") || s.id.startsWith("q:") -> PlShadow.decode(s.json)?.let { plShadows[s.id] = it }
             }
         }
     }
@@ -506,7 +520,10 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
 
     // ------------------------------------------------------------------ reminders
 
-    private data class Pushes(val notes: List<NoteEntity>, val cats: List<CategoryEntity>, val templates: List<TemplateEntity>, val reminders: List<ReminderEntity>)
+    private data class Pushes(
+        val notes: List<NoteEntity>, val cats: List<CategoryEntity>, val templates: List<TemplateEntity>, val reminders: List<ReminderEntity>,
+        val places: List<PlaceEntity>, val placeReminders: List<PlaceReminderEntity>,
+    )
 
     /**
      * `users/{uid}/reminders/{id}`: my time reminders as whole documents, the newest `at` wins
@@ -581,6 +598,160 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             remShadows[id] = -at
             dao.putShadow(ShadowEntity("r:$id", (-at).toString()))
         }
+    }
+
+    // ------------------------------------------------------------------ places
+
+    /** [at] of the last write agreed with the cloud (negative = a tombstone) and the content hash it had. */
+    private data class PlShadow(val at: Long, val hash: Int) {
+        fun encode() = "$at|$hash"
+        companion object {
+            fun decode(s: String): PlShadow? {
+                val (a, h) = s.split("|").takeIf { it.size == 2 } ?: return null
+                return PlShadow(a.toLongOrNull() ?: return null, h.toIntOrNull() ?: return null)
+            }
+        }
+    }
+
+    /** What syncs of a place: everything but the arming, which is this device's own geofence state. */
+    private fun PlaceEntity.fields(): Map<String, Any?> = mapOf(
+        "name" to name, "kind" to kind, "lat" to lat, "lng" to lng, "radius" to radius, "address" to address,
+        "position" to position, "createdAt" to createdAt,
+    )
+
+    private fun PlaceReminderEntity.fields(): Map<String, Any?> = mapOf(
+        "noteId" to noteId, "blockId" to blockId, "placeId" to placeId, "leave" to leave, "always" to always, "days" to days,
+        "fromMin" to fromMin, "toMin" to toMin, "fired" to fired, "createdAt" to createdAt, "sticky" to sticky,
+    )
+
+    private fun hashOf(f: Map<String, Any?>) = f.entries.sortedBy { it.key }.joinToString("\u0001") { "${it.key}=${it.value}" }.hashCode()
+
+    private suspend fun plShadow(key: String): PlShadow? =
+        plShadows[key] ?: dao.shadow(key)?.let { PlShadow.decode(it.json) }?.also { plShadows[key] = it }
+
+    private suspend fun putPlShadow(key: String, s: PlShadow) {
+        plShadows[key] = s
+        dao.putShadow(ShadowEntity(key, s.encode()))
+    }
+
+    /**
+     * `users/{uid}/places/{id}` and `users/{uid}/placeReminders/{id}`: whole documents, like time
+     * reminders. A copy changed here and not yet pushed wins over the cloud (it goes up next with
+     * a newer `at`); otherwise the cloud's newer write is taken. Every device keeps its own fences.
+     */
+    private suspend fun pullPlaces(s: QuerySnapshot) {
+        var any = false
+        for (d in s.documents) {
+            if (d.metadata.hasPendingWrites()) continue
+            any = applyPlace(d.id, d.data ?: continue) || any
+        }
+        if (any) refence()
+    }
+
+    private suspend fun pullPlaceReminders(s: QuerySnapshot) {
+        var any = false
+        for (d in s.documents) {
+            if (d.metadata.hasPendingWrites()) continue
+            any = applyPlaceReminder(d.id, d.data ?: continue) || any
+        }
+        if (any) refence()
+    }
+
+    /** A place or place reminder that came in a push message (the app may have been asleep). */
+    suspend fun applyPushedPlace(col: String, id: String, f: Map<String, Any?>) = mutex.withLock {
+        val changed = if (col == PLACES) applyPlace(id, f) else applyPlaceReminder(id, f)
+        if (changed) refence()
+    }
+
+    private fun refence() {
+        val app = ctx.applicationContext as? com.ohav.noted.NotedApp ?: return
+        app.scope.launch { runCatching { app.places.sync() } }
+    }
+
+    /** Returns whether anything changed here. */
+    private suspend fun applyPlace(id: String, f: Map<String, Any?>): Boolean {
+        val key = "p:$id"
+        val at = (f["at"] as? Number)?.toLong() ?: return false
+        val deleted = f["deleted"] == true
+        val known = plShadow(key)
+        if (known != null && kotlin.math.abs(known.at) == at && (known.at < 0) == deleted) return false
+        if (known != null && kotlin.math.abs(known.at) > at) return false
+        val pd = db.places()
+        val local = pd.place(id)
+        // changed here since we last agreed: ours goes up next and wins
+        if (local != null && known != null && known.at > 0 && hashOf(local.fields()) != known.hash) return false
+        if (deleted) {
+            if (local != null) pd.deletePlace(id)
+            putPlShadow(key, PlShadow(-at, 0))
+            return local != null
+        }
+        val p = PlaceEntity(
+            id = id, name = f["name"] as? String ?: "", kind = f["kind"] as? String ?: "other",
+            lat = (f["lat"] as? Number)?.toDouble() ?: return false, lng = (f["lng"] as? Number)?.toDouble() ?: return false,
+            radius = (f["radius"] as? Number)?.toInt() ?: 150, address = f["address"] as? String ?: "",
+            position = (f["position"] as? Number)?.toDouble() ?: 0.0, createdAt = (f["createdAt"] as? Number)?.toLong() ?: at,
+        )
+        // the arming is this device's: kept unless the point or radius moved
+        val moved = local == null || local.lat != p.lat || local.lng != p.lng || local.radius != p.radius
+        pd.upsertPlace(if (moved) p else p.copy(armIn = local!!.armIn, armOut = local.armOut))
+        putPlShadow(key, PlShadow(at, hashOf(p.fields())))
+        return true
+    }
+
+    private suspend fun applyPlaceReminder(id: String, f: Map<String, Any?>): Boolean {
+        val key = "q:$id"
+        val at = (f["at"] as? Number)?.toLong() ?: return false
+        val deleted = f["deleted"] == true
+        val known = plShadow(key)
+        if (known != null && kotlin.math.abs(known.at) == at && (known.at < 0) == deleted) return false
+        if (known != null && kotlin.math.abs(known.at) > at) return false
+        val pd = db.places()
+        val local = pd.reminder(id)
+        if (local != null && known != null && known.at > 0 && hashOf(local.fields()) != known.hash) return false
+        if (deleted) {
+            if (local != null) {
+                pd.deleteReminder(id)
+                androidx.core.app.NotificationManagerCompat.from(ctx).cancel(com.ohav.noted.places.PlaceNotifier.idOf(id))
+                com.ohav.noted.reminders.Shade.forget(ctx, com.ohav.noted.reminders.Shade.place(id))
+            }
+            putPlShadow(key, PlShadow(-at, 0))
+            return local != null
+        }
+        val r = PlaceReminderEntity(
+            id = id, noteId = f["noteId"] as? String ?: return false, blockId = f["blockId"] as? String ?: "",
+            placeId = f["placeId"] as? String ?: return false, leave = f["leave"] == true, always = f["always"] == true,
+            days = f["days"] as? String ?: "", fromMin = (f["fromMin"] as? Number)?.toInt(), toMin = (f["toMin"] as? Number)?.toInt(),
+            fired = f["fired"] == true, createdAt = (f["createdAt"] as? Number)?.toLong() ?: at, sticky = f["sticky"] == true,
+        )
+        pd.upsertReminder(r)
+        putPlShadow(key, PlShadow(at, hashOf(r.fields())))
+        return true
+    }
+
+    private suspend fun pushPlaces(fs: FirebaseFirestore, uid: String, places: List<PlaceEntity>, rems: List<PlaceReminderEntity>) {
+        val user = fs.collection("users").document(uid)
+        suspend fun up(col: String, prefix: String, rows: List<Pair<String, Map<String, Any?>>>) {
+            val ref = user.collection(col)
+            val live = HashSet<String>()
+            for ((id, f) in rows) {
+                val key = "$prefix:$id"
+                live += key
+                val h = hashOf(f)
+                val known = plShadow(key)
+                if (known != null && known.at > 0 && known.hash == h) continue
+                val at = maxOf(System.currentTimeMillis(), kotlin.math.abs(known?.at ?: 0L) + 1)
+                ref.document(id).set(f + mapOf("at" to at, "deleted" to false, "by" to "android"))
+                putPlShadow(key, PlShadow(at, h))
+            }
+            for ((key, sh) in plShadows.toList()) {
+                if (!key.startsWith("$prefix:") || key in live || sh.at < 0) continue
+                val at = maxOf(System.currentTimeMillis(), sh.at + 1)
+                ref.document(key.drop(2)).set(mapOf("deleted" to true, "at" to at, "by" to "android"))
+                putPlShadow(key, PlShadow(-at, 0))
+            }
+        }
+        up(PLACES, "p", places.map { it.id to it.fields() })
+        up(PLACE_REMINDERS, "q", rems.map { it.id to it.fields() })
     }
 
     // ------------------------------------------------------------------ templates
@@ -802,6 +973,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
         private val MEDIA = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link)
         /** How long a shared folder outlives its deleted category (longer than the undo toast). */
         private const val FOLDER_GRACE = 15_000L
+        const val PLACES = "places"
+        const val PLACE_REMINDERS = "placeReminders"
 
         /** Fields every member keeps for themselves (the owner's at the top level, others' under `u.<uid>`). */
         val PERSONAL = setOf("categoryId", "pinned", "favorite", "archived", "trashedAt", "position")

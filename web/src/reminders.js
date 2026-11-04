@@ -1,6 +1,6 @@
 // Time reminders on the web: the picker (same model as the app), the agenda, and ringing while
 // the site is open. Every change goes to users/{uid}/reminders — the phone and watch ring from it.
-import { S, setReminder, removeReminder, doneReminder, advanceReminder, patchReminder, remId } from './model.js';
+import { S, setReminder, removeReminder, removePlaceReminder, restorePlaceReminder, doneReminder, advanceReminder, patchReminder, remId } from './model.js';
 import { h, $, $$, icon, sheet, toast, haptic, animate, fmtRel, fmtShort, hm, DAYS, DAYS_FULL, MONTHS, dayDiff, settings } from './ui.js';
 import { parseRule, repeatText, dueAt, occAt, fromLocal } from './repeat.js';
 import { clean } from './rich.js';
@@ -11,6 +11,30 @@ export function reminderChip(r, small = false) {
   const rep = parseRule(r.rule, r.until);
   return h(`span.rem-chip${small ? '.sm' : ''}${late ? '.late' : ''}`, icon(r.sticky ? 'notification' : 'bell-ringing', true),
     due != null ? fmtRel(due) : 'צלצלה', rep.kind !== 'none' ? icon('repeat') : null);
+}
+
+/** "When I get to / leave <place>": set on the phone, shown here; tapping offers to remove it. */
+export function placeChip(r, small = false) {
+  const p = S.places.get(r.placeId);
+  const name = p?.name || 'מקום';
+  const what = r.fired && !r.always ? 'צלצלה' : (r.leave ? 'ביציאה מ' : 'בהגעה ל') + name;
+  return h(`button.rem-chip.place.press${small ? '.sm' : ''}${r.fired && !r.always ? '.spent' : ''}`, {
+    'data-scale': '.96',
+    title: r.always ? 'בכל פעם' : 'פעם אחת',
+    on: {
+      click: (e) => {
+        e.stopPropagation();
+        haptic('light');
+        toast(`${r.leave ? 'יציאה מ' : 'הגעה ל'}${name} · נקבע בטלפון`, {
+          icon: 'map-pin', action: 'הסרה',
+          onAction: () => {
+            removePlaceReminder(r.id);
+            toast('תזכורת המקום הוסרה', { icon: 'map-pin', action: 'ביטול', onAction: () => restorePlaceReminder(r) });
+          },
+        });
+      },
+    },
+  }, icon('map-pin', true), what, r.always ? icon('repeat') : null);
 }
 
 // ------------------------------------------------------------------ picker

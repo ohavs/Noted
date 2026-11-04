@@ -16,6 +16,8 @@ export const S = {
   notes: new Map(),
   cats: [],
   reminders: new Map(),
+  places: new Map(),
+  placeRems: new Map(),
   screens: [],
   ready: { notes: false, cats: false },
   listeners: new Set(),
@@ -54,6 +56,15 @@ export function start(user) {
     S.reminders = new Map(s.docs.filter((d) => !d.get('deleted')).map((d) => [d.id, { id: d.id, ...d.data() }]));
     changed('reminders');
   }));
+  // place reminders are set on the phone (geofences); the site shows them and can remove them
+  unsub.push(onSnapshot(collection(db, 'users', me, 'places'), (s) => {
+    S.places = new Map(s.docs.filter((d) => !d.get('deleted')).map((d) => [d.id, { id: d.id, ...d.data() }]));
+    changed('reminders');
+  }));
+  unsub.push(onSnapshot(collection(db, 'users', me, 'placeReminders'), (s) => {
+    S.placeRems = new Map(s.docs.filter((d) => !d.get('deleted')).map((d) => [d.id, { id: d.id, ...d.data() }]));
+    changed('reminders');
+  }));
   unsub.push(onSnapshot(query(collection(db, 'screens'), where('owner', '==', me)), (s) => {
     S.screens = s.docs.map((d) => ({ id: d.id, ...d.data() }));
     changed('screens');
@@ -64,7 +75,7 @@ export function start(user) {
 export function stop() {
   unsub.forEach((u) => u());
   unsub = [];
-  S.notes.clear(); S.cats = []; S.reminders.clear(); S.screens = [];
+  S.notes.clear(); S.cats = []; S.reminders.clear(); S.places.clear(); S.placeRems.clear(); S.screens = [];
   S.ready = { notes: false, cats: false };
 }
 
@@ -242,6 +253,15 @@ import { ruleOf as ruleOfRep } from './repeat.js';
 
 export async function removeReminder(id) {
   await setDoc(doc(fb.db, 'users', me(), 'reminders', id), { deleted: true, at: Date.now(), by: 'web' });
+}
+
+export async function removePlaceReminder(id) {
+  await setDoc(doc(fb.db, 'users', me(), 'placeReminders', id), { deleted: true, at: Date.now(), by: 'web' });
+}
+
+export async function restorePlaceReminder(r) {
+  const { id, ...rest } = r;
+  await setDoc(doc(fb.db, 'users', me(), 'placeReminders', id), { ...rest, deleted: false, at: Date.now(), by: 'web' });
 }
 
 export async function patchReminder(r, fields) {

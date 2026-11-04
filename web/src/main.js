@@ -3,7 +3,7 @@ import { S, start, stop, changed, COLORS, createNote, setMeta, toggleCheck, writ
 import { h, $, icon, applyMotion, applyTheme, toast, sheet, confirmDialog, promptDialog, haptic, settings, animate, fmtRel } from './ui.js';
 import { toHTML, clean, esc } from './rich.js';
 import { openEditor } from './editor.js';
-import { openReminder, startRinging, agenda, reminderChip } from './reminders.js';
+import { openReminder, startRinging, agenda, reminderChip, placeChip } from './reminders.js';
 import { openScreens, connectScreen, addToScreen } from './screens.js';
 
 export const CAT_ICONS = {
@@ -223,6 +223,7 @@ function grid(list) { return h('div.grid', ...list.map(card)); }
 
 function card(n) {
   const rem = S.reminders.get(remId(n.id));
+  const prem = S.placeRems.get(remId(n.id));
   const shown = n.blocks.filter((b) => b.type !== 'Check' || !b.done).slice(0, 9);
   const doneCount = n.blocks.filter((b) => b.type === 'Check' && b.done).length;
   const checks = n.blocks.filter((b) => b.type === 'Check');
@@ -237,7 +238,7 @@ function card(n) {
     ),
     h('div.card-body', ...shown.map((b) => cardBlock(n, b))),
     doneCount ? h('div.card-more', `${doneCount} סומנו`) : null,
-    rem ? reminderChip(rem) : null,
+    rem || prem ? h('div.card-rems', rem ? reminderChip(rem) : null, prem ? placeChip(prem) : null) : null,
     n.shared ? avatars(n) : null,
   );
   el.addEventListener('click', (e) => { if (e.target.closest('.chk, a')) return; openEditor(n.id, el.getBoundingClientRect()); });

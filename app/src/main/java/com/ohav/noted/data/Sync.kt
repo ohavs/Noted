@@ -22,6 +22,9 @@ interface SyncDao {
     @Query("SELECT * FROM sync_shadows")
     suspend fun shadows(): List<ShadowEntity>
 
+    @Query("SELECT * FROM sync_shadows WHERE id = :id")
+    suspend fun shadow(id: String): ShadowEntity?
+
     @Upsert
     suspend fun putShadow(s: ShadowEntity)
 
