@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "prototype",
+    "public": "web/public",
     "ignore": [
       "firebase.json",
       "**/.git/**",
@@ -24,14 +24,36 @@
             "value": "public, max-age=31536000, immutable"
           }
         ]
+      },
+      {
+        "source": "tones/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=604800"
+          }
+        ]
       }
     ],
     "rewrites": [
       {
         "source": "/i/**",
         "destination": "/invite.html"
+      },
+      {
+        "source": "/tv",
+        "destination": "/tv.html"
+      },
+      {
+        "source": "/tv/**",
+        "destination": "/tv.html"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
-    ]
+    ],
+    "cleanUrls": true
   },
   "firestore": {
     "rules": "firestore.rules",

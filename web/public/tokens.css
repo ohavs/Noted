@@ -1,0 +1,115 @@
+/* noted — prototype. Tokens first; every component reads only from tokens. */
+
+:root {
+  /* neutrals — light */
+  --bg: #F5F1EA;
+  --bg-2: #EDE7DD;
+  --surface: #FFFDF9;
+  --ink: #1B1915;
+  --ink-2: #6B655C;
+  --ink-3: #A69F94;
+  --line: rgba(27, 25, 21, .09);
+  --scrim: rgba(30, 26, 20, .28);
+  --inverse: #1C1A17;
+  --inverse-2: #2A2723;
+  --inverse-ink: #F6F2EA;
+  --inverse-ink-2: #9C958A;
+  --danger: #D8402F;
+  --danger-soft: #FBE1DC;
+  --shadow-card: 0 -1px 0 rgba(255,255,255,.55) inset, 0 -10px 28px -18px rgba(40, 30, 10, .38);
+  --shadow-float: 0 18px 50px -18px rgba(30, 20, 5, .45), 0 2px 8px rgba(30, 20, 5, .08);
+
+  /* note pastels — light */
+  --n-butter: #FAE5A0;
+  --n-peach: #F9CFB6;
+  --n-rose: #F5C6D2;
+  --n-lilac: #DACDF6;
+  --n-sky: #C4DDF5;
+  --n-mint: #C6EAD5;
+  --n-sage: #DBE4C0;
+  --n-sand: #ECE1D2;
+  --note-ink: #1D1A15;
+  --note-ink-2: rgba(29, 26, 21, .62);
+
+  /* accent (overridden per accent set) */
+  --accent: #E0542C;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #F9DDD2;
+
+  /* shape */
+  --r-card: 30px;
+  --r-lg: 26px;
+  --r-md: 18px;
+  --r-sm: 13px;
+  --gutter: 16px;
+
+  /* type (overridden per font pair) */
+  --font-display: "Fredoka", "Rubik", system-ui, sans-serif;
+  --font-body: "Assistant", "Heebo", system-ui, sans-serif;
+  --display-weight: 600;
+  --display-tracking: -0.01em;
+  --display-scale: 1;
+
+  /* motion — real values injected from MOTION in app.js */
+  --ease-touch: cubic-bezier(.34, 1.56, .64, 1);
+  --dur-touch: 420ms;
+  --ease-glide: cubic-bezier(.2, .8, .2, 1);
+  --dur-glide: 480ms;
+  --ease-out: cubic-bezier(.2, .7, .3, 1);
+  --dur-fast: 160ms;
+
+  color-scheme: light;
+}
+
+@supports (corner-shape: squircle) {
+  :root { --r-card: 54px; --r-lg: 46px; --r-md: 32px; --r-sm: 24px; }
+  .sq { corner-shape: squircle; }
+}
+
+:root[data-theme="dark"] {
+  --bg: #12110F;
+  --bg-2: #1A1916;
+  --surface: #1F1D1A;
+  --ink: #F3EEE6;
+  --ink-2: #A59E93;
+  --ink-3: #6A645B;
+  --line: rgba(243, 238, 230, .09);
+  --scrim: rgba(0, 0, 0, .5);
+  --inverse: #2A2824;
+  --inverse-2: #37342F;
+  --inverse-ink: #F6F2EA;
+  --inverse-ink-2: #A39C90;
+  --danger: #FF6A55;
+  --danger-soft: #3D1F1A;
+  --shadow-card: 0 1px 0 rgba(255,255,255,.06) inset, 0 -10px 28px -16px rgba(0, 0, 0, .8);
+  --shadow-float: 0 18px 50px -12px rgba(0, 0, 0, .8);
+
+  --n-butter: #4A4024;
+  --n-peach: #4C3326;
+  --n-rose: #482C35;
+  --n-lilac: #383150;
+  --n-sky: #27384A;
+  --n-mint: #243D31;
+  --n-sage: #343D28;
+  --n-sand: #3A342D;
+  --note-ink: #F4EFE7;
+  --note-ink-2: rgba(244, 239, 231, .6);
+
+  color-scheme: dark;
+}
+
+/* accent sets */
+:root[data-accent="fire"]  { --accent: #E0542C; --accent-soft: #F9DDD2; }
+:root[data-accent="forest"]{ --accent: #1E7552; --accent-soft: #D3EADF; }
+:root[data-accent="ink"]   { --accent: #3442CF; --accent-soft: #DDE0FA; }
+:root[data-accent="plum"]  { --accent: #8E3AB3; --accent-soft: #EBDAF3; }
+:root[data-theme="dark"][data-accent="fire"]  { --accent: #FF7A4F; --accent-ink: #1B0E08; --accent-soft: #4A271B; }
+:root[data-theme="dark"][data-accent="forest"]{ --accent: #45C891; --accent-ink: #06170F; --accent-soft: #173A2B; }
+:root[data-theme="dark"][data-accent="ink"]   { --accent: #8A95FF; --accent-ink: #0B0E2B; --accent-soft: #23284F; }
+:root[data-theme="dark"][data-accent="plum"]  { --accent: #CF93F0; --accent-ink: #1E0B29; --accent-soft: #3A2348; }
+
+/* font pairs */
+:root[data-font="soft"]      { --font-display: "Fredoka", sans-serif; --font-body: "Assistant", sans-serif; --display-weight: 600; --display-tracking: -0.01em; --display-scale: 1; }
+:root[data-font="editorial"] { --font-display: "Frank Ruhl Libre", serif; --font-body: "Rubik", sans-serif; --display-weight: 800; --display-tracking: -0.02em; --display-scale: 1; }
+:root[data-font="condensed"] { --font-display: "Karantina", sans-serif; --font-body: "Heebo", sans-serif; --display-weight: 700; --display-tracking: 0; --display-scale: 1.38; }
+

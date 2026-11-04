@@ -1,9 +1,9 @@
-name: Deploy prototype (Firebase Hosting)
+name: Deploy website (Firebase Hosting)
 
 on:
   push:
     branches: [main, "ccr-*"]
-    paths: ["prototype/**", "firebase.json", ".firebaserc", ".github/workflows/deploy-prototype.yml"]
+    paths: ["web/**", "firebase.json", ".firebaserc", ".github/workflows/deploy-web.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -24,6 +24,17 @@ jobs:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           if [ -z "$FIREBASE_TOKEN" ]; then echo "::warning::Secret FIREBASE_TOKEN is not set yet — skipping deploy"; echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Build
+        run: npm ci --prefix web --silent && npm run build --prefix web
+      - name: Firebase web app
+        # Hosting serves the web app's config at /__/firebase/init.json — it exists once the project has a Web app
+        if: steps.tok.outputs.ok == 'true'
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          fb() { npx --yes firebase-tools@15 "$@" --project noted-ce451 --non-interactive; }
+          n=$(fb apps:list WEB --json | jq '[.result[]?] | length')
+          if [ "${n:-0}" = 0 ]; then echo "creating web app"; fb apps:create WEB noted-web >/dev/null; else echo "web app exists"; fi
       - name: Deploy
         if: steps.tok.outputs.ok == 'true'
         env:
@@ -37,8 +48,11 @@ jobs:
             a=$(curl -sS -o /dev/null -w '%{http_code}' $B/ ; true)
             l=$(curl -sS $B/.well-known/assetlinks.json | grep -c 'com.ohav.noted' ; true)
             v=$(curl -sS $B/i/TestTokenAbcdefgh | grep -c 'package=com.ohav.noted' ; true)
-            echo "home=$a assetlinks=$l invite=$v"
-            if [ "$a" = 200 ] && [ "$l" -ge 1 ] && [ "$v" -ge 1 ]; then
+            c=$(curl -sS $B/__/firebase/init.json | grep -c '"projectId"' ; true)
+            t=$(curl -sS -o /dev/null -w '%{http_code}' $B/tv ; true)
+            p=$(curl -sS $B/privacy | grep -c 'מדיניות פרטיות' ; true)
+            echo "home=$a assetlinks=$l invite=$v config=$c tv=$t privacy=$p"
+            if [ "$a" = 200 ] && [ "$l" -ge 1 ] && [ "$v" -ge 1 ] && [ "$c" -ge 1 ] && [ "$t" = 200 ] && [ "$p" -ge 1 ]; then
               curl -sSI $B/.well-known/assetlinks.json | grep -i '^content-type'
               echo "live ok"; exit 0
             fi

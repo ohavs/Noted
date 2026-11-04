@@ -134,12 +134,36 @@ function who(names) {
   return `${names[0]} ועוד ${names.length - 1}`;
 }
 
+// ------------------------------------------------------------------ screens
+
+/** What a TV screen shows of a note: title, colour and the text lines (no media, no people). */
+function screenCopy(n) {
+  const blocks = Object.values(n.blocks || {})
+    .sort((a, b) => (a.o || 0) - (b.o || 0))
+    .filter((b) => ['P', 'H1', 'H2', 'H3', 'Quote', 'Bullet', 'Num', 'Check', 'Divider'].includes(b.type))
+    .map((b) => ({ type: b.type, text: String(b.text || '').replace(ZW, ''), done: !!b.done, indent: b.indent || 0, spans: b.spans || [] }));
+  return { t: clean(n.title), c: n.color || 'Butter', b: blocks, u: n.updatedAt || Date.now() };
+}
+
+/** Every screen showing note [id] gets its new copy (or lets go of it: deleted, trashed, no longer shared with them). */
+async function refreshScreens(id, n) {
+  const s = await db.collection('screens').where('noteIds', 'array-contains', id).get();
+  await Promise.all(s.docs.map((d) => {
+    const owner = d.get('owner');
+    const visible = n && !n.trashedAt && (n.memberIds || []).includes(owner);
+    return d.ref.update(visible
+      ? { [`notes.${id}`]: screenCopy(n) }
+      : { [`notes.${id}`]: FieldValue.delete(), noteIds: FieldValue.arrayRemove(id) });
+  }));
+}
+
 // ------------------------------------------------------------------ notes
 
 exports.noteWritten = onDocumentWritten('notes/{id}', async (ev) => {
   const id = ev.params.id;
   const before = ev.data.before.exists ? ev.data.before.data() : null;
   const after = ev.data.after.exists ? ev.data.after.data() : null;
+  await refreshScreens(id, after).catch((e) => logger.warn('screens', e.message));
   if (!after) {
     await db.doc(`pending/${id}`).delete().catch(() => {});
     return;

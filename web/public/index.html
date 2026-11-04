@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="he" dir="rtl" data-theme="light" data-accent="fire" data-font="soft">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#F5F1EA">
+<title>noted</title>
+<meta name="description" content="noted — הפתקים שלך מהטלפון, גם במחשב. מסונכרן בזמן אמת עם האפליקציה.">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&family=Frank+Ruhl+Libre:wght@500;700;800;900&family=Fredoka:wght@500;600;700&family=Heebo:wght@400;500;700;800&family=Karantina:wght@400;700&family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/vendor/phosphor/regular.css">
+<link rel="stylesheet" href="/vendor/phosphor/fill.css">
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/app.css">
+<script>
+  try {
+    const g = (k, d) => { const v = localStorage.getItem('noted.' + k); return v == null ? d : JSON.parse(v); };
+    const t = g('theme', 'system');
+    document.documentElement.dataset.theme = t === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+    document.documentElement.dataset.accent = g('accent', 'fire');
+    document.documentElement.dataset.font = g('font', 'soft');
+  } catch (e) {}
+</script>
+</head>
+<body>
+<div id="gate"><div class="gate-card"><div class="gate-logo">noted</div><div class="gate-spin"></div></div></div>
+<div id="app" hidden></div>
+<div id="overlay"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

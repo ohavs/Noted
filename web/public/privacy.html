@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מדיניות פרטיות · noted</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&family=Fredoka:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/tokens.css">
+<style>
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 17px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
+  .logo { font-family: var(--font-display); font-weight: 600; font-size: 40px; color: var(--accent); text-decoration: none; line-height: 1; }
+  h1 { font-family: var(--font-display); font-weight: 600; font-size: 36px; line-height: 1.15; margin: 28px 0 6px; }
+  h2 { font-size: 20px; margin: 34px 0 6px; }
+  p, li { color: var(--ink-2); } b { color: var(--ink); }
+  .card { background: var(--surface); border-radius: var(--r-lg); padding: 20px 24px; margin: 24px 0; box-shadow: 0 1px 0 var(--line); }
+  .muted { color: var(--ink-3); font-size: 14px; }
+  hr { border: 0; height: 1px; background: var(--line); margin: 48px 0; }
+  .en { direction: ltr; text-align: left; }
+  a { color: var(--accent); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark; } }
+</style>
+<script>try{document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.dataset.font='soft';document.documentElement.dataset.accent='fire'}catch(e){}</script>
+</head>
+<body>
+<main>
+  <a class="logo" href="/">noted</a>
+  <h1>מדיניות פרטיות</h1>
+  <p class="muted">עודכן: 4 בנובמבר 2026</p>
+
+  <div class="card"><b>בקצרה:</b> הפתקים שלך הם שלך. בלי חשבון הכל נשאר בטלפון. עם חשבון — הם נשמרים בענן כדי להסתנכרן בין המכשירים שלך ועם מי שבחרת לשתף. אין פרסומות, אין מכירה של מידע ואין מעקב.</div>
+
+  <h2>מה נאסף ולמה</h2>
+  <ul>
+    <li><b>חשבון (רשות):</b> כשמתחברים עם Google נשמרים שם, כתובת אימייל ותמונת פרופיל — כדי לזהות אותך ולהראות למשתתפים בפתק משותף מי את/ה.</li>
+    <li><b>תוכן:</b> פתקים, קטגוריות, תבניות, תזכורות, תמונות, הקלטות וציורים. בלי חשבון — רק במכשיר. עם חשבון — גם ב-Firebase של Google (Firestore בישראל, אחסון קבצים בארה״ב), כדי לסנכרן.</li>
+    <li><b>מיקום:</b> משמש רק לתזכורות לפי מקום. הטלפון בודק בעצמו מתי הגעת למקום או יצאת ממנו — גם כשהאפליקציה סגורה — והמיקום <b>לא נשלח</b> אלינו. חיפוש מקום שולח את מילות החיפוש (ולפעמים מיקום משוער, כדי להציע תוצאות קרובות) לשירות Google Places דרך השרת שלנו, ולא נשמר.</li>
+    <li><b>מיקרופון:</b> רק כשמקליטים בעצמך. התמלול נעשה במכשיר.</li>
+    <li><b>התראות:</b> מזהה התראות של המכשיר (FCM) נשמר כדי לשלוח התראה כשמישהו משנה פתק משותף או כשתזכורת נקבעה ממכשיר אחר.</li>
+    <li><b>מסך תצוגה:</b> אם מחברים מסך (טלוויזיה), עותק של הפתקים שבחרת נשמר תחת הקוד של המסך, וכל מי שיודע את הקוד יכול לראות אותם. מנתקים בכל רגע מהאתר.</li>
+  </ul>
+
+  <h2>שיתוף</h2>
+  <p>פתק או תיקייה ששיתפת גלויים לאנשים שהזמנת, עם השם והתמונה שלך. אנחנו לא משתפים מידע עם אף אחד אחר, לא מוכרים אותו ולא משתמשים בו לפרסום.</p>
+
+  <h2>פרטיות במכשיר</h2>
+  <p>טשטוש פתקים, נעילה בקוד וטביעת אצבע נשמרים רק במכשיר ולא נשלחים לענן.</p>
+
+  <h2>מחיקה</h2>
+  <p>מוחקים את החשבון ואת כל מה שבענן מתוך האפליקציה (הגדרות ← חשבון ← מחיקת החשבון) או באתר: <a href="/delete-account">noted-ce451.web.app/delete-account</a>. המחיקה מיידית ולא ניתנת לביטול. פתק שנמחק נשאר בסל 30 יום ואז נמחק לגמרי.</p>
+
+  <h2>אבטחה</h2>
+  <p>התקשורת מוצפנת (HTTPS), והגישה לנתונים מוגבלת בכללי אבטחה כך שרק את/ה והאנשים ששיתפת יכולים לקרוא אותם.</p>
+
+  <h2>יצירת קשר</h2>
+  <p>שאלות ובקשות: <a href="https://github.com/ohavs/Noted/issues">github.com/ohavs/Noted/issues</a></p>
+
+  <hr>
+  <div class="en">
+    <h1>Privacy policy</h1>
+    <p class="muted">Updated: November 4, 2026</p>
+    <div class="card"><b>In short:</b> your notes are yours. Without an account everything stays on your phone. With an account they are stored in the cloud to sync between your devices and with the people you chose to share with. No ads, no selling of data, no tracking.</div>
+    <h2>What is collected and why</h2>
+    <ul>
+      <li><b>Account (optional):</b> signing in with Google stores your name, email and profile photo, to identify you and to show members of a shared note who you are.</li>
+      <li><b>Content:</b> notes, categories, templates, reminders, photos, recordings and drawings. Without an account — on the device only. With an account — also in Google Firebase (Firestore in Israel, file storage in the US), to sync.</li>
+      <li><b>Location:</b> used only for location reminders. The phone itself detects arriving at or leaving a place — even when the app is closed or not in use — and the location is <b>not sent</b> to us. Searching for a place sends the search text (and sometimes an approximate location, for nearby results) to Google Places through our server; it is not stored.</li>
+      <li><b>Microphone:</b> only while you record. Transcription happens on the device.</li>
+      <li><b>Notifications:</b> the device's notification token (FCM) is stored to notify you about changes to shared notes and reminders set on another device.</li>
+      <li><b>Display screen:</b> if you link a screen (TV), a copy of the notes you chose is stored under the screen's code; anyone with the code can see them. Unlink any time from the website.</li>
+    </ul>
+    <h2>Sharing</h2>
+    <p>A note or folder you share is visible to the people you invited, with your name and photo. We do not share data with anyone else, sell it, or use it for advertising.</p>
+    <h2>Deletion</h2>
+    <p>Delete your account and everything in the cloud from the app (Settings → Account → Delete account) or on the web at <a href="/delete-account">noted-ce451.web.app/delete-account</a>. Deletion is immediate and cannot be undone. Notes in the trash are deleted for good after 30 days.</p>
+    <h2>Contact</h2>
+    <p><a href="https://github.com/ohavs/Noted/issues">github.com/ohavs/Noted/issues</a></p>
+  </div>
+</main>
+</body>
+</html>

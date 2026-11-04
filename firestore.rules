@@ -122,5 +122,15 @@ service cloud.firestore {
         );
       allow delete: if me() != null && resource.data.by == me();
     }
+
+    // A TV / wall screen showing chosen notes. The TV knows only its code (random, 8 letters) and
+    // reads the copy kept here (a function refreshes it on every note change) — never the notes.
+    match /screens/{code} {
+      allow get: if true;
+      allow list: if me() != null && resource.data.owner == me();
+      allow create: if me() != null && request.resource.data.owner == me() && code.size() >= 8;
+      allow update: if me() != null && resource.data.owner == me() && request.resource.data.owner == me();
+      allow delete: if me() != null && resource.data.owner == me();
+    }
   }
 }

@@ -1,0 +1,42 @@
+/* The TV screen: readable from the couch — big type, calm colours, no chrome. Sized in vmin so it fits any screen. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); cursor: none; -webkit-font-smoothing: antialiased; }
+.ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+#tv { height: 100vh; display: flex; flex-direction: column; }
+.pair { margin: auto; text-align: center; padding: 4vmin; max-width: 90vw; }
+.pair-brand { font-family: var(--font-display); font-weight: 600; color: var(--accent); font-size: 7vmin; line-height: 1; }
+.pair-brand.sm { font-size: 3.6vmin; }
+.pair h1 { font-family: var(--font-display); font-weight: 600; font-size: 5.5vmin; margin: 4vmin 0 1.5vmin; }
+.pair p { font-size: 2.6vmin; color: var(--ink-2); margin: 0 auto; max-width: 70vmin; line-height: 1.5; }
+.pair p b { color: var(--ink); }
+.pair-code { font-family: var(--font-display); font-weight: 600; font-size: 13vmin; letter-spacing: .12em; margin: 4vmin 0 3vmin; color: var(--ink); }
+.pair-or { color: var(--ink-3); font-size: 2.2vmin; margin-bottom: 2vmin; }
+.pair-qr { width: 22vmin; height: 22vmin; margin: 0 auto; padding: 1.6vmin; background: #fff; border-radius: 3vmin; }
+.pair-qr svg { width: 100%; height: 100%; display: block; }
+.pair-qr svg path, .pair-qr svg rect[fill="#000000"] { fill: #1B1915; }
+.tv-top { display: flex; align-items: center; gap: 2.4vmin; padding: 3vmin 4vmin 1.4vmin; font-size: 2.6vmin; color: var(--ink-2); }
+.tv-top b { flex: 1; font-weight: 700; color: var(--ink); }
+#clock { font-family: var(--font-display); font-size: 4.4vmin; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tv-grid { flex: 1; display: grid; gap: 2.4vmin; padding: 1vmin 4vmin 4vmin; min-height: 0; }
+.tv-grid.n1 { grid-template-columns: 1fr; } .tv-grid.n2 { grid-template-columns: 1fr 1fr; } .tv-grid.n3 { grid-template-columns: repeat(3, 1fr); }
+.tv-grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; } .tv-grid.n5, .tv-grid.n6 { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; }
+.tv-card { border-radius: 4vmin; padding: 3.4vmin 3.6vmin; color: var(--note-ink); overflow: hidden; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.tv-card header { display: flex; align-items: baseline; gap: 2vmin; }
+.tv-card h2 { flex: 1; margin: 0 0 1.6vmin; font-family: var(--font-display); font-weight: 600; font-size: 4.2vmin; line-height: 1.15; }
+.tv-count { font-family: var(--font-display); font-size: 2.8vmin; color: var(--note-ink-2); font-variant-numeric: tabular-nums; }
+.tv-body { display: grid; gap: 1vmin; font-size: 2.9vmin; line-height: 1.35; align-content: start; }
+.tn1 .tv-body, .n1 .tv-body { font-size: 3.6vmin; }
+.tb-h { font-weight: 800; margin-top: .8vmin; }
+.tb-q { border-inline-start: .5vmin solid var(--note-ink); padding-inline-start: 1.6vmin; font-style: italic; }
+.tb-li { display: flex; gap: 1.4vmin; align-items: baseline; }
+.tb-li .dot { width: 1vmin; height: 1vmin; border-radius: 50%; background: var(--note-ink); flex: none; transform: translateY(-.4vmin); }
+.tb-c { display: flex; gap: 1.6vmin; align-items: flex-start; }
+.tb-c .box { width: 3vmin; height: 3vmin; flex: none; border-radius: .9vmin; box-shadow: inset 0 0 0 .32vmin color-mix(in srgb, var(--note-ink) 60%, transparent); margin-top: .3vmin; display: grid; place-items: center; }
+.tb-c.done .box { background: var(--note-ink); box-shadow: none; }
+.tb-c .box svg { width: 70%; fill: none; stroke: var(--bg); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.tb-c.done span { color: var(--note-ink-2); text-decoration: line-through; }
+.tv-done { color: var(--note-ink-2); font-size: 2.2vmin; font-weight: 700; margin-top: 1vmin; }
+hr { border: 0; height: .25vmin; background: color-mix(in srgb, var(--note-ink) 16%, transparent); margin: 1vmin 0; width: 100%; }
+mark { color: inherit; border-radius: .5vmin; background: #FFC46B80; }
+.ink[data-c="Red"] { color: #C8372D; } .ink[data-c="Orange"] { color: #C2620F; } .ink[data-c="Green"] { color: #2B7A4B; } .ink[data-c="Blue"] { color: #2D5FC4; } .ink[data-c="Purple"] { color: #8136B0; }
