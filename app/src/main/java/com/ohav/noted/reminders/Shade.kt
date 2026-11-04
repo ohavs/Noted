@@ -14,6 +14,7 @@ import com.ohav.noted.R
 import com.ohav.noted.data.Blocks
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.Privacy
+import com.ohav.noted.places.PlaceNotifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch

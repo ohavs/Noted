@@ -75,7 +75,7 @@ fun AccountCard(app: NotedApp, toasts: ToastState) {
             transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) },
             label = "account",
         ) { u ->
-            if (u == null) SignedOut(app, toasts) else SignedIn(app, u, photo, status)
+            if (u == null) SignedOut(app, toasts) else SignedIn(app, u, photo, status, toasts)
         }
     }
 }
@@ -133,7 +133,7 @@ private fun SignedOut(app: NotedApp, toasts: ToastState) {
 }
 
 @Composable
-private fun SignedIn(app: NotedApp, u: Account.User, photo: ImageBitmap?, st: Sync.Status) {
+private fun SignedIn(app: NotedApp, u: Account.User, photo: ImageBitmap?, st: Sync.Status, toasts: ToastState) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
