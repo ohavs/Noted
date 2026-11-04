@@ -22,6 +22,7 @@ import com.ohav.noted.data.MediaSyncEntity
 import com.ohav.noted.data.NoteEntity
 import com.ohav.noted.data.NotedDatabase
 import com.ohav.noted.data.ShadowEntity
+import com.ohav.noted.data.ReminderEntity
 import com.ohav.noted.data.TemplateEntity
 import com.ohav.noted.data.Share
 import com.ohav.noted.data.Member
@@ -87,6 +88,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     /** Notes [discard]ed: a push already holding the older list must not send them back up. */
     private val discarded = HashSet<String>()
     private val catShadows = HashMap<String, CatShadow>()
+    /** Time reminders: the `at` of the copy last agreed with the cloud (negative = a tombstone). */
+    private val remShadows = HashMap<String, Long>()
     /** My templates as the cloud has them: id → `at` (last write wins, see [pullTemplates]). */
     private val tplCloud = HashMap<String, Long>()
     /** The templates listener has delivered once: only then is it known what the cloud lacks. */
@@ -142,6 +145,8 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('f' to s) else failed(e) },
             fs.collection("users").document(uid).collection("templates")
                 .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('t' to s) else failed(e) },
+            fs.collection("users").document(uid).collection("reminders")
+                .addSnapshotListener(MetadataChanges.INCLUDE) { s, e -> if (s != null) inbox.trySend('r' to s) else failed(e) },
         )
         launch { runCatching { Push.register(ctx, uid) } }
         // nothing is pushed before this device has seen the cloud once, so a second phone merges instead of duplicating
@@ -156,13 +161,14 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                             'n' -> pullNotes(s, uid)
                             'c' -> pullCats(s, uid)
                             't' -> pullTemplates(s)
+                            'r' -> pullReminders(s)
                             else -> pullFolders(s, uid)
                         }
                     }
                     if (!s.metadata.isFromCache) when (k) {
                         'n' -> serverNotes = true
                         'c' -> serverCats = true
-                        't' -> Unit
+                        't', 'r' -> Unit
                         else -> foldersSeen = true
                     }
                     if (!primed.value && serverNotes && serverCats) {
@@ -188,14 +194,15 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             }
             launch {
                 primed.first { it }
-                combine(notes.observeAll(), notes.observeCategories(), db.templates().observeAll(), repush) { a, b, t, _ -> Triple(a, b, t) }
+                combine(notes.observeAll(), notes.observeCategories(), db.templates().observeAll(), db.reminders().observeAll(), repush) { a, b, t, r, _ -> Pushes(a, b, t, r) }
                     .debounce(700)
-                    .collect { (ns, cs, ts) ->
+                    .collect { (ns, cs, ts, rs) ->
                         mutex.withLock {
                             pushCats(fs, uid, cs)
                             pushFolders(fs, u, cs)
                             pushNotes(fs, u, ns, cs)
                             pushTemplates(fs, uid, ts)
+                            pushReminders(fs, uid, rs)
                         }
                         kick()
                     }
@@ -229,12 +236,13 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             dao.clearMedia()
             prefs.edit().putString("uid", uid).apply()
         }
-        noteShadows.clear(); catShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
+        noteShadows.clear(); catShadows.clear(); remShadows.clear(); folders.clear(); doomed.clear(); foldersSeen = false
         tplCloud.clear(); tplSeen = false
         dao.shadows().forEach { s ->
             when {
                 s.id.startsWith("n:") -> NoteShadow.decode(s.json)?.let { noteShadows[s.id.drop(2)] = it }
                 s.id.startsWith("c:") -> CatShadow.decode(s.json)?.let { catShadows[s.id.drop(2)] = it }
+                s.id.startsWith("r:") -> s.json.toLongOrNull()?.let { remShadows[s.id.drop(2)] = it }
             }
         }
     }
@@ -493,6 +501,85 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             val gone = sh.copy(deleted = true)
             catShadows[id] = gone
             dao.putShadow(ShadowEntity("c:$id", gone.encode()))
+        }
+    }
+
+    // ------------------------------------------------------------------ reminders
+
+    private data class Pushes(val notes: List<NoteEntity>, val cats: List<CategoryEntity>, val templates: List<TemplateEntity>, val reminders: List<ReminderEntity>)
+
+    /**
+     * `users/{uid}/reminders/{id}`: my time reminders as whole documents, the newest `at` wins
+     * (the website and every device ring from the same list). A deletion is a tombstone.
+     */
+    private suspend fun pullReminders(s: QuerySnapshot) {
+        for (d in s.documents) {
+            if (d.metadata.hasPendingWrites()) continue
+            applyReminder(d.id, d.data ?: continue)
+        }
+    }
+
+    /** A reminder that came in a push message (the app may have been asleep, with no listener). */
+    suspend fun applyPushedReminder(id: String, f: Map<String, Any?>) = mutex.withLock { applyReminder(id, f) }
+
+    /** One cloud copy of a reminder, from the listener or from a push message. */
+    private suspend fun applyReminder(id: String, f: Map<String, Any?>) {
+        val at = (f["at"] as? Number)?.toLong() ?: return
+        val deleted = f["deleted"] == true
+        val known = remShadows[id] ?: dao.shadows().firstOrNull { it.id == "r:$id" }?.json?.toLongOrNull()
+        if (known != null && kotlin.math.abs(known) == at && (known < 0) == deleted) return
+        val rd = db.reminders()
+        val local = rd.get(id)
+        if (deleted) {
+            if (local != null && local.at <= at) {
+                rd.delete(id)
+                if (local.blockId.isEmpty()) rd.mirror(local.noteId, null)
+                androidx.core.app.NotificationManagerCompat.from(ctx).cancel(com.ohav.noted.reminders.Notifier.idOf(id))
+                com.ohav.noted.reminders.Shade.forget(ctx, com.ohav.noted.reminders.Shade.time(id))
+            }
+        } else if (local == null || local.at < at) {
+            val r = ReminderEntity(
+                id = id, noteId = f["noteId"] as? String ?: return, blockId = f["blockId"] as? String ?: "",
+                anchor = f["anchor"] as? String ?: return, occ = f["occ"] as? String ?: return,
+                zone = f["zone"] as? String ?: java.time.ZoneId.systemDefault().id, rule = f["rule"] as? String ?: "",
+                until = f["until"] as? String, fired = f["fired"] == true, snoozeAt = (f["snoozeAt"] as? Number)?.toLong(),
+                sticky = f["sticky"] == true, at = at,
+            )
+            rd.upsert(r)
+            if (r.blockId.isEmpty()) rd.mirror(r.noteId, r.occAt)
+            // a reminder done / moved somewhere else stops ringing here
+            if (local != null && (r.dueAt ?: Long.MAX_VALUE) > System.currentTimeMillis()) {
+                androidx.core.app.NotificationManagerCompat.from(ctx).cancel(com.ohav.noted.reminders.Notifier.idOf(id))
+            }
+        }
+        val sh = if (deleted) -at else at
+        remShadows[id] = sh
+        dao.putShadow(ShadowEntity("r:$id", sh.toString()))
+        (ctx.applicationContext as? com.ohav.noted.NotedApp)?.reminders?.schedule()
+    }
+
+    private suspend fun pushReminders(fs: FirebaseFirestore, uid: String, rows: List<ReminderEntity>) {
+        val col = fs.collection("users").document(uid).collection("reminders")
+        val live = rows.associateBy { it.id }
+        for (r in rows) {
+            val at = r.at.coerceAtLeast(1L)
+            if (remShadows[r.id] == at) continue
+            col.document(r.id).set(
+                mapOf(
+                    "noteId" to r.noteId, "blockId" to r.blockId, "anchor" to r.anchor, "occ" to r.occ, "zone" to r.zone,
+                    "rule" to r.rule, "until" to r.until, "fired" to r.fired, "snoozeAt" to r.snoozeAt, "sticky" to r.sticky,
+                    "at" to at, "deleted" to false, "by" to "android",
+                ),
+            )
+            remShadows[r.id] = at
+            dao.putShadow(ShadowEntity("r:${r.id}", at.toString()))
+        }
+        for ((id, sh) in remShadows.toList()) {
+            if (id in live || sh < 0) continue
+            val at = System.currentTimeMillis()
+            col.document(id).set(mapOf("deleted" to true, "at" to at, "by" to "android"))
+            remShadows[id] = -at
+            dao.putShadow(ShadowEntity("r:$id", (-at).toString()))
         }
     }
 

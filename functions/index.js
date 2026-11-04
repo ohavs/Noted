@@ -265,3 +265,24 @@ exports.flush = onSchedule({ schedule: 'every 1 minutes', timeZone: 'Asia/Jerusa
 
 // ------------------------------------------------------------------ places search + kill switch
 Object.assign(exports, require('./places'));
+
+// ------------------------------------------------------------------ reminders
+
+/**
+ * A time reminder set or changed anywhere (the website, a phone) reaches every device of its
+ * owner as a data message, so a phone whose app is asleep still arms the alarm for it.
+ */
+exports.reminderWritten = onDocumentWritten('users/{uid}/reminders/{id}', async (ev) => {
+  const after = ev.data?.after;
+  if (!after?.exists) return;
+  const r = after.data();
+  const data = { kind: 'rem', id: ev.params.id };
+  for (const k of ['noteId', 'blockId', 'anchor', 'occ', 'zone', 'rule', 'until']) data[k] = r[k] == null ? '' : String(r[k]);
+  for (const k of ['at', 'snoozeAt']) data[k] = r[k] == null ? '' : String(r[k]);
+  for (const k of ['fired', 'sticky', 'deleted']) data[k] = r[k] ? '1' : '0';
+  try {
+    await send(ev.params.uid, { ...data, folder: '', note: `rem:${ev.params.id}` });
+  } catch (e) {
+    logger.warn('reminder push failed', e);
+  }
+});

@@ -110,6 +110,23 @@ class PushService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (message.data.isNotEmpty()) Push.show(this, message.data)
+        val data = message.data
+        if (data.isEmpty()) return
+        // a reminder set / changed elsewhere (the website, another phone): into Room and onto the alarm, no notification
+        if (data["kind"] == "rem") {
+            val app = applicationContext as? com.ohav.noted.NotedApp ?: return
+            val f = HashMap<String, Any?>()
+            data.forEach { (k, v) ->
+                f[k] = when (k) {
+                    "at", "snoozeAt" -> v.toLongOrNull()
+                    "fired", "sticky", "deleted" -> v == "1"
+                    else -> v.ifEmpty { null }
+                }
+            }
+            f["blockId"] = data["blockId"].orEmpty()
+            kotlinx.coroutines.runBlocking { runCatching { app.sync.applyPushedReminder(data["id"] ?: return@runBlocking, f) } }
+            return
+        }
+        Push.show(this, data)
     }
 }
