@@ -32,6 +32,9 @@ class NotedTile : TileService() {
             // a row ticked on the tile: "t:<note>|<line>" (checked here at once, sent to the phone)
             requestParams.currentState.lastClickableId.takeIf { it.startsWith("t:") }?.removePrefix("t:")?.split('|', limit = 2)
                 ?.takeIf { it.size == 2 }?.let { (n, l) -> store.toggle(n, l, true) }
+            // the rows' pager: "p:<note>|<first row>" (tiles can't scroll, so the rows page instead)
+            requestParams.currentState.lastClickableId.takeIf { it.startsWith("p:") }?.removePrefix("p:")?.split('|', limit = 2)
+                ?.takeIf { it.size == 2 }?.let { (n, i) -> page = n to (i.toIntOrNull() ?: 0) }
             c.set(tile(requestParams.deviceConfiguration.screenWidthDp.toFloat()))
             "tile"
         }
@@ -81,8 +84,8 @@ class NotedTile : TileService() {
                 head(s.cat(one.cat)?.name ?: "פתק")
                 col.addContent(strip(one, width))
                 val readable = !one.locked && !one.blurBody
-                val open = if (readable && !one.readOnly) one.checks.filter { !it.done && it.text.isNotBlank() }.take(if (wide) 3 else 2) else emptyList()
-                open.forEach { l -> col.addContent(space(3f)); col.addContent(checkRow(one, l, width)) }
+                val all = if (readable && !one.readOnly) one.checks.filter { !it.done && it.text.isNotBlank() } else emptyList()
+                val open = rows(col, one, all, if (wide) 3 else 2, if (wide) 2 else 1, width)
                 if (readable && open.isEmpty()) {
                     val total = one.progress.second
                     val peek = if (total > 0) "הכל סומן" else one.lines.firstOrNull { !it.isCheck && it.text.isNotBlank() && it.kind in TEXTY }?.text?.trim()
@@ -98,16 +101,19 @@ class NotedTile : TileService() {
                 head(title)
                 // the first of them with something left to tick; the strips make room for its rows
                 val focus = list.take(3).firstOrNull { n -> !n.locked && !n.blurBody && !n.readOnly && n.checks.any { !it.done && it.text.isNotBlank() } }
-                val rows = focus?.checks?.filter { !it.done && it.text.isNotBlank() }?.take(if (wide) 2 else 1).orEmpty()
-                val notes = if (focus == null) list.take(if (wide) 3 else 2) else (listOf(focus) + list.filter { it.id != focus.id }).take(if (wide) 2 else 1)
+                val all = focus?.checks?.filter { !it.done && it.text.isNotBlank() }.orEmpty()
+                // more rows than fit beside the other strips: the focus note alone, its rows paged
+                val alone = focus != null && all.size > (if (wide) 2 else 1)
+                val notes = when {
+                    focus == null -> list.take(if (wide) 3 else 2)
+                    alone -> listOf(focus)
+                    else -> (listOf(focus) + list.filter { it.id != focus.id }).take(if (wide) 2 else 1)
+                }
                 if (notes.isEmpty()) note("אין פתקים עדיין")
                 notes.forEachIndexed { i, n ->
                     if (i > 0) col.addContent(space(5f))
                     col.addContent(strip(n, width))
-                    if (n.id == focus?.id) rows.forEach { l ->
-                        col.addContent(space(3f))
-                        col.addContent(checkRow(n, l, width))
-                    }
+                    if (n.id == focus?.id) rows(col, n, all, if (alone && wide) 3 else if (wide) 2 else 1, if (wide) 2 else 1, width)
                 }
             }
         }
@@ -131,6 +137,40 @@ class NotedTile : TileService() {
             .setFreshnessIntervalMillis(0)
             .setTileTimeline(TimelineBuilders.Timeline.fromLayoutElement(root))
             .build()
+    }
+
+    /**
+     * [n]'s open rows under its strip: up to [fit] of them; more than that → [per] at a time and a
+     * pager line under them ("עוד N" → the next ones, at the end → back to the first).
+     */
+    private fun rows(col: LayoutElementBuilders.Column.Builder, n: Note, all: List<Line>, fit: Int, per: Int, width: Float): List<Line> {
+        if (all.size <= fit) {
+            all.forEach { l -> col.addContent(space(3f)); col.addContent(checkRow(n, l, width)) }
+            return all
+        }
+        val last = (all.size - 1) / per * per
+        val from = page.takeIf { it.first == n.id }?.second?.coerceIn(0, last) ?: 0
+        val shown = all.subList(from, minOf(all.size, from + per))
+        shown.forEach { l -> col.addContent(space(3f)); col.addContent(checkRow(n, l, width)) }
+        val left = all.size - from - shown.size
+        val next = if (left > 0) from + per else 0
+        col.addContent(
+            LayoutElementBuilders.Box.Builder()
+                .setWidth(dp(width * .5f)).setHeight(dp(22f))
+                .setHorizontalAlignment(LayoutElementBuilders.HORIZONTAL_ALIGN_CENTER)
+                .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                .setModifiers(
+                    ModifiersBuilders.Modifiers.Builder()
+                        .setClickable(
+                            ModifiersBuilders.Clickable.Builder().setId("p:${n.id}|$next")
+                                .setOnClick(ActionBuilders.LoadAction.Builder().build()).build(),
+                        )
+                        .build(),
+                )
+                .addContent(text(if (left > 0) "עוד $left  ↓" else "מההתחלה  ↑", 12f, Palette.note(n.color), bold = true))
+                .build(),
+        )
+        return shown
     }
 
     /** One note as a paper strip: title · progress, tap = open it. */
@@ -274,6 +314,8 @@ class NotedTile : TileService() {
     companion object {
         private val TEXTY = setOf("P", "H1", "H2", "H3", "Quote", "Bullet", "Num")
         private const val RES = "1"
+        /** Which rows the pager shows: the note and its first row (lives while the process does). */
+        @Volatile private var page: Pair<String, Int> = "" to 0
         fun refresh(ctx: Context) = runCatching { getUpdater(ctx).requestUpdate(NotedTile::class.java) }
     }
 }
