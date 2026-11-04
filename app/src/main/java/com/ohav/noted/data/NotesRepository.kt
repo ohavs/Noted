@@ -82,6 +82,23 @@ class NotesRepository(private val db: NotedDatabase) {
         return checks.count { it.done } to checks.size
     }
 
+    /** Removes one line (long press on a checkbox); returns what it was, for the undo toast. */
+    suspend fun deleteBlock(noteId: String, blockId: String): Pair<Int, Block>? {
+        val n = dao.get(noteId) ?: return null
+        val old = Blocks.parse(n.blocks)
+        val i = old.indexOfFirst { it.id == blockId }.takeIf { it >= 0 } ?: return null
+        dao.setBlocks(noteId, Blocks.serialize(old.filterIndexed { j, _ -> j != i }), now())
+        return i to old[i]
+    }
+
+    /** Puts a line removed by [deleteBlock] back where it was (if it isn't already there). */
+    suspend fun restoreBlock(noteId: String, at: Int, b: Block) {
+        val n = dao.get(noteId) ?: return
+        val cur = Blocks.parse(n.blocks)
+        if (cur.any { it.id == b.id }) return
+        dao.setBlocks(noteId, Blocks.serialize(cur.toMutableList().apply { add(at.coerceIn(0, size), b) }), now())
+    }
+
     suspend fun setPinned(ids: List<String>, on: Boolean) = dao.setPinned(ids, on, now())
     suspend fun setFavorite(ids: List<String>, on: Boolean) = dao.setFavorite(ids, on, now())
     suspend fun setColor(ids: List<String>, color: NoteColor) = dao.setColor(ids, color.name, now())

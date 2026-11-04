@@ -115,6 +115,7 @@ import com.ohav.noted.design.Shadows
 import com.ohav.noted.design.Squircle
 import com.ohav.noted.design.ToastState
 import com.ohav.noted.design.press
+import com.ohav.noted.design.pressLong
 import com.ohav.noted.design.softShadow
 import com.ohav.noted.design.ShadowFrame
 import com.ohav.noted.design.lerpShadow
@@ -1194,9 +1195,17 @@ private fun Lead(state: EditorState, b: EdBlock, num: Int, focused: Boolean, toa
                 Modifier
                     .padding(top = 5.dp, end = 10.dp)
                     .size(24.dp)
-                    .press(scale = .82f) {
-                        if (state.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@press }
-                        state.toggleCheck(b); if (b.done) haptics.confirm() else haptics.light()
+                    .pressLong(
+                        scale = .82f,
+                        onLongClick = {
+                            // long press removes the whole row (instead of erasing it word by word); undo brings it back
+                            if (state.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@pressLong }
+                            state.delete(b.id)
+                            toasts.show("השורה נמחקה", Ph.Trash, "ביטול") { state.undo() }
+                        },
+                    ) {
+                        if (state.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@pressLong }
+                        state.toggleCheck(b); if (b.done) haptics.confirm()
                     }
                     .clip(Squircle(8.dp))
                     .background(c.noteInk.copy(alpha = p))

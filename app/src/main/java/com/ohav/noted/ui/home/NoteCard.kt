@@ -161,6 +161,7 @@ fun NoteCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onToggleCheck: (String) -> Unit,
+    onDeleteLine: (String) -> Unit = {},
     onOpenEditor: () -> Unit,
     selecting: Boolean = false,
     selected: Boolean = false,
@@ -246,7 +247,7 @@ fun NoteCard(
                 if (locked) LockedLine()
                 else if (showSummary) Summary(n, blocks, Modifier.graphicsLayer { alpha = 1f - open.value })
                 if (!locked && (expanded || showFull)) {
-                    FullContent(n, blocks, onToggleCheck, onOpenEditor, pull, Modifier.graphicsLayer { alpha = open.value })
+                    FullContent(n, blocks, onToggleCheck, onDeleteLine, onOpenEditor, pull, Modifier.graphicsLayer { alpha = open.value })
                 }
             }
         }
@@ -322,7 +323,7 @@ private fun MetaItem(icon: ImageVector, text: String?) {
 }
 
 @Composable
-private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (String) -> Unit, onOpenEditor: () -> Unit, pull: CardPull?, modifier: Modifier) {
+private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (String) -> Unit, onDeleteLine: (String) -> Unit, onOpenEditor: () -> Unit, pull: CardPull?, modifier: Modifier) {
     val c = Noted.colors
     val t = Noted.type
     // rich text is built once per block content, not on every pass
@@ -372,6 +373,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                     b.text, b.done, c.note(NoteColor.of(n.color)),
                     remind = reminders[ReminderEntity.idFor(n.id, b.id)]?.let { fmtRel(it.occAt) },
                     place = placeChips[ReminderEntity.idFor(n.id, b.id)],
+                    onLongPress = { onDeleteLine(b.id) },
                 ) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
@@ -544,7 +546,8 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, onHold: (Boolea
 
 /** Checklist row: squircle box fills and draws its tick, text greys out under a growing strike. */
 @Composable
-fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, place: PlaceChip? = null, onToggle: () -> Unit) {
+@OptIn(ExperimentalFoundationApi::class)
+fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, place: PlaceChip? = null, onLongPress: (() -> Unit)? = null, onToggle: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -556,7 +559,10 @@ fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, p
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() }, indication = null,
+                onLongClick = onLongPress?.let { f -> { haptics.medium(); f() } },
+            ) {
                 if (done) haptics.light() else haptics.confirm()
                 scope.launch { breathe.animateTo(1f, Motion.touch(), initialVelocity = -9f) }
                 onToggle()

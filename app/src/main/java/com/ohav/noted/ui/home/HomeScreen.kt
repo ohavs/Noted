@@ -758,6 +758,13 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                                 if (r.first == r.second && r.second > 0) toasts.show("כל הרשימה סומנה. יפה!", Ph.CheckCircleFill)
                             }
                         },
+                        onDeleteLine = { blockId ->
+                            if (n.shareInfo.readOnly) { haptics.reject(); toasts.show("יש לך הרשאת צפייה בפתק הזה", Ph.Eye); return@NoteCard }
+                            scope.launch {
+                                val (at, b) = app.notes.deleteBlock(n.id, blockId) ?: return@launch
+                                toasts.show("השורה נמחקה", Ph.Trash, "ביטול") { scope.launch { app.notes.restoreBlock(n.id, at, b) } }
+                            }
+                        },
                         onOpenEditor = { openEditor(n) },
                         pull = remember(n) { pullFor(n) },
                         selecting = selecting,
