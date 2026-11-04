@@ -136,6 +136,8 @@ function row(b) {
       on: { input: () => onInput(b, t), keydown: (e) => keys(e, b, t), focus: () => { ed.focusId = b.id; }, blur: () => { if (ed?.focusId === b.id) ed.focusId = null; }, paste: (e) => paste(e, b, t) },
     });
     r.append(t);
+    // a ticked line offers its own × (always visible, also on touch where row-tools stay hidden)
+    if (b.type === 'Check' && !ed.readOnly) r.append(h('button.done-x.press', { 'aria-label': 'מחיקת השורה', 'data-scale': '.8', on: { click: () => removeBlock(b, true) } }, icon('x')));
     if (!ed.readOnly) r.append(h('div.row-tools',
       b.type === 'Check' ? h('button.row-tool.press', { 'aria-label': 'תזכורת לשורה', title: 'תזכורת לשורה', on: { click: () => openReminder(ed.n.id, b.id, b.text) } }, icon(S.reminders.get(remId(ed.n.id, b.id)) ? 'bell-ringing' : 'bell', !!S.reminders.get(remId(ed.n.id, b.id)))) : null,
       h('button.row-tool.press', { 'aria-label': 'מחיקת השורה', title: 'מחיקת השורה', on: { click: () => removeBlock(b, true) } }, icon('x')),

@@ -1151,6 +1151,11 @@ private fun BlockRow(
                 }
             }
         }
+        // a ticked line offers its own × (long press on the box still works too)
+        if (b.type == BlockType.Check && !state.readOnly) com.ohav.noted.ui.home.DoneDelete(b.done, Modifier.padding(top = 4.dp)) {
+            state.delete(b.id, focusNear = focused)
+            toasts.show("השורה נמחקה", Ph.Trash, "ביטול") { state.undo() }
+        }
         // someone else wrote or ticked this line: their face beside it
         val who = state.share.takeIf { it.shared }?.let { sh -> sh.by[b.id]?.takeIf { it != state.me }?.let { sh.member(it) } }
         if (who != null && b.type !in MEDIA_TYPES && b.type != BlockType.Divider && (b.text.isNotBlank() || b.done)) {

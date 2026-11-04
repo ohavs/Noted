@@ -275,7 +275,8 @@ function cardBlock(n, b) {
     case 'Check': {
       const row = h(`div.cb-check${b.done ? '.done' : ''}`, { style: { paddingInlineStart: b.indent * 18 + 'px' } },
         h('button.chk.press', { 'aria-label': 'סימון', 'data-scale': '.8', html: CHECK_SVG }),
-        h('span', { html }));
+        h('span', { html }),
+        n.role === 'viewer' ? null : h('button.done-x.press', { 'aria-label': 'מחיקת השורה', 'data-scale': '.8', on: { click: (e) => { e.stopPropagation(); haptic('medium'); deleteLine(n, b); } } }, icon('x')));
       const chk = row.querySelector('.chk');
       longPress(chk, () => deleteLine(n, b), () => {
         if (n.role === 'viewer') { toast('יש לך הרשאת צפייה בפתק הזה', { icon: 'eye' }); return; }

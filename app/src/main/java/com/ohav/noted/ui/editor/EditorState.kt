@@ -474,14 +474,15 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         changed()
     }
 
-    fun delete(id: String) {
+    /** [focusNear]: move the caret to the neighbour (off for the ×, so the keyboard doesn't pop up). */
+    fun delete(id: String, focusNear: Boolean = true) {
         val i = indexOf(id).takeIf { it >= 0 } ?: return
         record(true)
         val wasText = blocks[i].type in TEXT_TYPES
         blocks.removeAt(i)
         if (blocks.none { it.type in TEXT_TYPES }) blocks.add(EdBlock.new())
         val near = blocks.getOrNull(min(i, blocks.lastIndex))
-        if (wasText && near != null && near.type in TEXT_TYPES) pendingFocus = near.id to near.text.length
+        if (focusNear && wasText && near != null && near.type in TEXT_TYPES) pendingFocus = near.id to near.text.length
         changed()
     }
 

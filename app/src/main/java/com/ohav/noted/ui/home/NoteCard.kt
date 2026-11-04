@@ -4,7 +4,11 @@ import com.ohav.noted.ui.lock.veil
 import androidx.compose.animation.animateColorAsState
 import com.ohav.noted.ui.media.CardMedia
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
@@ -60,6 +64,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -95,6 +101,7 @@ import com.ohav.noted.design.Motion
 import com.ohav.noted.design.NoteColor
 import com.ohav.noted.design.Noted
 import com.ohav.noted.design.Ph
+import com.ohav.noted.design.press
 import com.ohav.noted.design.Shadows
 import com.ohav.noted.design.Shapes
 import com.ohav.noted.design.softShadow
@@ -374,6 +381,7 @@ private fun FullContent(n: NoteEntity, blocks: List<Block>, onToggleCheck: (Stri
                     remind = reminders[ReminderEntity.idFor(n.id, b.id)]?.let { fmtRel(it.occAt) },
                     place = placeChips[ReminderEntity.idFor(n.id, b.id)],
                     onLongPress = { onDeleteLine(b.id) },
+                    onDelete = { onDeleteLine(b.id) },
                 ) { onToggleCheck(b.id) }
                 BlockType.Divider -> Box(Modifier.padding(vertical = 10.dp).fillMaxWidth().height(1.5.dp).background(c.noteInk.copy(alpha = .14f)))
                 else -> CardMedia(b, Modifier.padding(top = 4.dp, bottom = 12.dp))
@@ -544,10 +552,38 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, onHold: (Boolea
     }
 }
 
+/**
+ * The small "×" that slides in at the end of a ticked line: one tap removes the line (undo in the toast).
+ * Hidden while the line is open, so it never sits in the way of writing.
+ */
+@Composable
+fun DoneDelete(shown: Boolean, modifier: Modifier = Modifier, onDelete: () -> Unit) {
+    val c = Noted.colors
+    val haptics = Noted.haptics
+    AnimatedVisibility(
+        shown, modifier,
+        enter = fadeIn(Motion.glide()) + expandHorizontally(Motion.glide(), expandFrom = Alignment.Start) + scaleIn(Motion.glide(), initialScale = .6f),
+        exit = fadeOut(Motion.glide()) + shrinkHorizontally(Motion.glide(), shrinkTowards = Alignment.Start) + scaleOut(Motion.glide(), targetScale = .6f),
+    ) {
+        Box(
+            Modifier
+                .size(30.dp)
+                .press(scale = .8f, haptic = false) { haptics.medium(); onDelete() }
+                .semantics { contentDescription = "מחיקת השורה" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier.size(22.dp).clip(CircleShape).background(c.noteInk.copy(alpha = .09f)),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Ph.X, null, Modifier.size(12.dp), tint = c.noteInk2) }
+        }
+    }
+}
+
 /** Checklist row: squircle box fills and draws its tick, text greys out under a growing strike. */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, place: PlaceChip? = null, onLongPress: (() -> Unit)? = null, onToggle: () -> Unit) {
+fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, place: PlaceChip? = null, onLongPress: (() -> Unit)? = null, onDelete: (() -> Unit)? = null, onToggle: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -639,6 +675,8 @@ fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, p
                 }
             }
         }
+        // always in the row (zero-wide when hidden) so the row's spacing never jumps as the × slides in
+        if (onDelete != null) Box { DoneDelete(done, onDelete = onDelete) }
     }
 }
 
