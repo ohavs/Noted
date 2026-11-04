@@ -199,6 +199,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         }
     }
     if (expanded != null && visible.none { it.id == expanded }) expanded = null
+    // a lone (unlocked) note has nothing to fold behind: show it open, in full
+    val shown = expanded ?: visible.singleOrNull()?.id?.takeIf { !privacy.locked(it) }
 
     /** Stack swipe: the next / previous stop along categories and their subcategories. */
     fun goFlat(i: Int) {
@@ -705,7 +707,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             ) {
                 NoteStack(
                     notes = visible,
-                    expanded = expanded,
+                    expanded = shown,
                     state = stack,
                     modifier = Modifier
                         .fillMaxSize()
@@ -739,12 +741,12 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     NoteCard(
                         n = n,
                         blocks = blocksOf[n.id].orEmpty(),
-                        expanded = n.id == expanded,
+                        expanded = n.id == shown,
                         onFullHeight = { h -> if (stack.fullHeights[n.id] != h) stack.fullHeights[n.id] = h },
                         onClick = {
                             when {
                                 selecting -> { selected = if (n.id in selected) selected - n.id else selected + n.id; haptics.tick() }
-                                expanded == n.id -> openEditor(n)
+                                shown == n.id -> openEditor(n)
                                 // locked: nothing to unfold — straight to the code, then the editor
                                 privacy.locked(n.id) -> openEditor(n)
                                 else -> expanded = n.id
