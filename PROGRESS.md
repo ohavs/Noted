@@ -146,7 +146,15 @@
   - קו הערימה נכנס בהדרגה מראש ה-viewport (`base = s + ramp(s)`, חלק) — בראש הרשימה הפתק הראשון בראש ולא 98dp למטה (רגרסיה מ-74515c1).
   - סגירה בחזרה/נגיעה בצד מורידה את הפתק לגלילה שממנה נפתח (`OpenMem`); סגירה בגלילה — נשאר במקום.
   - גרירה לקטגוריה: הרמת פתק → גרירה מעל שם בכותרת הענקית/תת-קטגוריה → השם נדלק (accent + הגדלה), הכרטיס מתכווץ סביב האצבע, שחרור = עף לתוך השם, טוסט עם ביטול. הסקרים מתבהר בזמן גרירה.
-- **הבא**: הבעלים בודק את v0.2.67 + 6/7b/8/10 במכשירים. Google Play (11) — רק כשהבעלים מרוצה.
+- **2026-11-04 — הצמדה, צלילים, אתר מסונכרן, מסך טלוויזיה, הכנות ל-Play (v0.2.79+, לא נבדק במכשיר)**. החלטות הבעלים: אתר = "ליבה + מסך תצוגה"; הצמדה מכל מקום (מתג בגיליון התזכורת + כפתור בהתראה + "הצמד פתק"), בלי כפילויות באותו מקום; צלילים לפי סוג; אייפון (xtools) — אחרי Play.
+  - צ'קבוקס: לחיצה ארוכה = מחיקת השורה + ביטול (עורך, כרטיס פתוח, אתר).
+  - `reminders/Shade.kt`: תזכורת `sticky` (עמודה ב-reminders + place_reminders, Room v10) — אחרי צלצול ongoing, `deleteIntent` מחזיר אותה בשקט כשמחליקים (אנדרואיד 14 מאפשר להחליק ongoing), רק "הסר" מסיר. בהתראה לא-דביקה: כפתור "הצמד". "הצמדה לחלון ההתראות" לפתק (תפריט ההרמה בבית — 9 פעולות בשתי שורות 5+4 — ותפריט העורך): התראה שקטה בערוץ `pinned` שמתעדכנת עם התוכן. מה שמוחזק נשמר ב-prefs `shade` וחוזר אחרי אתחול.
+  - `reminders/Sounds.kt`: צליל לכל סוג (זמן / מקום / שינויים משותפים) — ערוץ לכל (סוג, צליל), צליל המערכת שומר את מזהי הערוצים הישנים. 6 צלילים מסונתזים (`scripts/tones.py` → `res/raw/tone_*.ogg`). להוספת צליל: קובץ ב-`res/raw` + שורה ב-`Sounds.tones`. הגדרות ← צלילים.
+  - סנכרון תזכורות זמן: `users/{uid}/reminders/{id}` (מסמך שלם, `at` החדש מנצח, tombstone במחיקה), shadow `r:<id>`. Function `reminderWritten` שולח data message (`kind=rem`) לכל המכשירים → `PushService` מכניס ל-Room ומעדכן alarm גם כשהאפליקציה ישנה. תזכורות מקום — עדיין מקומיות.
+  - אתר (`web/`, esbuild + firebase 12.12.0, Hosting מ-`web/public`, config מ-`/__/firebase/init.json` — ה-CI יוצר Web app אם חסר): התחברות Google, קטגוריות/תתי-קטגוריות, רשת פתקים, עורך בלוקים (אותו פורמט per-block כמו האפליקציה, טקסט עשיר, רשימות, צ'קבוקס שוקע, Markdown קצר, מדיה לקריאה — תמונות/הקלטה/קישור/מקום; ציור = placeholder), תזכורות (בורר + לוח + צלצול בדפדפן כשפתוח), ארכיון/סל/משותף, הגדרות (ערכת צבע/accent/גופן מקומיים), מחיקת חשבון. האב-טיפוס עבר ל-`/proto`. בדיקה מקומית עם Firestore מדומה (Playwright) — עובד; מול חשבון אמיתי עוד לא נבדק (האתר חסום מהענן שלי).
+  - מסך טלוויזיה: `/tv` (קוד 8 תווים + QR, נשמר ב-localStorage, `?new` לקוד חדש) קורא רק `screens/{code}`; באתר: "מסך תצוגה" / תפריט פתק ← "הצגה במסך". `noteWritten` מרענן את העותק בכל שינוי (`refreshScreens`). כלל: get פתוח לכולם, list/כתיבה לבעלים.
+  - Play: flavors `github`/`play` (app + wear) — ב-play אין updater ו-`REQUEST_INSTALL_PACKAGES` מוסר; CI משחרר github ומקמפל play. מחיקת חשבון (`functions/account.js` `deleteAccount`), `/privacy`, `/delete-account`, נוסח גילוי למיקום ברקע. פירוט + Data safety + טקסטים: `docs/PLAY.md`, `docs/store/`.
+- **הבא**: הבעלים בודק במכשירים (הצמדה, צלילים, סנכרון תזכורות טלפון↔אתר, מסך טלוויזיה). Google Play (11): AAB + קונסולה — כשהבעלים מרוצה. אחר כך אייפון (12).
 - **מכסות Places (New) שהבעלים הגדיר ב-2026-11-03** (אין מכסה יומית ב-New, רק לדקה): `AutocompletePlacesRequest per minute` 30, `... per minute per user` 30, `GetPlaceRequest per minute` 10, `... per minute per user` 10. פרויקט `noted-ce451`.
 - (ל-token בסשן אין הרשאת actions:write → הרצה מחדש של CI רק דרך push.)
 
@@ -163,7 +171,7 @@
 - שלב 2: keystore נוצר (RSA 2048, alias `noted`), SHA-256: `3A:8A:46:7A:9C:0A:22:76:45:2F:A5:DD:F7:88:7F:D7:1E:4F:A1:85:D6:F3:75:58:A2:98:D2:EA:0D:13:FA:A2`, SHA-1: `45:1F:6A:59:5D:7A:AA:F8:25:B1:C0:F9:DF:E9:CE:A6:C0:CE:67:BE` (לנעילת מפתח Maps). `google-services.json`, sign-in, Maps — בשלבים 7–8.
 
 ## סודות שהוגדרו (שמות בלבד)
-- `FIREBASE_TOKEN` ✅ (משמש גם ליצירת `google-services.json` ב-CI — אין צורך ב-`GOOGLE_SERVICES_JSON`), `KEYSTORE_BASE64` ✅, `KEYSTORE_PASSWORD` ✅ (alias `noted`, סיסמת מפתח = סיסמת מאגר). `MAPS_API_KEY` ✅ (Maps SDK for Android בלבד + `com.ohav.noted`/SHA-1, נאכף ב-CI). Secret Manager (לא GitHub): `PLACES_KEY` — נוצר ומתעדכן ב-CI.
+- (אין סודות חדשים בשלב הזה.) `FIREBASE_TOKEN` ✅ (משמש גם ליצירת `google-services.json` ב-CI — אין צורך ב-`GOOGLE_SERVICES_JSON`), `KEYSTORE_BASE64` ✅, `KEYSTORE_PASSWORD` ✅ (alias `noted`, סיסמת מפתח = סיסמת מאגר). `MAPS_API_KEY` ✅ (Maps SDK for Android בלבד + `com.ohav.noted`/SHA-1, נאכף ב-CI). Secret Manager (לא GitHub): `PLACES_KEY` — נוצר ומתעדכן ב-CI.
 
 ## פתוח באב-טיפוס (לא חוסם)
 - תמונות דמו נטענות מ-picsum.photos.
