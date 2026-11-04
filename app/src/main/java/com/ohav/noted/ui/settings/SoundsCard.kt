@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -77,7 +79,17 @@ private fun TonePicker(kind: Sounds.Kind, onChosen: () -> Unit) {
     val ctx = LocalContext.current
     val haptics = Noted.haptics
     var chosen by remember { mutableIntStateOf(Sounds.tones.indexOf(Sounds.chosen(ctx, kind))) }
+    var muted by remember { mutableStateOf(Sounds.notificationsMuted(ctx)) }
+    DisposableEffect(Unit) { onDispose { Sounds.stopPreview(ctx) } }
     Text("נגיעה משמיעה ובוחרת", style = t.label, color = c.ink3, modifier = Modifier.padding(bottom = 10.dp))
+    if (muted) Row(
+        Modifier.padding(bottom = 10.dp).fillMaxWidth().clip(Shapes.md).background(c.accent.copy(alpha = .08f)).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Ph.Vibrate, null, Modifier.size(20.dp), tint = c.accent)
+        Text("הטלפון בשקט או שעוצמת ההתראות על 0 — כאן הצליל יישמע, אבל ההתראות עצמן יגיעו בלי צליל.", style = t.caption, color = c.ink2)
+    }
     Sounds.tones.forEachIndexed { i, tone ->
         val on = i == chosen
         val bg by animateColorAsState(if (on) c.accent.copy(alpha = .12f) else c.bg.copy(alpha = 0f), Motion.glide(), label = "toneBg")
@@ -92,7 +104,8 @@ private fun TonePicker(kind: Sounds.Kind, onChosen: () -> Unit) {
                     haptics.tick()
                     chosen = i
                     Sounds.choose(ctx, kind, tone)
-                    Sounds.preview(ctx, tone)
+                    muted = Sounds.notificationsMuted(ctx)
+                    if (tone.id == Sounds.SILENT) Sounds.stopPreview(ctx) else Sounds.preview(ctx, tone)
                     onChosen()
                 }
                 .padding(horizontal = 14.dp, vertical = 14.dp),
