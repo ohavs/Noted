@@ -113,6 +113,25 @@ object Media {
     fun file(ctx: Context, name: String) = File(dir(ctx), name)
     fun newName(ext: String) = UUID.randomUUID().toString().replace("-", "").take(20) + "." + ext
 
+    /** A media file name inside any text (a note's JSON, a sync shadow): 20 hex chars + extension. */
+    private val NAME = Regex("[0-9a-f]{20}\\.[a-z]+(?:\\.[a-z]+)?")
+    fun namesIn(text: String): Sequence<String> = NAME.findAll(text).map { it.value }
+
+    /**
+     * Deletes files no note points at any more: blocks keep their files while the editor is
+     * open (undo, "discard all changes"), so this runs only at launch, and spares anything
+     * touched in the last [graceMs] (a recording / import still on its way into a note).
+     * Half-downloaded `.part` files older than that go too. Returns the names deleted.
+     */
+    suspend fun sweep(ctx: Context, keep: Set<String>, graceMs: Long = 2 * 24 * 60 * 60 * 1000L, now: Long = System.currentTimeMillis()): List<String> =
+        withContext(Dispatchers.IO) {
+            val old = now - graceMs
+            dir(ctx).listFiles().orEmpty()
+                .filter { it.isFile && it.lastModified() < old && (it.name.endsWith(".part") || it.name !in keep) }
+                .filter { it.delete() }
+                .map { it.name }
+        }
+
     /**
      * Copies an image into the app as lossy WebP: upright, at most [maxPx] on its long side
      * (photos 1920, scanned pages 2048 so small print stays sharp). Decoding already lands

@@ -81,7 +81,7 @@ object FileTranscriber {
             r.startListening(
                 Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Recorder.LANG)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, SpeechLang.tag(ctx))
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)

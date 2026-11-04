@@ -313,6 +313,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     DONE -> intent.getStringExtra(EXTRA_ID)?.let { app.reminders.done(it) }
                     Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
                         app.places.sync(force = true)
+                        app.places.lateDue() // alarms don't survive a reboot
                         Shade.repostAll(app)
                     }
                     SNOOZE -> {

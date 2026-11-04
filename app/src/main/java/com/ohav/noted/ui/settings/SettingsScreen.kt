@@ -137,6 +137,7 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
             }
         }
         Section("צלילים") { SoundsCard() }
+        Section("הקלטות") { SpeechCard() }
         Section("פרטיות") { PrivacyCard(app, toasts) }
         Section("גיבוי") { BackupCard(app, toasts) }
         if (com.ohav.noted.BuildConfig.SELF_UPDATE) Section("עדכונים") { UpdateCard(app, toasts) }

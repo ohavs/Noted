@@ -42,4 +42,7 @@ interface SyncDao {
 
     @Query("DELETE FROM media_sync")
     suspend fun clearMedia()
+
+    @Query("DELETE FROM media_sync WHERE name IN (:names)")
+    suspend fun dropMedia(names: List<String>)
 }

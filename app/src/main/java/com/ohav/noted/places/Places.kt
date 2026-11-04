@@ -239,7 +239,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
             when {
                 kind == "far" && transition == Geofence.GEOFENCE_TRANSITION_EXIT -> {
                     // a vague fix far out still means away; only a fix that could be at the door doesn't
-                    if (acc <= p.radius + ARM_MARGIN_M) dao.setArmIn(p.id, true)
+                    if (acc <= p.radius + ARM_MARGIN_M) { dao.setArmIn(p.id, true); late.drop(p.id); armLate() }
                     status.recordCross(p.name, "רחוק", if (acc <= p.radius + ARM_MARGIN_M) "נדרך להגעה" else "לא מדויק")
                 }
                 kind == "in" && transition == Geofence.GEOFENCE_TRANSITION_ENTER -> when {
@@ -249,6 +249,9 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
                         dao.setArmIn(p.id, false)
                         dao.setArmOut(p.id, true)
                         status.recordCross(p.name, "הגעה", ring(p, leave = false))
+                        // came before the hours: ring when they open, if still here then
+                        val at = nextOpening(p.id)
+                        if (at != null) { late.put(p.id, at); armLate() }
                     }
                 }
                 kind == "out" && transition == Geofence.GEOFENCE_TRANSITION_ENTER -> {
@@ -266,6 +269,60 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------ arrived before the hours
+
+    private val late = LatePlaces(ctx)
+
+    /**
+     * When the hours of an arrival reminder at [placeId] that just couldn't ring next open —
+     * only reminders with set hours, opening within 12 hours (a days-only rule would ring at
+     * midnight). Null = nothing waits.
+     */
+    private suspend fun nextOpening(placeId: String): Long? {
+        val now = LocalDateTime.now()
+        val horizon = now.plusHours(12)
+        var best: LocalDateTime? = null
+        for (r in dao.remindersAt(placeId)) {
+            if (r.leave || r.fired || r.allows(now)) continue
+            val f = r.fromMin ?: continue
+            for (plus in 0L..1L) {
+                val t = now.toLocalDate().plusDays(plus).atTime(f / 60, f % 60)
+                val b = best
+                if (t.isAfter(now) && !t.isAfter(horizon) && r.allows(t) && (b == null || t.isBefore(b))) best = t
+            }
+        }
+        return best?.atZone(java.time.ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
+    }
+
+    /** One alarm for the earliest waiting place. */
+    private fun armLate() {
+        val am = ctx.getSystemService(android.app.AlarmManager::class.java) ?: return
+        val pi = PendingIntent.getBroadcast(
+            ctx, 8, Intent(ctx, GeofenceReceiver::class.java).setAction(GeofenceReceiver.LATE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val at = late.all().values.minOrNull()
+        if (at == null) { am.cancel(pi); return }
+        val t = maxOf(at, System.currentTimeMillis() + 500)
+        runCatching {
+            if (com.ohav.noted.reminders.Alarm.canExact(ctx)) am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, t, pi)
+            else am.setWindow(android.app.AlarmManager.RTC_WAKEUP, t, 60_000L, pi)
+        }.onFailure { am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, t, pi) }
+    }
+
+    /** The hours opened: places still "here" (arrived, not gone far since) ring now. Also after boot. */
+    suspend fun lateDue() = lock.withLock {
+        val now = System.currentTimeMillis()
+        for ((id, at) in late.all()) {
+            if (at > now + 30_000) continue
+            late.drop(id)
+            val p = dao.place(id) ?: continue
+            if (p.armIn) continue // left (or the arrival never counted) since
+            status.recordCross(p.name, "פתיחת השעות", ring(p, leave = false))
+        }
+        armLate()
     }
 
     /** Rings what this arrival / departure is for; returns what happened, for the status line. */
@@ -310,6 +367,14 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         const val MIN_RADIUS_M = 80f
         const val MAX_FENCES = 99
     }
+}
+
+/** Places arrived at before their reminders' hours: place id → when the hours open (epoch ms). */
+private class LatePlaces(ctx: Context) {
+    private val prefs: SharedPreferences = ctx.getSharedPreferences("places_late", Context.MODE_PRIVATE)
+    fun all(): Map<String, Long> = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+    fun put(id: String, at: Long) = prefs.edit().putLong(id, at).apply()
+    fun drop(id: String) = prefs.edit().remove(id).apply()
 }
 
 /** What the fences last did — shown on the places screen, so "it didn't ring" has an answer. */
@@ -395,6 +460,7 @@ class GeofenceReceiver : BroadcastReceiver() {
                 when (intent.action) {
                     DONE -> intent.getStringExtra(EXTRA_ID)?.let { app.places.done(it) }
                     AGAIN -> intent.getStringExtra(EXTRA_ID)?.let { app.places.again(it) }
+                    LATE -> app.places.lateDue()
                     else -> {
                         val e = GeofencingEvent.fromIntent(intent) ?: return@launch
                         if (e.hasError()) {
@@ -418,6 +484,7 @@ class GeofenceReceiver : BroadcastReceiver() {
         const val CROSS = "com.ohav.noted.place.CROSS"
         const val DONE = "com.ohav.noted.place.DONE"
         const val AGAIN = "com.ohav.noted.place.AGAIN"
+        const val LATE = "com.ohav.noted.place.LATE"
         const val EXTRA_ID = "id"
     }
 }

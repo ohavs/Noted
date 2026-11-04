@@ -457,6 +457,17 @@ object NoteExport {
             pt.strokeWidth = s.w * k
             val n = s.pts.size / 2
             if (n == 0) return@forEach
+            val pc = s.pieces()
+            if (pc.isNotEmpty()) {
+                // pressure: each piece at its own width
+                var o = 0
+                while (o < pc.size) {
+                    pt.strokeWidth = s.w * k * pc[o + 6]
+                    c.drawPath(Path().apply { moveTo(pc[o] * k, pc[o + 1] * k); quadTo(pc[o + 2] * k, pc[o + 3] * k, pc[o + 4] * k, pc[o + 5] * k) }, pt)
+                    o += 7
+                }
+                return@forEach
+            }
             val path = Path().apply {
                 moveTo(s.pts[0] * k, s.pts[1] * k)
                 if (n == 1) lineTo(s.pts[0] * k + .01f, s.pts[1] * k)

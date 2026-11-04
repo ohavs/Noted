@@ -244,7 +244,7 @@ class Recorder(private val ctx: Context) {
             sr.startListening(
                 Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, LANG)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, SpeechLang.tag(ctx))
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, p[0])
@@ -289,7 +289,7 @@ class Recorder(private val ctx: Context) {
 
         override fun onError(error: Int) {
             val lang = error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE
-            // on-device model missing for Hebrew → try the regular recognizer once
+            // on-device model missing for the language → try the regular recognizer once
             if (onDevice && !triedNetwork && running && (lang || error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_SERVER)) {
                 triedNetwork = true
                 stopRecognizer()
@@ -326,7 +326,6 @@ class Recorder(private val ctx: Context) {
     companion object {
         const val RATE = 16_000
         const val CHUNK = 800 // 50 ms
-        const val LANG = "he-IL"
 
         /** Peaks of [levels] in [n] bars, 0..100. */
         fun bars(levels: List<Float>, n: Int): List<Int> {

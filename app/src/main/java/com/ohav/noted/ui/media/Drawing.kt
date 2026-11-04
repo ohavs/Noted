@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -73,8 +74,36 @@ import kotlin.math.min
 
 enum class Tool { Pen, Marker, Eraser }
 
-/** One stroke; points and width are in pad widths, so it scales with wherever it's drawn. */
-class PenStroke(val tool: Tool, val color: String, val w: Float, val pts: FloatArray)
+/**
+ * One stroke; points and width are in pad widths, so it scales with wherever it's drawn.
+ * [pr] = width factor per point (a stylus's pressure), null = even width.
+ */
+class PenStroke(val tool: Tool, val color: String, val w: Float, val pts: FloatArray, val pr: FloatArray? = null) {
+    /**
+     * The smoothed stroke cut at the points, for drawing each piece at its own width:
+     * per piece start x/y, control x/y, end x/y, width factor (7 floats).
+     */
+    fun pieces(): FloatArray {
+        val n = pts.size / 2
+        val f = pr
+        if (n < 2 || f == null) return FloatArray(0)
+        val out = FloatArray(7 * n)
+        fun mx(i: Int) = (pts[2 * i] + pts[2 * i + 2]) / 2
+        fun my(i: Int) = (pts[2 * i + 1] + pts[2 * i + 3]) / 2
+        var o = 0
+        fun put(x0: Float, y0: Float, cx: Float, cy: Float, x1: Float, y1: Float, m: Float) {
+            out[o] = x0; out[o + 1] = y0; out[o + 2] = cx; out[o + 3] = cy; out[o + 4] = x1; out[o + 5] = y1; out[o + 6] = m; o += 7
+        }
+        put(pts[0], pts[1], (pts[0] + mx(0)) / 2, (pts[1] + my(0)) / 2, mx(0), my(0), f[0])
+        for (i in 1 until n - 1) put(mx(i - 1), my(i - 1), pts[2 * i], pts[2 * i + 1], mx(i), my(i), f[i])
+        val l = n - 1
+        put(mx(l - 1), my(l - 1), (mx(l - 1) + pts[2 * l]) / 2, (my(l - 1) + pts[2 * l + 1]) / 2, pts[2 * l], pts[2 * l + 1], f[l])
+        return out.copyOf(o)
+    }
+}
+
+/** Stylus pressure (0..1) → width factor, so a light touch writes thin and a firm one thick. */
+internal fun pressureWidth(p: Float): Float = (.35f + 1.15f * p.coerceIn(0f, 1f)).coerceIn(.35f, 1.5f)
 
 /** Strokes files (`*.strokes.json` in the media folder), cached once read. */
 object StrokeFile {
@@ -89,10 +118,12 @@ object StrokeFile {
             List(a.length()) { i ->
                 val o = a.getJSONObject(i)
                 val p = o.getJSONArray("p")
+                val pr = o.optJSONArray("pr")?.takeIf { it.length() * 2 == p.length() }
                 PenStroke(
                     runCatching { Tool.valueOf(o.optString("t")) }.getOrDefault(Tool.Pen),
                     o.optString("c", INK), o.optDouble("w", .008).toFloat(),
                     FloatArray(p.length()) { p.optDouble(it).toFloat() },
+                    pr?.let { a -> FloatArray(a.length()) { a.optDouble(it, 1.0).toFloat() } },
                 )
             }
         }.getOrDefault(emptyList()).also { cache.put(name, it) }
@@ -104,7 +135,9 @@ object StrokeFile {
         list.forEach { s ->
             val p = JSONArray()
             s.pts.forEach { p.put(Math.round(it * 10000.0) / 10000.0) }
-            a.put(JSONObject().put("t", s.tool.name).put("c", s.color).put("w", s.w.toDouble()).put("p", p))
+            val o = JSONObject().put("t", s.tool.name).put("c", s.color).put("w", s.w.toDouble()).put("p", p)
+            s.pr?.let { f -> o.put("pr", JSONArray().apply { f.forEach { put(Math.round(it * 100.0) / 100.0) } }) }
+            a.put(o)
         }
         val name = Media.newName("strokes.json")
         Media.file(ctx, name).writeText(JSONObject().put("v", 1).put("s", a).toString())
@@ -118,7 +151,8 @@ object StrokeFile {
         var hi = -Float.MAX_VALUE
         list.forEach { s ->
             var i = 1
-            while (i < s.pts.size) { lo = min(lo, s.pts[i] - s.w); hi = max(hi, s.pts[i] + s.w); i += 2 }
+            val r = s.w * (if (s.pr != null) 1.5f else 1f)
+            while (i < s.pts.size) { lo = min(lo, s.pts[i] - r); hi = max(hi, s.pts[i] + r); i += 2 }
         }
         if (lo > hi) return 0f to .5f
         var top = max(0f, lo - .05f)
@@ -151,8 +185,30 @@ private fun colorOf(tool: Tool, color: String, ink: Color, dark: Boolean): Color
     return if (tool == Tool.Marker) i?.mark(dark) ?: ink.copy(alpha = .26f) else i?.ink(dark) ?: ink
 }
 
-private fun DrawScope.drawStroke(path: Path, s: PenStroke, k: Float, ink: Color, dark: Boolean) =
-    drawPath(path, colorOf(s.tool, s.color, ink, dark), style = Stroke(s.w * k, cap = StrokeCap.Round, join = StrokeJoin.Round))
+/** A stroke ready to draw: one path at one width, or (pressure) a path per piece with its own width. */
+private class Geom(val paths: List<Path>, val widths: FloatArray)
+
+private fun geomOf(s: PenStroke, k: Float, dy: Float): Geom {
+    val pc = s.pieces()
+    if (pc.isEmpty()) return Geom(listOf(pathOf(s.pts, k, dy)), floatArrayOf(s.w * k))
+    val n = pc.size / 7
+    val paths = ArrayList<Path>(n)
+    val widths = FloatArray(n)
+    for (i in 0 until n) {
+        val o = 7 * i
+        paths += Path().apply {
+            moveTo(pc[o] * k, pc[o + 1] * k - dy)
+            quadraticTo(pc[o + 2] * k, pc[o + 3] * k - dy, pc[o + 4] * k, pc[o + 5] * k - dy)
+        }
+        widths[i] = s.w * k * pc[o + 6]
+    }
+    return Geom(paths, widths)
+}
+
+private fun DrawScope.drawStroke(g: Geom, s: PenStroke, ink: Color, dark: Boolean) {
+    val col = colorOf(s.tool, s.color, ink, dark)
+    g.paths.forEachIndexed { i, p -> drawPath(p, col, style = Stroke(g.widths[i], cap = StrokeCap.Round, join = StrokeJoin.Round)) }
+}
 
 /** A drawing in a note / on a card: drawn live from its strokes, in the theme's inks. */
 @Composable
@@ -171,8 +227,8 @@ fun DrawingView(d: Drawing, modifier: Modifier = Modifier) {
             .drawWithCache {
                 val list = strokes.orEmpty()
                 val k = size.width
-                val paths = list.map { pathOf(it.pts, k, d.y0 * k) }
-                onDrawBehind { list.forEachIndexed { i, s -> drawStroke(paths[i], s, k, c.noteInk, c.isDark) } }
+                val geoms = list.map { geomOf(it, k, d.y0 * k) }
+                onDrawBehind { list.forEachIndexed { i, s -> drawStroke(geoms[i], s, c.noteInk, c.isDark) } }
             },
     )
 }
@@ -195,6 +251,10 @@ fun DrawPad(initial: List<PenStroke>, paper: Color, onClose: () -> Unit, onDone:
     var color by remember { mutableStateOf(StrokeFile.INK) }
     var sizeIx by remember { mutableIntStateOf(1) }
     val live = remember { mutableStateListOf<Offset>() }
+    val livePr = remember { ArrayList<Float>() }
+    var liveTool by remember { mutableStateOf(Tool.Pen) }
+    // once a stylus has touched the pad, fingers (a resting palm) don't draw
+    var stylus by remember { mutableStateOf(false) }
     val enter = remember { Animatable(0f) }
     var leaving by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { enter.animateTo(1f, Motion.glide()) }
@@ -236,7 +296,20 @@ fun DrawPad(initial: List<PenStroke>, paper: Color, onClose: () -> Unit, onDone:
                         val down = awaitFirstDown()
                         down.consume()
                         val w = size.width.toFloat()
-                        if (tool == Tool.Eraser) {
+                        val isPen = down.type == PointerType.Stylus
+                        if (isPen) stylus = true
+                        if (stylus && down.type == PointerType.Touch) {
+                            // a palm or finger beside the pen: swallow it
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                ch.consume()
+                                if (!ch.pressed) break
+                            }
+                            return@awaitEachGesture
+                        }
+                        // the pen's eraser end erases whatever tool is picked
+                        if (tool == Tool.Eraser || down.type == PointerType.Eraser) {
                             val before = strokes.toList()
                             val r = 16.dp.toPx() / w
                             fun erase(at: Offset) {
@@ -262,12 +335,30 @@ fun DrawPad(initial: List<PenStroke>, paper: Color, onClose: () -> Unit, onDone:
                             }
                             if (strokes.size != before.size) { undo += before; redo.clear(); stamp++ }
                         } else {
+                            // pressure only for the pen, and only from a stylus (fingers report noise)
+                            val pressured = isPen && tool == Tool.Pen
+                            var m = pressureWidth(down.pressure)
+                            liveTool = tool
+                            livePr.clear()
                             live.clear()
+                            if (pressured) livePr.add(m)
                             live.add(down.position)
                             while (true) {
                                 val ev = awaitPointerEvent()
                                 val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
-                                ch.historical.forEach { live.add(it.position) }
+                                if (pressured) {
+                                    // historical points carry no pressure: ease from the last value to this one;
+                                    // a lift reports 0, so the stroke's end keeps the last pressure
+                                    val target = if (ch.pressed) pressureWidth(ch.pressure) else m
+                                    val steps = ch.historical.size + 1
+                                    val from = m
+                                    ch.historical.forEachIndexed { j, h ->
+                                        m = .6f * m + .4f * (from + (target - from) * (j + 1) / steps)
+                                        livePr.add(m); live.add(h.position)
+                                    }
+                                    m = .6f * m + .4f * target
+                                    livePr.add(m)
+                                } else ch.historical.forEach { live.add(it.position) }
                                 live.add(ch.position)
                                 ch.consume()
                                 if (!ch.pressed) break
@@ -276,24 +367,27 @@ fun DrawPad(initial: List<PenStroke>, paper: Color, onClose: () -> Unit, onDone:
                             live.forEachIndexed { i, o -> pts[2 * i] = o.x / w; pts[2 * i + 1] = o.y / w }
                             val dp = if (tool == Tool.Marker) markSizes[sizeIx] else penSizes[sizeIx]
                             push()
-                            strokes.add(PenStroke(tool, color, dp.dp.toPx() / w, pts))
+                            strokes.add(PenStroke(tool, color, dp.dp.toPx() / w, pts, if (pressured && livePr.size == live.size) livePr.toFloatArray() else null))
                             live.clear()
+                            livePr.clear()
                         }
                     }
                 }
                 .drawWithCache {
                     val k = size.width
                     val list = strokes.toList()
-                    val paths = list.map { pathOf(it.pts, k, 0f) }
-                    onDrawBehind { list.forEachIndexed { i, s -> drawStroke(paths[i], s, k, c.noteInk, c.isDark) } }
+                    val geoms = list.map { geomOf(it, k, 0f) }
+                    onDrawBehind { list.forEachIndexed { i, s -> drawStroke(geoms[i], s, c.noteInk, c.isDark) } }
                 }
                 .drawBehind {
                     if (live.isEmpty()) return@drawBehind
                     val k = size.width
                     val pts = FloatArray(live.size * 2)
                     live.forEachIndexed { i, o -> pts[2 * i] = o.x / k; pts[2 * i + 1] = o.y / k }
-                    val dp = if (tool == Tool.Marker) markSizes[sizeIx] else penSizes[sizeIx]
-                    drawStroke(pathOf(pts, k, 0f), PenStroke(tool, color, dp.dp.toPx() / k, pts), k, c.noteInk, c.isDark)
+                    val dp = if (liveTool == Tool.Marker) markSizes[sizeIx] else penSizes[sizeIx]
+                    val pr = if (livePr.size == live.size) livePr.toFloatArray() else null
+                    val s = PenStroke(liveTool, color, dp.dp.toPx() / k, pts, pr)
+                    drawStroke(geomOf(s, k, 0f), s, c.noteInk, c.isDark)
                 },
         )
 

@@ -65,8 +65,14 @@ class NotedApp : Application() {
                 if (reminders.get(id) == null && places.reminder(id) == null) sync.discard(id)
             }
         }
-        // the bin keeps a note 30 days
-        scope.launch { bin.sweep() }
+        // the bin keeps a note 30 days; then media files no note (nor the cloud's copy of one) points at
+        scope.launch {
+            bin.sweep()
+            val keep = HashSet(notes.filesInUse(except = emptySet()))
+            db.sync().shadows().forEach { keep += com.ohav.noted.data.Media.namesIn(it.json) }
+            val gone = com.ohav.noted.data.Media.sweep(this@NotedApp, keep)
+            gone.chunked(500).forEach { db.sync().dropMedia(it) }
+        }
         scope.launch { updater.check(quiet = true) }
         // anything missed while we weren't running rings now; after that, every change re-arms the alarm
         scope.launch {
