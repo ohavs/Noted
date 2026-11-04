@@ -115,7 +115,7 @@ internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinde
 }
 
 @Composable
-internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?) {
+internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?, extra: @Composable () -> Unit = {}) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -166,7 +166,7 @@ internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSe
                         }
                     }
                 }
-                PlacePickModel.Step.Choose -> ChooseBody(m, list, line, onSet, onRemove)
+                PlacePickModel.Step.Choose -> ChooseBody(m, list, line, onSet, onRemove, extra)
             }
         }
     }
@@ -186,7 +186,7 @@ private fun BackRow(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?) {
+private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -263,6 +263,7 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     Spacer(Modifier.height(24.dp))
 
     // ---- summary + set
+    extra()
     val sub = chosen?.let {
         (if (m.leave) "כשתצא · " else "כשתגיע · ") + it.name + " · " + (if (m.always) "בכל פעם" else "פעם אחת") +
             (if (m.windowOn) " · " + PlaceWords.window(m.days, m.from, m.to) else "")

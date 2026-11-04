@@ -43,15 +43,17 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
     suspend fun get(noteId: String, blockId: String = ""): ReminderEntity? = dao.get(ReminderEntity.idFor(noteId, blockId))
 
     /** Sets (or replaces) the reminder of a note / of one line, starting at [at] local time. */
-    suspend fun set(noteId: String, blockId: String, at: LocalDateTime, repeat: Repeat): ReminderEntity {
+    suspend fun set(noteId: String, blockId: String, at: LocalDateTime, repeat: Repeat, sticky: Boolean? = null): ReminderEntity {
         // "on Sun/Tue" starting on a Monday: the first ring is the first chosen day
         val first = if (repeat.kind == Repeat.Kind.Days && at.dayOfWeek.value !in repeat.days) repeat.next(at, at.minusSeconds(1)) ?: at else at
         val r = ReminderEntity(
             id = ReminderEntity.idFor(noteId, blockId), noteId = noteId, blockId = blockId,
             anchor = at.toString(), occ = first.toString(), zone = ZoneId.systemDefault().id,
             rule = repeat.rule(), until = repeat.until?.toString(),
+            sticky = sticky ?: dao.get(ReminderEntity.idFor(noteId, blockId))?.sticky ?: false,
+            at = System.currentTimeMillis(),
         )
-        dao.upsert(r)
+        put(r)
         if (blockId.isEmpty()) dao.mirror(noteId, r.occAt)
         clear(r.id)
         return r
@@ -69,13 +71,13 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
 
     /** Puts a removed reminder back exactly as it was (undo). */
     suspend fun restore(r: ReminderEntity) {
-        dao.upsert(r)
+        put(r)
         if (r.blockId.isEmpty()) dao.mirror(r.noteId, r.occAt)
     }
 
     suspend fun snooze(id: String, at: Long) {
         val r = dao.get(id) ?: return
-        dao.upsert(r.copy(snoozeAt = at))
+        put(r.copy(snoozeAt = at))
         clear(id)
     }
 
@@ -84,7 +86,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
         val r = dao.get(id) ?: return
         clear(id)
         if (r.repeat.repeats) {
-            dao.upsert(r.copy(snoozeAt = null))
+            put(r.copy(snoozeAt = null))
             return
         }
         if (r.blockId.isNotEmpty()) {
@@ -106,7 +108,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
         clear(id)
         val next = r.repeat.next(r.anchorTime, r.occTime)
         val nr = (if (next != null) r.copy(occ = next.toString()) else r.copy(fired = true)).copy(snoozeAt = null)
-        dao.upsert(nr)
+        put(nr)
         if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)
     }
 
@@ -131,7 +133,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
             else -> r.copy(snoozeAt = at)
         }
         clear(id)
-        dao.upsert(nr)
+        put(nr)
         if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)
     }
 
@@ -157,7 +159,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
                 val next = r.repeat.next(r.anchorTime, maxOf(r.occTime, nowLocal))
                 nr = if (next != null) nr.copy(occ = next.toString()) else nr.copy(fired = true)
             }
-            dao.upsert(nr)
+            put(nr)
             if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)
         }
         schedule()
@@ -171,7 +173,16 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
 
     fun observeTick(): Flow<Int> = dao.observeLiveCount()
 
-    private fun clear(id: String) = NotificationManagerCompat.from(ctx).cancel(Notifier.idOf(id))
+    /** Stays in the shade once it rings (the reminder sheet's switch, or "הצמד" on the notification). */
+    suspend fun setSticky(id: String, on: Boolean) = dao.setSticky(id, on, System.currentTimeMillis())
+
+    /** Every local write is stamped, so the newest copy wins across devices. */
+    private suspend fun put(r: ReminderEntity) = dao.upsert(r.copy(at = System.currentTimeMillis()))
+
+    private fun clear(id: String) {
+        NotificationManagerCompat.from(ctx).cancel(Notifier.idOf(id))
+        Shade.forget(ctx, Shade.time(id))
+    }
 }
 
 /** The one exact alarm. Exact when the system allows it, otherwise a short window. */
@@ -205,25 +216,16 @@ object Notifier {
 
     fun idOf(reminderId: String) = reminderId.hashCode()
 
-    fun ensureChannel(ctx: Context) {
-        if (Build.VERSION.SDK_INT < 26) return
-        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(CHANNEL) != null) return
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "תזכורות", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "תזכורות בזמן שקבעת לפתקים ולשורות"
-                enableVibration(true)
-            },
-        )
-    }
+    /** The time-reminder channel with the sound chosen in settings (see [Sounds]). */
+    fun ensureChannel(ctx: Context) { Sounds.channel(ctx, Sounds.Kind.Time) }
 
     fun permitted(ctx: Context): Boolean =
         (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             NotificationManagerCompat.from(ctx).areNotificationsEnabled()
 
-    fun show(ctx: Context, r: ReminderEntity, noteTitle: String, line: Block?, blocks: List<Block>) {
+    fun show(ctx: Context, r: ReminderEntity, noteTitle: String, line: Block?, blocks: List<Block>, silent: Boolean = false) {
         if (!permitted(ctx)) return
-        ensureChannel(ctx)
+        val channel = Sounds.channel(ctx, Sounds.Kind.Time)
         val m = Privacy.mask((ctx.applicationContext as? NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
         val title = m.head
         val body = when {
@@ -252,20 +254,21 @@ object Notifier {
                 .putExtra(ReminderReceiver.EXTRA_ID, r.id).putExtra(SnoozeActivity.EXTRA_TITLE, title),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val n = NotificationCompat.Builder(ctx, CHANNEL)
+        val n = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setColor(0xFFE0542C.toInt())
             .setContentTitle(title)
             .apply { if (body.isNotBlank()) setContentText(body).setStyle(NotificationCompat.BigTextStyle().bigText(body)) }
-            .setWhen(r.dueAt ?: System.currentTimeMillis())
+            .setWhen(if (silent) System.currentTimeMillis() else r.dueAt ?: System.currentTimeMillis())
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(Notification.DEFAULT_ALL)
             .setAutoCancel(true)
+            .setSilent(silent)
             .setContentIntent(open)
             .addAction(0, "סמן כבוצע", done)
             .addAction(0, "נודניק", snooze)
+            .also { Shade.decorate(it, ctx, Shade.time(r.id), r.sticky, code) }
             // on the watch the phone's snooze sheet can't open: done + two fixed snoozes, all handled on the phone
             .extend(
                 NotificationCompat.WearableExtender()
@@ -308,7 +311,10 @@ class ReminderReceiver : BroadcastReceiver() {
             try {
                 when (intent.action) {
                     DONE -> intent.getStringExtra(EXTRA_ID)?.let { app.reminders.done(it) }
-                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> app.places.sync(force = true)
+                    Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                        app.places.sync(force = true)
+                        Shade.repostAll(app)
+                    }
                     SNOOZE -> {
                         val id = intent.getStringExtra(EXTRA_ID)
                         val at = intent.getLongExtra(EXTRA_AT, 0L)

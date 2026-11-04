@@ -26,6 +26,8 @@ import com.ohav.noted.data.PlaceEntity
 import com.ohav.noted.data.PlaceReminderEntity
 import com.ohav.noted.data.ReminderEntity
 import com.ohav.noted.reminders.Notifier
+import com.ohav.noted.reminders.Shade
+import com.ohav.noted.reminders.Sounds
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -92,15 +94,17 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
     // ------------------------------------------------------------------ reminders
 
     suspend fun reminder(noteId: String, blockId: String = ""): PlaceReminderEntity? = dao.reminder(ReminderEntity.idFor(noteId, blockId))
+    suspend fun reminderById(id: String): PlaceReminderEntity? = dao.reminder(id)
 
     suspend fun set(
         noteId: String, blockId: String, placeId: String, leave: Boolean, always: Boolean,
-        days: Set<Int>, fromMin: Int?, toMin: Int?,
+        days: Set<Int>, fromMin: Int?, toMin: Int?, sticky: Boolean = false,
     ): PlaceReminderEntity {
         val r = PlaceReminderEntity(
             id = ReminderEntity.idFor(noteId, blockId), noteId = noteId, blockId = blockId, placeId = placeId,
             leave = leave, always = always, days = days.sorted().joinToString(","),
             fromMin = fromMin, toMin = if (fromMin == null) null else toMin, createdAt = System.currentTimeMillis(),
+            sticky = sticky,
         )
         dao.upsertReminder(r)
         clear(r.id)
@@ -290,7 +294,15 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         }
     }
 
-    private fun clear(id: String) = NotificationManagerCompat.from(ctx).cancel(PlaceNotifier.idOf(id))
+    suspend fun setSticky(id: String, on: Boolean) {
+        val r = dao.reminder(id) ?: return
+        dao.upsertReminder(r.copy(sticky = on))
+    }
+
+    private fun clear(id: String) {
+        NotificationManagerCompat.from(ctx).cancel(PlaceNotifier.idOf(id))
+        Shade.forget(ctx, Shade.place(id))
+    }
 
     companion object {
         const val ARM_MARGIN_M = 400f
@@ -324,9 +336,9 @@ class PlaceStatus(ctx: Context) {
 object PlaceNotifier {
     fun idOf(reminderId: String) = "place:$reminderId".hashCode()
 
-    fun show(ctx: Context, r: PlaceReminderEntity, p: PlaceEntity, noteTitle: String, line: Block?, blocks: List<Block>) {
+    fun show(ctx: Context, r: PlaceReminderEntity, p: PlaceEntity, noteTitle: String, line: Block?, blocks: List<Block>, silent: Boolean = false) {
         if (!Notifier.permitted(ctx)) return
-        Notifier.ensureChannel(ctx)
+        val channel = Sounds.channel(ctx, Sounds.Kind.Place)
         val m = com.ohav.noted.data.Privacy.mask((ctx.applicationContext as? com.ohav.noted.NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
         val title = m.head
         // the reminder is the notification; the place is only the small header line
@@ -350,7 +362,7 @@ object PlaceNotifier {
             Intent(ctx, GeofenceReceiver::class.java).setAction(a).putExtra(GeofenceReceiver.EXTRA_ID, r.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val n = NotificationCompat.Builder(ctx, Notifier.CHANNEL)
+        val n = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_reminder)
             .setColor(0xFFE0542C.toInt())
             .setContentTitle(title)
@@ -359,11 +371,12 @@ object PlaceNotifier {
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(android.app.Notification.DEFAULT_ALL)
             .setAutoCancel(true)
+            .setSilent(silent)
             .setContentIntent(open)
             .addAction(0, "סמן כבוצע", action(GeofenceReceiver.DONE))
             .apply { if (!r.always) addAction(0, "בפעם הבאה", action(GeofenceReceiver.AGAIN)) }
+            .also { Shade.decorate(it, ctx, Shade.place(r.id), r.sticky, code) }
             .build()
         try {
             NotificationManagerCompat.from(ctx).notify(code, n)

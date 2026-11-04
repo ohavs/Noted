@@ -396,6 +396,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             "remind" -> settleLift { openReminderPicker(app, overlays, toasts, scope, n.id) }
             "share" -> settleLift { com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id) }
             "lock" -> settleLift { com.ohav.noted.ui.lock.openPrivacySheet(app, overlays, lock, toasts, n) }
+            "shade" -> settleLift { toggleShade(app, toasts, n) }
         }
     }
 
@@ -1172,4 +1173,11 @@ private class OpenMem {
     var from: Float? = null
     var cat: String? = null
     var byScroll = false
+}
+
+/** Pins a note to the notification shade (or takes it off) — the same toggle from every menu. */
+fun toggleShade(app: com.ohav.noted.NotedApp, toasts: com.ohav.noted.design.ToastState, n: com.ohav.noted.data.NoteEntity) {
+    if (!com.ohav.noted.reminders.Notifier.permitted(app)) { toasts.show("צריך לאשר התראות בהגדרות המכשיר", Ph.BellSlash); return }
+    val on = com.ohav.noted.reminders.NoteShade.toggle(app, n)
+    toasts.show(if (on) "מוצמד לחלון ההתראות" else "הוסר מחלון ההתראות", if (on) Ph.NotificationFill else Ph.Notification)
 }

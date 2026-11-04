@@ -52,6 +52,8 @@ data class PlaceReminderEntity(
     val toMin: Int? = null,
     val fired: Boolean = false,
     val createdAt: Long,
+    /** Once it rings it stays in the notification shade until removed by hand. */
+    val sticky: Boolean = false,
 ) {
     val daySet: Set<Int> get() = days.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
     val hasWindow: Boolean get() = daySet.isNotEmpty() || fromMin != null

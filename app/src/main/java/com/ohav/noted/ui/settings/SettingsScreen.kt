@@ -136,6 +136,7 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
                 NotedSwitch(s.haptics)
             }
         }
+        Section("צלילים") { SoundsCard() }
         Section("פרטיות") { PrivacyCard(app, toasts) }
         Section("גיבוי") { BackupCard(app, toasts) }
         Section("עדכונים") { UpdateCard(app, toasts) }

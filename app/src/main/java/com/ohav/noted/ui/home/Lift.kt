@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -322,17 +323,19 @@ private fun ActionMenu(
             pv != 0 -> Act("lock", Ph.EyeSlash, Ph.EyeSlash, "פרטיות", on = true)
             else -> Act("lock", Ph.EyeSlash, Ph.EyeSlash, "פרטיות")
         }
+        val shadeHeld by com.ohav.noted.reminders.Shade.held.collectAsState()
         val acts = listOf(
             Act("move", Ph.FolderSimple, Ph.FolderSimple, "קטגוריה"),
             Act("remind", Ph.Bell, Ph.Bell, "תזכורת"),
             Act("share", Ph.ShareNetwork, Ph.ShareNetwork, "שיתוף"),
             Act("pin", Ph.PushPin, Ph.PushPinFill, if (n.pinned) "שחרור" else "נעיצה", n.pinned),
             Act("fav", Ph.Star, Ph.StarFill, "מועדף", n.favorite),
+            Act("shade", Ph.Notification, Ph.NotificationFill, "בהתראות", com.ohav.noted.reminders.Shade.note(n.id) in shadeHeld),
             privacyAct,
             Act("archive", Ph.Archive, Ph.Archive, "ארכיון"),
             Act("delete", Ph.Trash, Ph.Trash, "מחיקה", danger = true),
         )
-        acts.chunked(4).forEachIndexed { row, chunk ->
+        acts.chunked((acts.size + 1) / 2).forEachIndexed { row, chunk ->
             Row(Modifier.fillMaxWidth().padding(top = if (row == 0) 14.dp else 4.dp)) {
                 chunk.forEach { a -> MenuAct(a, Modifier.weight(1f)) { onAction(a.key) } }
             }

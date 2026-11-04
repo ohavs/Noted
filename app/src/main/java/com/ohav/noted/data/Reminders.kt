@@ -32,6 +32,10 @@ data class ReminderEntity(
     val until: String?,
     val fired: Boolean = false,
     val snoozeAt: Long? = null,
+    /** Once it rings it stays in the notification shade until removed by hand (not by a swipe). */
+    val sticky: Boolean = false,
+    /** Last change, epoch ms — the newest copy wins when devices (and the website) sync. */
+    val at: Long = 0L,
 ) {
     val repeat: Repeat get() = Repeat.parse(rule, until)
     val zoneId: ZoneId get() = runCatching { ZoneId.of(zone) }.getOrDefault(ZoneId.systemDefault())
@@ -168,6 +172,9 @@ interface ReminderDao {
 
     @Query("DELETE FROM reminders WHERE id = :id")
     suspend fun delete(id: String)
+
+    @Query("UPDATE reminders SET sticky = :on, at = :at WHERE id = :id")
+    suspend fun setSticky(id: String, on: Boolean, at: Long)
 
     @Query("UPDATE notes SET reminderAt = :at WHERE id = :noteId")
     suspend fun mirror(noteId: String, at: Long?)

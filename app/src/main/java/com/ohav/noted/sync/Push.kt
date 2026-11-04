@@ -58,22 +58,12 @@ object Push {
     private fun appVersion(ctx: Context): String =
         runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName.orEmpty() }.getOrDefault("")
 
-    fun ensureChannel(ctx: Context) {
-        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
-        if (nm.getNotificationChannel(CHANNEL) != null) return
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "שינויים בפתקים משותפים", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "כשמישהו כותב בפתק או בתיקייה ששיתפו איתך, או מצטרף אליהם"
-            },
-        )
-    }
-
     fun show(ctx: Context, data: Map<String, String>) {
         val note = data["note"].orEmpty()
         val folder = data["folder"].orEmpty()
         if (note.isNotEmpty() && foreground && viewing == note) return
         if (!Notifier.permitted(ctx)) return
-        ensureChannel(ctx)
+        val channel = com.ohav.noted.reminders.Sounds.channel(ctx, com.ohav.noted.reminders.Sounds.Kind.Shared)
         val tag = note.ifEmpty { "f:$folder" }
         val open = PendingIntent.getActivity(
             ctx, tag.hashCode(),
@@ -92,7 +82,7 @@ object Push {
             else -> "יש שינוי"
         }
         val title = if (flags == 0) data["title"].orEmpty() else m.note
-        val n = NotificationCompat.Builder(ctx, CHANNEL)
+        val n = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_share)
             .setColor(0xFFE0542C.toInt())
             .setContentTitle(title)

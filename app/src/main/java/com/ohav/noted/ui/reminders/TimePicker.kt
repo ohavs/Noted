@@ -134,7 +134,7 @@ fun openReminderPicker(
         } ?: When.default()
         val m = PickerModel(start, existing?.repeat ?: Repeat.None, existing)
         val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces)
-        val ui = PickerUi(place = startPlace || existingPlace != null && existing == null)
+        val ui = PickerUi(place = startPlace || existingPlace != null && existing == null, sticky = existing?.sticky ?: existingPlace?.sticky ?: false)
         val sheet = overlays.sheet
         val remove: (() -> Unit)? = existing?.let { old ->
             fun() {
@@ -197,6 +197,7 @@ fun openReminderPicker(
                                                     noteId, blockId, pid, pm.leave, pm.always,
                                                     if (pm.windowOn) pm.days else emptySet(),
                                                     if (pm.windowOn) pm.from else null, if (pm.windowOn) pm.to else null,
+                                                    sticky = ui.sticky,
                                                 )
                                                 pm.saved = true
                                                 val p = app.places.place(pid)
@@ -206,11 +207,12 @@ fun openReminderPicker(
                                             }
                                         },
                                         onRemove = removePlace,
+                                        extra = { StickyRow(ui.sticky) { ui.sticky = it } },
                                     ) else PickerBody(
                                         m, line,
                                         onSet = {
                                             app.scope.launch(Dispatchers.Main) {
-                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat)
+                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky)
                                                 m.saved = true
                                                 toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging)
                                                 if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
@@ -218,6 +220,7 @@ fun openReminderPicker(
                                             }
                                         },
                                         onRemove = remove,
+                                        extra = { StickyRow(ui.sticky) { ui.sticky = it } },
                                     )
                                 }
                             }
@@ -230,8 +233,10 @@ fun openReminderPicker(
 }
 
 @Stable
-private class PickerUi(place: Boolean) {
+private class PickerUi(place: Boolean, sticky: Boolean) {
     var place by mutableStateOf(place)
+    /** Shared by both modes: once it rings, it stays in the shade until removed by hand. */
+    var sticky by mutableStateOf(sticky)
     var askingPlace by mutableStateOf(false)
 }
 
@@ -274,7 +279,7 @@ private fun ModeSwitch(place: Boolean, onPick: (Boolean) -> Unit) {
 }
 
 @Composable
-private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?) {
+private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -375,6 +380,7 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
     // ---- summary + set
     val now = LocalDateTime.now()
     val past = m.at <= now
+    extra()
     val sub = When.until(m.at, now) + When.repeat(m.repeat).let { if (it.isEmpty()) "" else " · $it" }
     Text(sub, style = t.label, color = if (past) c.danger else c.ink2, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), textAlign = TextAlign.Center)
     val shake = remember { Animatable(0f) }
@@ -718,5 +724,31 @@ private fun RepeatPicker(m: PickerModel) {
                 )
             }
         }
+    }
+}
+
+/** "Keep it in the notifications" — one switch for both modes, above the set button. */
+@Composable
+internal fun StickyRow(on: Boolean, onChange: (Boolean) -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 18.dp)
+            .clip(Shapes.md)
+            .background(c.bg)
+            .press(scale = .98f, haptic = false) { haptics.toggle(!on); onChange(!on) }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(if (on) Ph.NotificationFill else Ph.Notification, null, Modifier.size(22.dp), tint = if (on) c.accent else c.ink2)
+        Column(Modifier.weight(1f)) {
+            Text("להשאיר בהתראות", style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink)
+            Text("אחרי שהיא מצלצלת — נשארת עד שמסירים", style = t.label, color = c.ink3)
+        }
+        NotedSwitch(on)
     }
 }

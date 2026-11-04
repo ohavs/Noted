@@ -463,6 +463,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                 overlays.sheet.close()
                 scope.launch { delay(180); share() }
             }
+            val inShade = com.ohav.noted.reminders.Shade.note(n.id) in com.ohav.noted.reminders.Shade.held.value
+            SheetRow(if (inShade) Ph.NotificationFill else Ph.Notification, if (inShade) "הסרה מחלון ההתראות" else "הצמדה לחלון ההתראות") {
+                overlays.sheet.close()
+                com.ohav.noted.ui.home.toggleShade(app, toasts, live ?: n)
+            }
             SheetRow(Ph.Export, "ייצוא") {
                 overlays.sheet.close()
                 scope.launch {

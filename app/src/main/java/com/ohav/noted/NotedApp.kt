@@ -47,6 +47,7 @@ class NotedApp : Application() {
         reminders = Reminders(this, db)
         places = Places(this, db)
         Notifier.ensureChannel(this)
+        com.ohav.noted.reminders.Shade.load(this)
         settings = SettingsRepository(this)
         updater = Updater(this)
         account = Account(this, scope)
@@ -72,6 +73,8 @@ class NotedApp : Application() {
             reminders.fireDue()
             reminders.observeTick().debounce(250).collect { reminders.schedule() }
         }
+        // notes pinned to the shade follow their content
+        scope.launch { notes.notes.drop(1).debounce(600).collect { com.ohav.noted.reminders.NoteShade.refresh(this@NotedApp, it) } }
         // fences follow every change to places / place reminders / notes (throttled inside)
         scope.launch { places.observeTick().debounce(400).collect { places.sync() } }
         // home-screen widgets follow notes, categories, reminders and the look (a no-op without widgets)

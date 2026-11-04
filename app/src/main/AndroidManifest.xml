@@ -122,6 +122,9 @@
         </receiver>
 
         <receiver
+            android:name=".reminders.ShadeReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".places.GeofenceReceiver"
             android:exported="false" />
 
