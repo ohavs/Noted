@@ -30,6 +30,21 @@ android {
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsKey\"")
     }
 
+    // github: the APK on GitHub Releases, updates itself ("בדוק עדכונים"). play: the Google Play
+    // build — Play forbids self-updating apps, so no updater and no REQUEST_INSTALL_PACKAGES.
+    flavorDimensions += "store"
+    productFlavors {
+        create("github") {
+            dimension = "store"
+            isDefault = true
+            buildConfigField("boolean", "SELF_UPDATE", "true")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+        }
+    }
+
     signingConfigs {
         create("release") {
             val ks = System.getenv("NOTED_KEYSTORE_FILE")

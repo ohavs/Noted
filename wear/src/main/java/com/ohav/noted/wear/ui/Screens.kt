@@ -578,7 +578,7 @@ fun SettingsScreen(a: Actions) {
                 ctx.store.refresh(); a.flash.show("מסנכרן עם הטלפון", Ph.ArrowsClockwise)
             }
         }
-        item {
+        if (BuildConfig.SELF_UPDATE) item {
             val (label, sub) = when (val u = up) {
                 Updater.State.Idle -> "בדיקת עדכונים" to null
                 Updater.State.Checking -> "בודק…" to null

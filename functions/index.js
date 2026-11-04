@@ -286,3 +286,4 @@ exports.reminderWritten = onDocumentWritten('users/{uid}/reminders/{id}', async 
     logger.warn('reminder push failed', e);
   }
 });
+Object.assign(exports, require('./account'));

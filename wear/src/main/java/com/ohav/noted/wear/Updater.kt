@@ -35,6 +35,7 @@ object Updater {
     val state: StateFlow<State> = _state
 
     suspend fun check() {
+        if (!com.ohav.noted.wear.BuildConfig.SELF_UPDATE) return
         _state.value = State.Checking
         _state.value = withContext(Dispatchers.IO) {
             runCatching {

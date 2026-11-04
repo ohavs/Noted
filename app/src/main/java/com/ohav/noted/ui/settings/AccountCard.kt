@@ -196,6 +196,31 @@ private fun SignedIn(app: NotedApp, u: Account.User, photo: ImageBitmap?, st: Sy
             Spacer(Modifier.width(12.dp))
             Text("התנתקות", style = t.body, color = c.ink)
         }
+        var deleting by remember { mutableStateOf(false) }
+        Row(
+            Modifier.fillMaxWidth().clip(Shapes.md)
+                .press(scale = .98f, enabled = !deleting) {
+                    scope.launch {
+                        val ok = overlays.dialog.confirm(
+                            title = "למחוק את החשבון?",
+                            text = "כל מה שבענן נמחק לצמיתות: הפתקים, הקטגוריות, התזכורות, התמונות וההקלטות. מפתקים ששיתפו איתך יוצאים. הפתקים במכשיר הזה נשארים.",
+                            icon = Ph.UserCircleMinus, danger = true, confirm = "מחיקה לצמיתות", cancel = "ביטול",
+                        )
+                        if (!ok) return@launch
+                        deleting = true
+                        val err = app.account.deleteAccount()
+                        deleting = false
+                        if (err == null) { haptics.confirm(); toasts.show("החשבון נמחק", Ph.CheckCircleFill) }
+                        else { haptics.reject(); toasts.show(err, Ph.WarningCircle) }
+                    }
+                }
+                .padding(vertical = 14.dp, horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Ph.UserCircleMinus, null, Modifier.size(20.dp), tint = c.danger)
+            Spacer(Modifier.width(12.dp))
+            Text(if (deleting) "מוחק…" else "מחיקת החשבון", style = t.body, color = c.danger)
+        }
     }
 }
 

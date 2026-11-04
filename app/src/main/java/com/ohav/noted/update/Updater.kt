@@ -37,6 +37,7 @@ class Updater(private val context: Context) {
     val installedVersion: String = BuildConfig.VERSION_NAME
 
     suspend fun check(quiet: Boolean = false) {
+        if (!com.ohav.noted.BuildConfig.SELF_UPDATE) return
         val s = _state.value
         if (s is State.Checking || s is State.Downloading) return
         if (!quiet) _state.value = State.Checking

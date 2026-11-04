@@ -73,16 +73,17 @@ jobs:
       - name: Build
         env:
           MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
-        # assembleRelease builds every module: the phone app, and the watch app when wear/ exists
-        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease -PversionCode=${{ github.run_number }}
+        # github flavor = the released APKs (phone + watch); the play flavor is only compiled here, so it
+        # keeps building until the store bundle (bundlePlayRelease) is switched on
+        run: ./gradlew --no-daemon testGithubReleaseUnitTest :app:assembleGithubRelease :wear:assembleGithubRelease :app:compilePlayReleaseKotlin :wear:compilePlayReleaseKotlin -PversionCode=${{ github.run_number }}
 
       - name: Collect APK
         id: apk
         run: |
           V="0.2.${{ github.run_number }}"
-          cp app/build/outputs/apk/release/app-release.apk "noted-$V.apk"
+          cp app/build/outputs/apk/github/release/app-github-release.apk "noted-$V.apk"
           # the watch app rides along (installed from the phone / adb; same package + key as the phone)
-          if [ -f wear/build/outputs/apk/release/wear-release.apk ]; then cp wear/build/outputs/apk/release/wear-release.apk "noted-watch-$V.apk"; fi
+          if [ -f wear/build/outputs/apk/github/release/wear-github-release.apk ]; then cp wear/build/outputs/apk/github/release/wear-github-release.apk "noted-watch-$V.apk"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4

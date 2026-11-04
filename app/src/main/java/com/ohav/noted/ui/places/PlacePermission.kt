@@ -82,7 +82,7 @@ fun PlacePermissionCard(saved: Boolean, onDone: () -> Unit) {
         Spacer(Modifier.height(6.dp))
         Text(
             (if (saved) "התזכורת נשמרה. " else "") +
-                "הטלפון הוא ששם לב שהגעת — גם כשהאפליקציה סגורה. בשביל זה הוא צריך:",
+                "noted אוספת את מיקום המכשיר כדי להקפיץ תזכורות לפי מקום, גם כשהאפליקציה סגורה או לא בשימוש. המיקום נשאר בטלפון — הוא לא נשלח לשום מקום. בשביל זה צריך:",
             style = t.body, color = c.ink2,
         )
         Spacer(Modifier.height(20.dp))

@@ -139,7 +139,7 @@ fun SettingsScreen(app: NotedApp, toasts: ToastState, onBack: () -> Unit, onCate
         Section("צלילים") { SoundsCard() }
         Section("פרטיות") { PrivacyCard(app, toasts) }
         Section("גיבוי") { BackupCard(app, toasts) }
-        Section("עדכונים") { UpdateCard(app, toasts) }
+        if (com.ohav.noted.BuildConfig.SELF_UPDATE) Section("עדכונים") { UpdateCard(app, toasts) }
         Section("עזרה") {
             Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(Shapes.lg).background(c.surface)) {
                 NavRow(Ph.HandTap, "היכרות עם noted", "3 מסכים", last = true) { scope.launch { app.settings.setOnboarded(false) } }

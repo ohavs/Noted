@@ -107,6 +107,26 @@ class Account(private val ctx: Context, private val scope: CoroutineScope) {
         runCatching { CredentialManager.create(ctx).clearCredentialState(ClearCredentialStateRequest()) }
     }
 
+    /**
+     * Deletes the account and everything of it in the cloud (a function does the work, the
+     * sign-in included); the notes on this device stay. Returns an error message, or null.
+     */
+    suspend fun deleteAccount(): String? {
+        if (!available) return "אין חשבון מחובר"
+        return try {
+            com.google.firebase.functions.FirebaseFunctions.getInstance("me-west1")
+                .getHttpsCallable("deleteAccount")
+                .apply { setTimeout(300, java.util.concurrent.TimeUnit.SECONDS) }
+                .call().await()
+            FirebaseAuth.getInstance().signOut()
+            runCatching { CredentialManager.create(ctx).clearCredentialState(ClearCredentialStateRequest()) }
+            null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            if (e is java.io.IOException || e.cause is java.io.IOException) "אין חיבור לרשת" else "המחיקה לא הצליחה — נסה שוב"
+        }
+    }
+
     private fun loadCachedPhoto() {
         scope.launch(Dispatchers.IO) {
             if (photoFile.exists()) _photo.value = runCatching { BitmapFactory.decodeFile(photoFile.path)?.asImageBitmap() }.getOrNull()
