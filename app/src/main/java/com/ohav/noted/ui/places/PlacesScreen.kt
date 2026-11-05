@@ -266,6 +266,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
             glide = scope.launch { animate(from, target, v, Motion.glide()) { value, _ -> y = value } }
         }
         val listState = rememberLazyListState()
+        val folds = rememberFolds()
         val nested = remember(lowTop, peekTop, fullTop) {
             object : NestedScrollConnection {
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -344,14 +345,14 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
                         EmptyState(EmptyArt.Places, "המקומות שלך", "שמרו בית, עבודה, סופר — ופתקים יקפצו כשתגיעו.", Modifier.padding(top = 10.dp))
                     }
                 }
-                val groups = list.groupBy { PlaceKind.of(it.kind) }.toSortedMap(compareBy { it.ordinal })
-                groups.forEach { (kind, ps) ->
-                    item(key = "h:${kind.key}") {
-                        Text(kind.label, style = t.section, color = c.ink2, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp, start = 2.dp))
-                    }
-                    items(ps, key = { it.id }) { p ->
-                        if (p.isDevice) DeviceRowSaved(p, open.count { it.placeId == p.id }) { actions.card(p, notes, reminders, me, onOpenNote) }
-                        else PlaceRow(p, me, open.count { it.placeId == p.id }) { actions.card(p, notes, reminders, me, onOpenNote) }
+                val bells = { p: PlaceEntity -> open.count { it.placeId == p.id } }
+                Shelf.sort(list).forEachIndexed { i, (shelf, ps) ->
+                    item(key = "s:${shelf.key}") {
+                        if (i == 0) VSpace(8.dp)
+                        ShelfCard(shelf, ps, folds.folded(shelf), bells, onFold = { folds.toggle(shelf) }) { p ->
+                            if (p.isDevice) DeviceRowSaved(p, bells(p)) { actions.card(p, notes, reminders, me, onOpenNote) }
+                            else PlaceRow(p, me, bells(p)) { actions.card(p, notes, reminders, me, onOpenNote) }
+                        }
                     }
                 }
             }
@@ -393,7 +394,7 @@ private fun DeviceRowSaved(p: PlaceEntity, count: Int, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box {
-            PlaceBadge(kind, 46.dp, on = linked)
+            PlaceBadge(kind, 42.dp, on = linked)
             if (linked) LiveDot(Modifier.align(Alignment.TopEnd))
         }
         Column(Modifier.weight(1f)) {
@@ -403,16 +404,7 @@ private fun DeviceRowSaved(p: PlaceEntity, count: Int, onClick: () -> Unit) {
                 style = t.caption, color = if (linked) c.accent else c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
-        if (count > 0) {
-            Row(
-                Modifier.clip(Shapes.sm).background(c.accentSoft).padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(Ph.BellRinging, null, Modifier.size(15.dp), tint = c.accent)
-                Text("$count", style = t.label, color = c.accent)
-            }
-        }
+        if (count > 0) BellCount(count)
     }
 }
 
@@ -513,7 +505,7 @@ private fun PlaceRow(p: PlaceEntity, me: Location?, count: Int, onClick: () -> U
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        PlaceBadge(PlaceKind.of(p.kind), 46.dp)
+        PlaceBadge(PlaceKind.of(p.kind), 42.dp)
         Column(Modifier.weight(1f)) {
             Text(p.name, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -521,16 +513,7 @@ private fun PlaceRow(p: PlaceEntity, me: Location?, count: Int, onClick: () -> U
                 style = t.caption, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
-        if (count > 0) {
-            Row(
-                Modifier.clip(Shapes.sm).background(c.accentSoft).padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Icon(Ph.BellRinging, null, Modifier.size(15.dp), tint = c.accent)
-                Text("$count", style = t.label, color = c.accent)
-            }
-        }
+        if (count > 0) BellCount(count)
     }
 }
 
