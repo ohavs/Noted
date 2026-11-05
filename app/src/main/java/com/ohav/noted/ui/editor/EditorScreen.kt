@@ -1162,7 +1162,7 @@ private fun BlockRow(
                     onTextLayout = { l ->
                         val at = b.value.selection.end.coerceIn(0, l.layoutInput.text.length)
                         val line = l.getLineForOffset(at)
-                        if (state.focused == b.id && line != lastLine && lastLine >= 0) {
+                        if (state.focused == b.id && b.value.selection.collapsed && line != lastLine && lastLine >= 0) {
                             val r = l.getCursorRect(at)
                             scope.launch { bring.bringIntoView(r.copy(top = r.top - air / 2, bottom = r.bottom + air)) }
                         }
