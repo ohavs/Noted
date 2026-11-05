@@ -131,6 +131,7 @@ import com.ohav.noted.ui.reminders.openReminderPicker
 import com.ohav.noted.ui.reminders.LocalPlaceChips
 import com.ohav.noted.ui.reminders.LocalRemindPlace
 import kotlinx.coroutines.delay
+import androidx.compose.ui.text.input.getSelectedText
 import com.ohav.noted.data.foreign
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import com.ohav.noted.data.CatTree
 import com.ohav.noted.data.CategoryEntity
 import com.ohav.noted.data.foreign
+import com.ohav.noted.data.shareInfo
 import com.ohav.noted.design.Motion
 import com.ohav.noted.design.Noted
 import com.ohav.noted.design.Ph
