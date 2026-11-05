@@ -251,10 +251,12 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
         item(key = "+") {
             PlaceTile(Ph.MapPinPlus, "מקום חדש", on = false) { haptics.light(); m.step = PlacePickModel.Step.Find }
         }
-        if (list.none { it.isDevice }) item(key = "car+") {
+        // devices right after "new place" (saved ones too), so the car never hides at the end of the row
+        val devices = list.filter { it.isDevice }
+        if (devices.isEmpty()) item(key = "car+") {
             PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
         }
-        items(list, key = { it.id }) { p ->
+        items(devices + list.filterNot { it.isDevice }, key = { it.id }) { p ->
             PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
                 haptics.tick()
                 m.placeId = p.id
@@ -284,7 +286,10 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
             BigChoice(Ph.SignOut, "כשאצא", "ביציאה מהאזור", m.leave, Modifier.weight(1f)) { m.leave = true }
         }
     }
-    Spacer(Modifier.height(8.dp))
+    // a quiet rule between "when" and "how often"
+    Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.width(56.dp).height(1.5.dp).clip(CircleShape).background(c.line))
+    }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BigChoice(Ph.Bell, "פעם אחת", "ואז היא נחה", !m.always, Modifier.weight(1f)) { m.always = false }
         BigChoice(Ph.Repeat, "בכל פעם", if (dk == PlaceKind.Car) "כל נסיעה מחדש" else if (dk != null) "כל חיבור מחדש" else "כל הגעה מחדש", m.always, Modifier.weight(1f)) { m.always = true }
