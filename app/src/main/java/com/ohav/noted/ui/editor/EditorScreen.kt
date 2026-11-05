@@ -46,6 +46,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -1088,6 +1089,12 @@ private fun BlockRow(
     val haptics = Noted.haptics
     val focused = state.focused == b.id
     val handle by animateFloatAsState(if (focused) 1f else 0f, Motion.glide(), label = "handle")
+    // the field only scrolls itself into view on focus; a line that wraps on its own while typing
+    // would slide under the smart bar, so keep the caret's line (plus a little air) on screen
+    val bring = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    val air = with(LocalDensity.current) { 18.dp.toPx() }
+    var lastLine by remember { mutableStateOf(-1) }
 
     LaunchedEffect(state.pendingFocus) {
         val pf = state.pendingFocus ?: return@LaunchedEffect
@@ -1152,9 +1159,19 @@ private fun BlockRow(
                     cursorBrush = SolidColor(c.noteInk),
                     visualTransformation = RichTransformation(b.spans, c.isDark, 1),
                     keyboardOptions = KeyboardOptions(capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.Sentences),
+                    onTextLayout = { l ->
+                        val at = b.value.selection.end.coerceIn(0, l.layoutInput.text.length)
+                        val line = l.getLineForOffset(at)
+                        if (state.focused == b.id && line != lastLine && lastLine >= 0) {
+                            val r = l.getCursorRect(at)
+                            scope.launch { bring.bringIntoView(r.copy(top = r.top - air / 2, bottom = r.bottom + air)) }
+                        }
+                        lastLine = line
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(start = if (quote) 14.dp else 0.dp)
+                        .bringIntoViewRequester(bring)
                         .focusRequester(b.focus)
                         .onFocusChanged {
                             if (it.isFocused) { state.focused = b.id; state.armedDelete = null }

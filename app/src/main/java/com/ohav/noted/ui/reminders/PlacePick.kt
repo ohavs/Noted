@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -243,23 +245,41 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
 
     // ---- where
     Text("איפה", style = t.section, color = c.ink2, modifier = Modifier.padding(bottom = 10.dp))
+    // grouped by the catalog's shelves: a quiet label and rule over each group, no extra rows;
+    // devices right after "new place" (saved ones too), so the car never hides at the end
+    val shelves = remember(list) {
+        val sorted = com.ohav.noted.ui.places.Shelf.sort(list)
+        sorted.filter { it.first == com.ohav.noted.ui.places.Shelf.Devices } + sorted.filterNot { it.first == com.ohav.noted.ui.places.Shelf.Devices }
+    }
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(Unit) {
+        // reopening a set reminder: its place is in view, not three groups away
+        val i = shelves.indexOfFirst { (_, ps) -> ps.any { it.id == m.placeId } }
+        if (i > 0) row.scrollToItem(i + 1)
+    }
     LazyRow(
+        state = row,
         modifier = Modifier.bleed(20),
         contentPadding = PaddingValues(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.Bottom,
     ) {
         item(key = "+") {
             PlaceTile(Ph.MapPinPlus, "מקום חדש", on = false) { haptics.light(); m.step = PlacePickModel.Step.Find }
         }
-        // devices right after "new place" (saved ones too), so the car never hides at the end of the row
-        val devices = list.filter { it.isDevice }
-        if (devices.isEmpty()) item(key = "car+") {
-            PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
+        if (shelves.none { it.first == com.ohav.noted.ui.places.Shelf.Devices }) item(key = "car+") {
+            ShelfGroup(com.ohav.noted.ui.places.Shelf.Devices.label) {
+                PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
+            }
         }
-        items(devices + list.filterNot { it.isDevice }, key = { it.id }) { p ->
-            PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
-                haptics.tick()
-                m.placeId = p.id
+        items(shelves, key = { it.first.key }) { (shelf, ps) ->
+            ShelfGroup(shelf.label) {
+                ps.forEach { p ->
+                    PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
+                        haptics.tick()
+                        m.placeId = p.id
+                    }
+                }
             }
         }
     }
@@ -343,6 +363,20 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     if (onRemove != null) {
         Spacer(Modifier.height(6.dp))
         Btn("הסרת התזכורת", Modifier.fillMaxWidth(), icon = Ph.BellSlash, kind = BtnKind.Quiet, onClick = onRemove)
+    }
+}
+
+/** One shelf in the "where" row: its name and a hairline running over its tiles. */
+@Composable
+private fun ShelfGroup(label: String, tiles: @Composable () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    Column(Modifier.width(IntrinsicSize.Max)) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = t.caption, color = c.ink3, maxLines = 1)
+            Box(Modifier.padding(start = 8.dp).weight(1f).height(1.dp).background(c.line))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { tiles() }
     }
 }
 
