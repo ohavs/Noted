@@ -18,6 +18,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -1466,6 +1468,15 @@ private fun SmartBar(state: EditorState, toasts: ToastState) {
                         BarBtn(Ph.Bell, "תזכורת") { remind("", null) }
                     }
                     BarMode.Format -> {
+                        // the system menu doesn't always come up over a selection: copying lives in the bar too
+                        BarBtn(Ph.Copy, "העתקה") {
+                            val txt = b?.value?.getSelectedText()?.text?.replace(SENTINEL, "").orEmpty()
+                            if (txt.isNotEmpty()) {
+                                (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+                                    ?.setPrimaryClip(android.content.ClipData.newPlainText("noted", txt))
+                                toasts.show("הועתק", Ph.Copy)
+                            }
+                        }
                         BarBtn(Ph.TextB, "מודגש", state.isOn(Rich.BOLD)) { state.style(Rich.BOLD) }
                         BarBtn(Ph.TextItalic, "נטוי", state.isOn(Rich.ITALIC)) { state.style(Rich.ITALIC) }
                         BarBtn(Ph.TextUnderline, "קו תחתי", state.isOn(Rich.UNDER)) { state.style(Rich.UNDER) }
@@ -1522,18 +1533,62 @@ private fun BarShell(content: @Composable () -> Unit) {
     ) { content() }
 }
 
+/** A bar button; a long press shows its name above it (the bar stays icons only). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun BarBtn(icon: ImageVector, desc: String, on: Boolean = false, onClick: () -> Unit) {
     val c = Noted.colors
+    val t = Noted.type
     val haptics = Noted.haptics
     val bg by animateColorAsState(if (on) c.accent else Color.Transparent, Motion.glide(), label = "barBg")
     val fg by animateColorAsState(if (on) c.accentInk else c.inverseInk, Motion.glide(), label = "barFg")
+    val source = remember { MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val s by animateFloatAsState(if (pressed) .84f else 1f, Motion.touch(), label = "barPress")
+    var hint by remember { mutableStateOf(false) }
+    // the name stays while the finger is down, and a moment after
+    LaunchedEffect(hint, pressed) { if (hint && !pressed) { delay(1100); hint = false } }
+    val shown = animateFloatAsState(if (hint) 1f else 0f, Motion.touch(), label = "barHint")
+    val fade = animateFloatAsState(if (hint) 1f else 0f, Motion.glide(), label = "barHintFade")
     Box(
         Modifier
             .size(44.dp)
-            .press(scale = .84f, haptic = false) { haptics.tick(); onClick() }
+            .graphicsLayer { scaleX = s; scaleY = s }
+            .combinedClickable(
+                interactionSource = source, indication = null,
+                onLongClick = { haptics.medium(); hint = true },
+            ) { haptics.tick(); onClick() }
             .clip(Squircle(14.dp))
             .background(bg),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, desc, Modifier.size(22.dp), tint = fg) }
+    ) {
+        Icon(icon, desc, Modifier.size(22.dp), tint = fg)
+        if (hint || fade.value > .01f) {
+            val up = with(LocalDensity.current) { -(44 + 10).dp.roundToPx() }
+            androidx.compose.ui.window.Popup(
+                alignment = Alignment.TopCenter,
+                offset = IntOffset(0, up),
+                properties = androidx.compose.ui.window.PopupProperties(focusable = false, clippingEnabled = false),
+            ) {
+                Text(
+                    desc,
+                    style = t.label,
+                    color = c.inverseInk,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = fade.value.coerceIn(0f, 1f)
+                            val k = .8f + .2f * shown.value
+                            scaleX = k; scaleY = k
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(.5f, 1f)
+                            translationY = (1f - shown.value) * 6.dp.toPx()
+                        }
+                        .softShadow(Shadows.float(c.isDark), 12.dp, c.inverse)
+                        .clip(Squircle(12.dp))
+                        .background(c.inverse)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
+        }
+    }
 }
