@@ -34,6 +34,8 @@ data class ReminderEntity(
     val snoozeAt: Long? = null,
     /** Once it rings it stays in the notification shade until removed by hand (not by a swipe). */
     val sticky: Boolean = false,
+    /** Goes away by itself once it has rung (one-shots only — the sheet's "delete after"). */
+    val dropAfter: Boolean = false,
     /** Last change, epoch ms — the newest copy wins when devices (and the website) sync. */
     val at: Long = 0L,
 ) {

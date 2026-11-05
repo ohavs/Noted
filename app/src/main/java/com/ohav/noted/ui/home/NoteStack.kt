@@ -151,7 +151,8 @@ class StackState {
      */
     var value by mutableFloatStateOf(0f)
     var viewport by mutableIntStateOf(0)
-    var content = 0f
+    /** Observed: when the content shrinks under the scroll (a category with one note), it comes back. */
+    var content by mutableFloatStateOf(0f)
         internal set
 
     /** Called with every user-driven delta (drag + its fling), never for programmatic scrolls. */

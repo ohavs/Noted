@@ -99,6 +99,8 @@ import com.ohav.noted.design.VSpace
 import com.ohav.noted.design.press
 import com.ohav.noted.places.Found
 import com.ohav.noted.places.Geo
+import com.ohav.noted.places.BtDevice
+import com.ohav.noted.design.Squircle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.AbsoluteAlignment
 import com.ohav.noted.design.softShadow
@@ -156,6 +158,11 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
         return
     }
     val open = remember(reminders) { reminders.filter { !it.fired } }
+    // Bluetooth devices live in the catalog only: no point on the map, no fence
+    val geo = remember(list) { list.filterNot { it.isDevice } }
+    val deviceIds = remember(list) { list.filter { it.isDevice }.mapTo(HashSet()) { it.id } }
+    val openGeo = remember(open, deviceIds) { open.filterNot { it.placeId in deviceIds } }
+    val openDevices = open.size - openGeo.size
     val actions = remember(app, overlays, toasts, scope) { PlaceActions(app, overlays, toasts, scope) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -190,7 +197,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
             val latestOpen by rememberUpdatedState(onOpenNote)
             val onPin = remember(actions) { { p: PlaceEntity -> actions.card(p, latestNotes, latestAll, latestMe, latestOpen) } }
             if (mapOn) {
-                PlacesMap(list, open, me, cam, padding, Modifier.fillMaxSize(), onLoaded = { drawn = true }, onPlace = onPin)
+                PlacesMap(geo, openGeo, me, cam, padding, Modifier.fillMaxSize(), onLoaded = { drawn = true }, onPlace = onPin)
             }
             // a sketch of streets + a pulsing pin until the tiles are in; the real map sharpens out of it
             val covering by remember { derivedStateOf { cover.value > .002f } }
@@ -218,7 +225,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
                     .press(scale = .88f) {
                         scope.launch {
                             if (Geo.hasFine(ctx) || Geo.hasCoarse(ctx)) Geo.current(ctx)?.let { me = it }
-                            frameAll(cam, list, me, with(density) { 56.dp.roundToPx() }, animate = true)
+                            frameAll(cam, geo, me, with(density) { 56.dp.roundToPx() }, animate = true)
                         }
                     }
                     .size(52.dp)
@@ -239,7 +246,7 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
                 Box(Modifier.statusBarsPadding().padding(top = 14.dp).height(64.dp))
                 Text("מקומות", style = t.cat, color = c.ink, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 4.dp))
                 Radar(
-                    list, open, me,
+                    geo, openGeo, me,
                     Modifier.fillMaxWidth().height(with(density) { (peekTop - statusTop).toDp() } - 150.dp),
                 ) { p -> actions.card(p, notes, reminders, me, onOpenNote) }
             }
@@ -324,9 +331,14 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
                         AddTile(Ph.Crosshair, "המיקום הנוכחי", "שמירה בלחיצה", dark = true, Modifier.weight(1f)) { actions.add(list, autoLocate = true) }
                         AddTile(Ph.MagnifyingGlass, "חיפוש", "כתובת או קישור", dark = false, Modifier.weight(1f)) { actions.add(list, autoLocate = false) }
                     }
+                    VSpace(8.dp)
+                    CarTile { actions.addDevice(list, notes, reminders, onOpenNote) }
                     VSpace(14.dp)
                 }
-                item(key = "status") { StatusLine(app, open.size, tick) { actions.permissions() } }
+                item(key = "status") {
+                    StatusLine(app, openGeo.size, tick) { actions.permissions() }
+                    DeviceStatusLine(openDevices, tick)
+                }
                 if (list.isEmpty()) {
                     item(key = "empty") {
                         EmptyState(EmptyArt.Places, "המקומות שלך", "שמרו בית, עבודה, סופר — ופתקים יקפצו כשתגיעו.", Modifier.padding(top = 10.dp))
@@ -338,11 +350,98 @@ fun PlacesScreen(app: NotedApp, toasts: ToastState, notes: List<NoteEntity>, set
                         Text(kind.label, style = t.section, color = c.ink2, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp, start = 2.dp))
                     }
                     items(ps, key = { it.id }) { p ->
-                        PlaceRow(p, me, open.count { it.placeId == p.id }) { actions.card(p, notes, reminders, me, onOpenNote) }
+                        if (p.isDevice) DeviceRowSaved(p, open.count { it.placeId == p.id }) { actions.card(p, notes, reminders, me, onOpenNote) }
+                        else PlaceRow(p, me, open.count { it.placeId == p.id }) { actions.card(p, notes, reminders, me, onOpenNote) }
                     }
                 }
             }
         }
+    }
+}
+
+/** The wide tile under the two: the car (and other Bluetooth devices) as a place. */
+@Composable
+private fun CarTile(onClick: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    Row(
+        Modifier.fillMaxWidth().press(scale = .96f, onClick = onClick).clip(Shapes.md).background(c.accentSoft).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(38.dp).clip(Squircle(13.dp)).background(c.accent), contentAlignment = Alignment.Center) {
+            Icon(Ph.CarProfile, null, Modifier.size(24.dp).graphicsLayer { scaleX = -1f }, tint = c.accentInk)
+        }
+        Column(Modifier.weight(1f)) {
+            Text("הרכב ומכשירי בלוטות'", style = t.label, color = c.ink, maxLines = 1)
+            Text("תזכורת כשנכנסים לרכב או יוצאים ממנו", style = t.caption, color = c.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Ph.Bluetooth, null, Modifier.size(20.dp), tint = c.accent)
+    }
+}
+
+/** A saved device in the catalog: its badge (live when linked), name, what waits for it. */
+@Composable
+private fun DeviceRowSaved(p: PlaceEntity, count: Int, onClick: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val kind = PlaceKind.of(p.kind)
+    val linked = rememberLinked(p.device)
+    Row(
+        Modifier.fillMaxWidth().press(scale = .97f, haptic = false, onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box {
+            PlaceBadge(kind, 46.dp, on = linked)
+            if (linked) LiveDot(Modifier.align(Alignment.TopEnd))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(p.name, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "בלוטות' · " + DeviceWords.status(linked, kind),
+                style = t.caption, color = if (linked) c.accent else c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (count > 0) {
+            Row(
+                Modifier.clip(Shapes.sm).background(c.accentSoft).padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(Ph.BellRinging, null, Modifier.size(15.dp), tint = c.accent)
+                Text("$count", style = t.label, color = c.accent)
+            }
+        }
+    }
+}
+
+/** Device reminders can't ring without "nearby devices": says so, with the fix one tap away. */
+@Composable
+private fun DeviceStatusLine(open: Int, tick: Int) {
+    val ctx = LocalContext.current
+    val c = Noted.colors
+    val t = Noted.type
+    if (open == 0) return
+    val ok = remember(tick) { com.ohav.noted.places.Bt.permitted(ctx) }
+    if (ok) return
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 6.dp).press(scale = .97f) {
+            runCatching {
+                ctx.startActivity(
+                    Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }.clip(Shapes.md).background(c.dangerSoft).padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Ph.BluetoothSlash, null, Modifier.size(24.dp), tint = c.danger)
+        Column(Modifier.weight(1f)) {
+            Text("תזכורות הרכב לא יקפצו", style = t.label, color = c.ink)
+            Text("חסרה הרשאת ״מכשירים בקרבת מקום״", style = t.caption, color = c.ink2)
+        }
+        Text("לתקן", style = t.label, color = c.danger)
     }
 }
 
@@ -591,7 +690,79 @@ private class PlaceActions(
         }
     }
 
+    /** "The car and Bluetooth devices": pick a paired one, name it, and it's in the catalog. */
+    fun addDevice(all: List<PlaceEntity>, notes: List<NoteEntity>, rems: List<PlaceReminderEntity>, onOpenNote: (NoteEntity) -> Unit) {
+        val picked = mutableStateOf<BtDevice?>(null)
+        overlays.sheet.show("מכשיר בלוטות'") {
+            AnimatedContent(
+                picked.value,
+                transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
+                label = "devStep",
+            ) { d ->
+                Column {
+                    if (d == null) DevicePicker(
+                        all,
+                        onPick = { picked.value = it; overlays.sheet.setTitle(if (it.kind == PlaceKind.Car) "הרכב" else "מכשיר חדש") },
+                        onSaved = { have ->
+                            overlays.sheet.close()
+                            scope.launch { delay(200); card(have, notes, rems, null, onOpenNote) }
+                        },
+                    ) else DeviceForm(d, "שמירה בקטלוג") { name, k ->
+                        overlays.sheet.close()
+                        scope.launch {
+                            app.places.createDevice(name, k.key, d.address)
+                            toasts.show("״$name״ נשמר · עכשיו בפעמון של פתק ← מקום", k.icon())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** A saved Bluetooth device: the scene, live; what waits for it; rename / delete. */
+    private fun deviceCard(p: PlaceEntity, notes: List<NoteEntity>, all: List<PlaceReminderEntity>, onOpenNote: (NoteEntity) -> Unit) {
+        val here = all.filter { it.placeId == p.id }
+        val byId = notes.associateBy { it.id }
+        val kind = PlaceKind.of(p.kind)
+        overlays.sheet.show(p.name) {
+            val c = Noted.colors
+            val t = Noted.type
+            val linked = rememberLinked(p.device)
+            DeviceScene(kind, if (linked) SceneMode.Connected else SceneMode.Parked)
+            VSpace(12.dp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (linked) LiveDot()
+                AnimatedContent(linked, transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) }, label = "devLive") { l ->
+                    Text(DeviceWords.status(l, kind), style = t.label, color = if (l) c.accent else c.ink3)
+                }
+            }
+            VSpace(20.dp)
+            Text(if (kind == PlaceKind.Car) "פתקים לרכב" else "פתקים למכשיר", style = t.section, color = c.ink2, modifier = Modifier.padding(bottom = 6.dp))
+            val rows = here.mapNotNull { r -> byId[r.noteId]?.takeIf { it.trashedAt == null }?.let { r to it } }
+            if (rows.isEmpty()) {
+                Text(
+                    if (kind == PlaceKind.Car) "עוד אין פתקים שמחכים לנסיעה. בתוך פתק: פעמון ← מקום ← ${p.name}." else "עוד אין פתקים שמחכים כאן. בתוך פתק: פעמון ← מקום.",
+                    style = t.caption, color = c.ink3, modifier = Modifier.padding(vertical = 8.dp),
+                )
+            } else rows.forEachIndexed { i, (r, n) -> NoteAtPlace(r, n, last = i == rows.lastIndex, p = p) { overlays.sheet.close(); onOpenNote(n) } }
+            VSpace(16.dp)
+            SheetRow(Ph.PencilSimple, "עריכה") { editDevice(p) }
+            SheetRow(Ph.Trash, "מחיקה", danger = true, last = true) { delete(p, rows.size) }
+        }
+    }
+
+    private fun editDevice(p: PlaceEntity) {
+        val d = BtDevice(p.device, p.name, PlaceKind.of(p.kind), false)
+        overlays.sheet.show("עריכה") {
+            DeviceForm(d.copy(name = p.name), "שמירה") { name, k ->
+                overlays.sheet.close()
+                scope.launch { app.places.update(p.copy(name = name, kind = k.key)) }
+            }
+        }
+    }
+
     fun card(p: PlaceEntity, notes: List<NoteEntity>, all: List<PlaceReminderEntity>, me: Location?, onOpenNote: (NoteEntity) -> Unit) {
+        if (p.isDevice) { deviceCard(p, notes, all, onOpenNote); return }
         val ctx = app
         val here = all.filter { it.placeId == p.id }
         val byId = notes.associateBy { it.id }
@@ -665,7 +836,7 @@ private class PlaceActions(
 }
 
 @Composable
-private fun NoteAtPlace(r: PlaceReminderEntity, n: NoteEntity, last: Boolean, onClick: () -> Unit) {
+private fun NoteAtPlace(r: PlaceReminderEntity, n: NoteEntity, last: Boolean, p: PlaceEntity? = null, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val line = remember(n.blocks, r.blockId) { if (r.blockId.isEmpty()) null else Blocks.parse(n.blocks).firstOrNull { it.id == r.blockId }?.text }
@@ -680,7 +851,7 @@ private fun NoteAtPlace(r: PlaceReminderEntity, n: NoteEntity, last: Boolean, on
                 )
                 Text(
                     listOf(
-                        PlaceWords.trigger(r.leave),
+                        PlaceWords.trigger(r.leave, p),
                         if (r.always) "בכל פעם" else if (r.fired) "כבר הזכיר" else "פעם אחת",
                         PlaceWords.window(r),
                         if (line != null) n.title.trim() else "",

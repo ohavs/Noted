@@ -76,7 +76,11 @@ object PlaceWords {
     /** Sun–Thu: the Israeli work week. */
     val WORKWEEK = setOf(7, 1, 2, 3, 4)
 
-    fun trigger(leave: Boolean) = if (leave) "ביציאה" else "בהגעה"
+    fun trigger(leave: Boolean, p: PlaceEntity? = null) = when {
+        p?.isDevice == true && PlaceKind.of(p.kind) == PlaceKind.Car -> if (leave) "ביציאה" else "בכניסה"
+        p?.isDevice == true -> if (leave) "בניתוק" else "בחיבור"
+        else -> if (leave) "ביציאה" else "בהגעה"
+    }
 
     fun days(d: Set<Int>): String = when {
         d.isEmpty() || d.size == 7 -> ""
@@ -93,12 +97,12 @@ object PlaceWords {
         listOf(days(d), if (from != null && to != null) "${hm(from)}–${hm(to)}" else "").filter { it.isNotEmpty() }.joinToString(" ")
 
     /** "בהגעה · סופר" for a chip. */
-    fun chip(r: PlaceReminderEntity, place: PlaceEntity?): String = trigger(r.leave) + " · " + (place?.name ?: "מקום")
+    fun chip(r: PlaceReminderEntity, place: PlaceEntity?): String = trigger(r.leave, place) + " · " + (place?.name ?: "מקום")
 }
 
 @Stable
 internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinder: Boolean) {
-    enum class Step { Choose, Find, Form }
+    enum class Step { Choose, Find, Form, Device, DeviceForm }
 
     var placeId by mutableStateOf(existing?.placeId)
     var leave by mutableStateOf(existing?.leave ?: false)
@@ -109,6 +113,7 @@ internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinde
     var to by mutableStateOf(existing?.toMin ?: (18 * 60))
     var step by mutableStateOf(if (startWithFinder && existing == null) Step.Find else Step.Choose)
     var found by mutableStateOf<Found?>(null)
+    var device by mutableStateOf<com.ohav.noted.places.BtDevice?>(null)
     var saved = false
     private val initial = listOf(placeId, leave, always, windowOn, days, from, to)
     val dirty get() = listOf(placeId, leave, always, windowOn, days, from, to) != initial
@@ -133,6 +138,17 @@ internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSe
                 PlacePickModel.Step.Find -> {
                     if (list.isNotEmpty()) BackRow("המקומות השמורים") { m.step = PlacePickModel.Step.Choose }
                     else Text("איפה להזכיר?", style = t.section, color = c.ink2, modifier = Modifier.padding(bottom = 10.dp))
+                    // the car is not on the map: one tap away from here too
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = 12.dp).press(scale = .96f) { m.step = PlacePickModel.Step.Device }
+                            .clip(Shapes.md).background(c.accentSoft).padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Ph.CarProfile, null, Modifier.size(22.dp).graphicsLayer { scaleX = -1f }, tint = c.accent)
+                        Text("הרכב / מכשיר בלוטות'", style = t.label, color = c.ink, modifier = Modifier.weight(1f))
+                        Icon(Ph.Bluetooth, null, Modifier.size(18.dp), tint = c.accent)
+                    }
                     PlaceFinder { f ->
                         val same = existingAt(list, f.lat, f.lng)
                         if (same != null) {
@@ -163,6 +179,27 @@ internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSe
                                 m.placeId = p.id
                                 m.step = PlacePickModel.Step.Choose
                             }
+                        }
+                    }
+                }
+                PlacePickModel.Step.Device -> {
+                    BackRow(if (list.isNotEmpty()) "המקומות השמורים" else "מקום על המפה") {
+                        m.step = if (list.isNotEmpty()) PlacePickModel.Step.Choose else PlacePickModel.Step.Find
+                    }
+                    com.ohav.noted.ui.places.DevicePicker(
+                        list,
+                        onPick = { m.device = it; m.step = PlacePickModel.Step.DeviceForm },
+                        onSaved = { m.placeId = it.id; m.step = PlacePickModel.Step.Choose },
+                    )
+                }
+                PlacePickModel.Step.DeviceForm -> {
+                    val d = m.device
+                    BackRow("מכשיר אחר") { m.step = PlacePickModel.Step.Device }
+                    if (d != null) com.ohav.noted.ui.places.DeviceForm(d, "שמירה ובחירה") { name, k ->
+                        scope.launch {
+                            val p = app.places.createDevice(name, k.key, d.address)
+                            m.placeId = p.id
+                            m.step = PlacePickModel.Step.Choose
                         }
                     }
                 }
@@ -214,6 +251,9 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
         item(key = "+") {
             PlaceTile(Ph.MapPinPlus, "מקום חדש", on = false) { haptics.light(); m.step = PlacePickModel.Step.Find }
         }
+        if (list.none { it.isDevice }) item(key = "car+") {
+            PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
+        }
         items(list, key = { it.id }) { p ->
             PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
                 haptics.tick()
@@ -223,7 +263,10 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     }
     AnimatedContent(chosen, transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) }, label = "chosenAddr") { p ->
         Text(
-            p?.let { listOf(it.address, "רדיוס ${Geo.fmtRadius(it.radius)}").filter { s -> s.isNotEmpty() }.joinToString(" · ") } ?: "בוחרים מקום שמור, או מוסיפים חדש",
+            p?.let {
+                if (it.isDevice) "בלוטות' · " + PlaceKind.of(it.kind).label
+                else listOf(it.address, "רדיוס ${Geo.fmtRadius(it.radius)}").filter { s -> s.isNotEmpty() }.joinToString(" · ")
+            } ?: "בוחרים מקום שמור, או מוסיפים חדש",
             style = t.caption, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp, start = 4.dp),
         )
@@ -231,14 +274,20 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     Spacer(Modifier.height(22.dp))
 
     // ---- when
+    val dk = chosen?.takeIf { it.isDevice }?.let { PlaceKind.of(it.kind) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        BigChoice(Ph.SignIn, "כשאגיע", "בכניסה לאזור", !m.leave, Modifier.weight(1f)) { m.leave = false }
-        BigChoice(Ph.SignOut, "כשאצא", "ביציאה מהאזור", m.leave, Modifier.weight(1f)) { m.leave = true }
+        if (dk != null) {
+            BigChoice(Ph.SignIn, com.ohav.noted.ui.places.DeviceWords.arrive(dk), com.ohav.noted.ui.places.DeviceWords.arriveSub(dk), !m.leave, Modifier.weight(1f)) { m.leave = false }
+            BigChoice(Ph.SignOut, com.ohav.noted.ui.places.DeviceWords.leave(dk), com.ohav.noted.ui.places.DeviceWords.leaveSub(dk), m.leave, Modifier.weight(1f)) { m.leave = true }
+        } else {
+            BigChoice(Ph.SignIn, "כשאגיע", "בכניסה לאזור", !m.leave, Modifier.weight(1f)) { m.leave = false }
+            BigChoice(Ph.SignOut, "כשאצא", "ביציאה מהאזור", m.leave, Modifier.weight(1f)) { m.leave = true }
+        }
     }
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         BigChoice(Ph.Bell, "פעם אחת", "ואז היא נחה", !m.always, Modifier.weight(1f)) { m.always = false }
-        BigChoice(Ph.Repeat, "בכל פעם", "כל הגעה מחדש", m.always, Modifier.weight(1f)) { m.always = true }
+        BigChoice(Ph.Repeat, "בכל פעם", if (dk == PlaceKind.Car) "כל נסיעה מחדש" else if (dk != null) "כל חיבור מחדש" else "כל הגעה מחדש", m.always, Modifier.weight(1f)) { m.always = true }
     }
     Spacer(Modifier.height(18.dp))
 
@@ -265,7 +314,7 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     // ---- summary + set
     extra()
     val sub = chosen?.let {
-        (if (m.leave) "כשתצא · " else "כשתגיע · ") + it.name + " · " + (if (m.always) "בכל פעם" else "פעם אחת") +
+        (if (it.isDevice) PlaceWords.trigger(m.leave, it) + " · " else if (m.leave) "כשתצא · " else "כשתגיע · ") + it.name + " · " + (if (m.always) "בכל פעם" else "פעם אחת") +
             (if (m.windowOn) " · " + PlaceWords.window(m.days, m.from, m.to) else "")
     } ?: "עוד לא נבחר מקום"
     Text(sub, style = t.label, color = if (chosen == null) c.ink3 else c.ink2, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), textAlign = TextAlign.Center)

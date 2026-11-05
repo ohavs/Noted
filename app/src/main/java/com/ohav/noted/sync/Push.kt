@@ -119,7 +119,7 @@ class PushService : FirebaseMessagingService() {
             data.forEach { (k, v) ->
                 f[k] = when (k) {
                     "at", "snoozeAt" -> v.toLongOrNull()
-                    "fired", "sticky", "deleted" -> v == "1"
+                    "fired", "sticky", "dropAfter", "deleted" -> v == "1"
                     else -> v.ifEmpty { null }
                 }
             }

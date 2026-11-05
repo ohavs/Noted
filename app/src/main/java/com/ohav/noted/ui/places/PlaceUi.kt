@@ -85,6 +85,10 @@ fun PlaceKind.icon(): ImageVector = when (this) {
     PlaceKind.Pray -> Ph.Church
     PlaceKind.City -> Ph.Buildings
     PlaceKind.Other -> Ph.MapPin
+    PlaceKind.Car -> Ph.CarProfile
+    PlaceKind.Headphones -> Ph.Headphones
+    PlaceKind.Speaker -> Ph.SpeakerHigh
+    PlaceKind.Gadget -> Ph.Bluetooth
 }
 
 /** A place's icon on a squircle tile; [on] = the chosen one. */
@@ -129,7 +133,7 @@ fun guessKind(name: String, places: List<PlaceEntity>, types: List<String> = emp
 
 /** The saved place sitting on the same spot, so "the supermarket" isn't saved twice. */
 fun existingAt(places: List<PlaceEntity>, lat: Double, lng: Double): PlaceEntity? =
-    places.minByOrNull { Geo.distance(it.lat, it.lng, lat, lng) }?.takeIf { Geo.distance(it.lat, it.lng, lat, lng) <= maxOf(60f, it.radius * .5f) }
+    places.filterNot { it.isDevice }.minByOrNull { Geo.distance(it.lat, it.lng, lat, lng) }?.takeIf { Geo.distance(it.lat, it.lng, lat, lng) <= maxOf(60f, it.radius * .5f) }
 
 // ------------------------------------------------------------------ finder
 
@@ -377,7 +381,7 @@ fun ColumnScope.PlaceForm(
     VSpace(18.dp)
     Text("סוג", style = t.section, color = c.ink2, modifier = Modifier.padding(bottom = 10.dp))
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        PlaceKind.entries.chunked(7).forEach { row ->
+        PlaceKind.geo.chunked(7).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { kk ->
                     val on = kk == k

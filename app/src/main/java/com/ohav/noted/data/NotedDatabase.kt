@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class, ShadowEntity::class, MediaSyncEntity::class, TemplateEntity::class], version = 10, exportSchema = true)
+@Database(entities = [NoteEntity::class, CategoryEntity::class, ReminderEntity::class, PlaceEntity::class, PlaceReminderEntity::class, ShadowEntity::class, MediaSyncEntity::class, TemplateEntity::class], version = 11, exportSchema = true)
 abstract class NotedDatabase : RoomDatabase() {
     abstract fun notes(): NoteDao
     abstract fun reminders(): ReminderDao
@@ -96,6 +96,14 @@ abstract class NotedDatabase : RoomDatabase() {
         }
 
         /** v10: reminders that stay in the shade (`sticky`), and a change stamp for syncing time reminders. */
+        private val M10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `reminders` ADD COLUMN `dropAfter` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `place_reminders` ADD COLUMN `dropAfter` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `places` ADD COLUMN `device` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private val M9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `reminders` ADD COLUMN `sticky` INTEGER NOT NULL DEFAULT 0")
@@ -105,6 +113,6 @@ abstract class NotedDatabase : RoomDatabase() {
         }
 
         fun create(context: Context): NotedDatabase =
-            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4, M4_5, M5_6, M6_7, M7_8, M8_9, M9_10).build()
+            Room.databaseBuilder(context, NotedDatabase::class.java, "noted.db").addMigrations(M1_2, M2_3, M3_4, M4_5, M5_6, M6_7, M7_8, M8_9, M9_10, M10_11).build()
     }
 }

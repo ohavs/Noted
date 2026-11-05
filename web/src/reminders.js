@@ -17,7 +17,9 @@ export function reminderChip(r, small = false) {
 export function placeChip(r, small = false) {
   const p = S.places.get(r.placeId);
   const name = p?.name || 'מקום';
-  const what = r.fired && !r.always ? 'צלצלה' : (r.leave ? 'ביציאה מ' : 'בהגעה ל') + name;
+  // a Bluetooth device (the car): its name can't take a prefix ("להרכב"), so trigger · name
+  const dev = p?.device ? (p.kind === 'car' ? (r.leave ? 'ביציאה · ' : 'בכניסה · ') : (r.leave ? 'בניתוק · ' : 'בחיבור · ')) : null;
+  const what = r.fired && !r.always ? 'צלצלה' : dev ? dev + name : (r.leave ? 'ביציאה מ' : 'בהגעה ל') + name;
   return h(`button.rem-chip.place.press${small ? '.sm' : ''}${r.fired && !r.always ? '.spent' : ''}`, {
     'data-scale': '.96',
     title: r.always ? 'בכל פעם' : 'פעם אחת',
@@ -49,6 +51,7 @@ export function openReminder(noteId, blockId = '', line = '') {
     at: ex && exAt > Date.now() ? new Date(exAt) : def(),
     rep: ex ? parseRule(ex.rule, ex.until) : { kind: 'none' },
     sticky: ex?.sticky || false,
+    drop: ex?.dropAfter || false,
   };
   const n = S.notes.get(noteId);
   const head = blockId ? clean(line).trim() || 'שורה' : clean(n?.title).trim() || 'הפתק';
@@ -119,6 +122,18 @@ export function openReminder(noteId, blockId = '', line = '') {
       h(`span.switch${st.sticky ? '.on' : ''}`, h('i')));
   }
 
+  function dropRow() {
+    const can = st.rep.kind === 'none';
+    const on = st.drop && can;
+    return h(`button.sticky-row.drop-row.press${on ? '.on' : ''}${can ? '' : '.off'}`, { 'data-scale': '.98', on: { click: () => {
+      if (!can) { haptic('reject'); return; }
+      st.drop = !st.drop; haptic('tick'); draw();
+    } } },
+      icon('trash', on),
+      h('span.sr-txt', h('b', 'למחוק אחרי ההתראה'), h('small', can ? 'צלצלה — והתזכורת יורדת מהפתק ומהלוח' : 'תזכורת חוזרת — נשארת לפעם הבאה')),
+      h(`span.check-box${on ? '.on' : ''}`));
+  }
+
   function draw(fromDrag = false) {
     const past = st.at <= new Date();
     if (fromDrag) { // keep the wheels under the finger, just refresh the text
@@ -129,13 +144,13 @@ export function openReminder(noteId, blockId = '', line = '') {
     }
     body.replaceChildren(
       h('p.picker-for', icon('note-pencil'), head),
-      quick(), days(), clock(), repeatRow(), stickyRow(),
+      quick(), days(), clock(), repeatRow(), stickyRow(), dropRow(),
       h('p.picker-sum', past ? 'הזמן הזה כבר עבר' : `${untilText(st.at)}${repeatText(st.rep) ? ' · ' + repeatText(st.rep) : ''}`),
       h(`button.btn.dark.full.press.set-btn${past ? '.off' : ''}`, { on: { click: async (e) => {
         if (st.at <= new Date()) { haptic('reject'); animate(e.currentTarget, [{ transform: 'translateX(0)' }, { transform: 'translateX(8px)' }, { transform: 'translateX(0)' }], 'touch'); return; }
         haptic('confirm');
         s.close();
-        await setReminder(noteId, blockId, st.at, st.rep, st.sticky);
+        await setReminder(noteId, blockId, st.at, st.rep, st.sticky, st.drop);
         toast(`תזכורת נקבעה · ${fmtRel(st.at.getTime())}`, { icon: 'bell-ringing' });
         askNotify();
       } } }, `קביעת תזכורת · ${fmtShort(st.at)}`),

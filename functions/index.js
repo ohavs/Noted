@@ -303,7 +303,7 @@ exports.reminderWritten = onDocumentWritten('users/{uid}/reminders/{id}', async 
   const data = { kind: 'rem', id: ev.params.id };
   for (const k of ['noteId', 'blockId', 'anchor', 'occ', 'zone', 'rule', 'until']) data[k] = r[k] == null ? '' : String(r[k]);
   for (const k of ['at', 'snoozeAt']) data[k] = r[k] == null ? '' : String(r[k]);
-  for (const k of ['fired', 'sticky', 'deleted']) data[k] = r[k] ? '1' : '0';
+  for (const k of ['fired', 'sticky', 'dropAfter', 'deleted']) data[k] = r[k] ? '1' : '0';
   try {
     await send(ev.params.uid, { ...data, folder: '', note: `rem:${ev.params.id}` });
   } catch (e) {

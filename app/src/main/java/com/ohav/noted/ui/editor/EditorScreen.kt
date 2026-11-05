@@ -131,6 +131,7 @@ import com.ohav.noted.ui.reminders.openReminderPicker
 import com.ohav.noted.ui.reminders.LocalPlaceChips
 import com.ohav.noted.ui.reminders.LocalRemindPlace
 import kotlinx.coroutines.delay
+import com.ohav.noted.data.foreign
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -188,6 +189,10 @@ class EditorNav {
     /** The new note came from a template: left as it came, it goes away like an empty one. */
     var template = false
         private set
+
+    /** Written from "all notes": it landed in the first category by itself, so the page says where (and lets it move). */
+    var askCat = false
+        private set
     var closing by mutableStateOf(false)
     val p = Animatable(0f)
 
@@ -220,10 +225,11 @@ class EditorNav {
      */
     var gate: ((NoteEntity, retry: () -> Unit) -> Boolean)? = null
 
-    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false, start: String? = null): Boolean {
+    fun open(n: NoteEntity, rect: Rect?, fresh: Boolean = false, held: Boolean = false, start: String? = null, askCat: Boolean = false): Boolean {
         if (note != null) return false
         val g = gate
-        if (g != null && !g(n) { open(n, rect, fresh, false, start) }) return false
+        if (g != null && !g(n) { open(n, rect, fresh, false, start, askCat) }) return false
+        this.askCat = askCat
         note = n
         this.start = start
         from = rect ?: Rect.Zero
@@ -274,6 +280,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     }.collectAsState(initial = n)
     val color = NoteColor.of(live?.color ?: n.color)
     val bg = animateColorAsState(c.note(color), Motion.glide(), label = "edBg")
+    val cats by app.notes.categories.collectAsState(initial = emptyList())
+    val tree = remember(cats) { com.ohav.noted.data.CatTree(cats) }
+    fun moveTo(k: com.ohav.noted.data.CategoryEntity) {
+        app.scope.launch { app.notes.move(listOf(n.id), k.id) }
+    }
     val me = app.account.user.collectAsState().value?.uid
     val ctx = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.DisposableEffect(n.id) {
@@ -435,6 +446,22 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id, onLeft = { nav.toCard = false; close() })
     }
 
+    /** ⋮ → category: the same list as "move to…" at home; the page stays open. */
+    fun pickCategory() {
+        overlays.sheet.show("להעביר ל…") {
+            val now = (live ?: n).categoryId
+            tree.flat.filterNot { it.foreign && it.shareInfo.readOnly }.forEach { k ->
+                SheetRow(com.ohav.noted.ui.categories.CatIcons.of(k.icon), k.name, end = if (k.id == now) "כאן עכשיו" else null, inset = k.id in tree.parentOf) {
+                    overlays.sheet.close()
+                    if (k.id != now) {
+                        moveTo(k)
+                        toasts.show("עבר ל״${k.name}״", com.ohav.noted.ui.categories.CatIcons.of(k.icon))
+                    }
+                }
+            }
+        }
+    }
+
     fun menu() {
         keyboard?.hide()
         overlays.sheet.show("הפתק") {
@@ -458,6 +485,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                             },
                     )
                 }
+            }
+            val hereCat = tree.flat.firstOrNull { it.id == (live ?: n).categoryId }
+            if (live?.shareInfo?.readOnly != true) SheetRow(com.ohav.noted.ui.categories.CatIcons.of(hereCat?.icon.orEmpty()), "החלפת קטגוריה", end = hereCat?.name) {
+                overlays.sheet.close()
+                scope.launch { delay(180); pickCategory() }
             }
             SheetRow(Ph.UsersThree, "שיתוף", end = live?.shareInfo?.takeIf { it.shared }?.let { "${it.members.size} משתתפים" }) {
                 overlays.sheet.close()
@@ -610,6 +642,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
                         onRelease = { open, v -> nav.letGo(open, v) },
                         toasts = toasts,
+                        catLine = { if (nav.askCat && live?.shareInfo?.readOnly != true) CategoryLine(tree, live?.categoryId ?: n.categoryId, ::moveTo) },
                     )
                 }
             }
@@ -678,6 +711,7 @@ private fun EditorPage(
     onPull: (Float) -> Unit,
     onRelease: (open: Boolean, velocity: Float) -> Unit,
     toasts: ToastState,
+    catLine: @Composable () -> Unit = {},
 ) {
     val c = Noted.colors
     val haptics = Noted.haptics
@@ -783,6 +817,7 @@ private fun EditorPage(
                         val remindPlaceNow = LocalRemindPlace.current
                         NoteReminderChip(if (pc.leave) Ph.SignOut else Ph.MapPin, pc.text + if (pc.always) " · בכל פעם" else "") { remindPlaceNow("", null) }
                     }
+                    catLine()
                     Spacer(Modifier.height(10.dp))
                     BlockList(state, onBlockMenu = ::blockMenu, toasts = toasts)
                     // tap under the last block → keep writing at the end
@@ -1238,6 +1273,7 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
     val c = Noted.colors
     val haptics = Noted.haptics
     val clipboard = LocalClipboardManager.current
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val shown = bubble.status == TextToolbarStatus.Shown && bubble.rect != null
     // presence fades on glide; the pop is the touch spring (its overshoot only scales, never toggles)
     val fade = animateFloatAsState(if (shown) 1f else 0f, Motion.glide(), label = "bubbleFade")
@@ -1260,8 +1296,18 @@ private fun SelectionBubble(bubble: Bubble, origin: Offset, state: EditorState) 
             if (state.current?.sel?.collapsed == false) add(Act(Ph.Link, "קישור") { bubble.hide(); state.inlineLinkSheet(overlays) })
             add(Act(Ph.ListBullets, "לרשימה") { state.setType(BlockType.Bullet); bubble.hide(); haptics.tick() })
         }
-        bubble.onCopy?.let { f -> add(Act(Ph.Copy, "העתקה") { f(); bubble.hide() }) }
-        bubble.onCut?.let { f -> add(Act(Ph.Scissors, "גזירה") { f(); bubble.hide() }) }
+        // the field's own copy runs in a coroutine that can be gone by the time the circle is tapped
+        // (it copied nothing): the selected text goes to the clipboard here first
+        fun grab() {
+            val v = state.current?.value ?: state.title
+            val txt = v.getSelectedText().text.replace(SENTINEL, "")
+            if (txt.isNotEmpty()) {
+                (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+                    ?.setPrimaryClip(android.content.ClipData.newPlainText("noted", txt))
+            }
+        }
+        bubble.onCopy?.let { f -> add(Act(Ph.Copy, "העתקה") { grab(); f(); bubble.hide(); haptics.tick() }) }
+        bubble.onCut?.let { f -> add(Act(Ph.Scissors, "גזירה") { grab(); f(); bubble.hide() }) }
         bubble.onPaste?.let { f ->
             add(Act(Ph.ClipboardText, "הדבקה") {
                 // multi-line pastes become blocks

@@ -275,6 +275,11 @@ mark[data-h="Red"] { background: #FF8A7A66; } mark[data-h="Orange"] { background
 .wd.on { background: var(--accent); color: var(--accent-ink); }
 .sticky-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--r-md); background: var(--bg); text-align: start; }
 .sticky-row > i { font-size: 22px; color: var(--ink-2); } .sticky-row.on > i { color: var(--accent); }
+.drop-row { margin-top: 10px; } .drop-row.off { opacity: .45; }
+.check-box { width: 26px; height: 26px; flex: none; border-radius: 8px; border: 2px solid var(--ink-3); position: relative; overflow: hidden; transition: border-color var(--dur-glide); }
+.check-box::before { content: ''; position: absolute; inset: -6px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform var(--dur-glide) var(--ease-glide); }
+.check-box::after { content: ''; position: absolute; left: 8px; top: 3px; width: 6px; height: 12px; border: solid var(--accent-ink); border-width: 0 2.5px 2.5px 0; transform: rotate(45deg) scale(0); transition: transform var(--dur-touch) var(--ease-touch); }
+.check-box.on { border-color: var(--accent); } .check-box.on::before { transform: scale(1); } .check-box.on::after { transform: rotate(45deg) scale(1); }
 .sr-txt { flex: 1; display: grid; } .sr-txt small { color: var(--ink-3); font-size: 13px; }
 .switch { width: 50px; height: 30px; border-radius: 15px; padding: 3px; background: color-mix(in srgb, var(--ink-3) 45%, transparent); transition: background var(--dur-glide); flex: none; }
 .switch i { display: block; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); transition: transform var(--dur-touch) var(--ease-touch); }

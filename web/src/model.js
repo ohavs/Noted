@@ -239,14 +239,14 @@ export async function createCategory(name, icon = 'folder', parent = '') {
 
 export const remId = (noteId, blockId = '') => (blockId ? `${noteId}:${blockId}` : noteId);
 
-export async function setReminder(noteId, blockId, at, rep, sticky) {
+export async function setReminder(noteId, blockId, at, rep, sticky, dropAfter = false) {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   let first = at;
   if (rep.kind === 'days' && !rep.days.includes(at.getDay() === 0 ? 7 : at.getDay())) first = next(rep, at, new Date(at.getTime() - 1000)) || at;
   await setDoc(doc(fb.db, 'users', me(), 'reminders', remId(noteId, blockId)), {
     noteId, blockId, anchor: toLocal(at), occ: toLocal(first), zone, rule: ruleOfRep(rep),
     until: rep.until ? toLocal(rep.until).slice(0, 10) : null, fired: false, snoozeAt: null, sticky: !!sticky,
-    at: Date.now(), deleted: false, by: 'web',
+    dropAfter: !!dropAfter && rep.kind === 'none', at: Date.now(), deleted: false, by: 'web',
   });
 }
 import { ruleOf as ruleOfRep } from './repeat.js';
@@ -287,6 +287,8 @@ export async function advanceReminder(r, now = Date.now()) {
     const nx = next(rep, anchor, new Date(Math.max(occ.getTime(), now)));
     if (nx) fields.occ = toLocal(nx); else fields.fired = true;
   }
+  // "delete after it rings": nothing left pending → it goes (on every device)
+  if (r.dropAfter && fields.fired && !(r.snoozeAt && r.snoozeAt > now + 2000)) return removeReminder(r.id);
   if (Object.keys(fields).length) await patchReminder(r, fields);
 }
 

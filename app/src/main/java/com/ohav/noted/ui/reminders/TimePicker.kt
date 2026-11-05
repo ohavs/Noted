@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
@@ -134,7 +135,11 @@ fun openReminderPicker(
         } ?: When.default()
         val m = PickerModel(start, existing?.repeat ?: Repeat.None, existing)
         val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces)
-        val ui = PickerUi(place = startPlace || existingPlace != null && existing == null, sticky = existing?.sticky ?: existingPlace?.sticky ?: false)
+        val ui = PickerUi(
+            place = startPlace || existingPlace != null && existing == null,
+            sticky = existing?.sticky ?: existingPlace?.sticky ?: false,
+            drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: false,
+        )
         val sheet = overlays.sheet
         val remove: (() -> Unit)? = existing?.let { old ->
             fun() {
@@ -197,22 +202,26 @@ fun openReminderPicker(
                                                     noteId, blockId, pid, pm.leave, pm.always,
                                                     if (pm.windowOn) pm.days else emptySet(),
                                                     if (pm.windowOn) pm.from else null, if (pm.windowOn) pm.to else null,
-                                                    sticky = ui.sticky,
+                                                    sticky = ui.sticky, dropAfter = ui.drop && !pm.always,
                                                 )
                                                 pm.saved = true
                                                 val p = app.places.place(pid)
-                                                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave)} · ${p?.name.orEmpty()}", Ph.MapPin)
-                                                if (placesReady(app)) sheet.close()
+                                                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave, p)} · ${p?.name.orEmpty()}", if (p?.isDevice == true) Ph.Bluetooth else Ph.MapPin)
+                                                // a device needs no location: the picker already asked for "nearby devices"
+                                                if (p?.isDevice == true || placesReady(app)) sheet.close()
                                                 else { sheet.setTitle(""); ui.askingPlace = true }
                                             }
                                         },
                                         onRemove = removePlace,
-                                        extra = { StickyRow(ui.sticky) { ui.sticky = it } },
+                                        extra = {
+                                            StickyRow(ui.sticky) { ui.sticky = it }
+                                            DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
+                                        },
                                     ) else PickerBody(
                                         m, line,
                                         onSet = {
                                             app.scope.launch(Dispatchers.Main) {
-                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky)
+                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky, dropAfter = ui.drop && !m.repeat.repeats)
                                                 m.saved = true
                                                 toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging)
                                                 if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
@@ -220,7 +229,10 @@ fun openReminderPicker(
                                             }
                                         },
                                         onRemove = remove,
-                                        extra = { StickyRow(ui.sticky) { ui.sticky = it } },
+                                        extra = {
+                                            StickyRow(ui.sticky) { ui.sticky = it }
+                                            DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
+                                        },
                                     )
                                 }
                             }
@@ -233,8 +245,10 @@ fun openReminderPicker(
 }
 
 @Stable
-private class PickerUi(place: Boolean, sticky: Boolean) {
+private class PickerUi(place: Boolean, sticky: Boolean, drop: Boolean) {
     var place by mutableStateOf(place)
+    /** Shared by both modes: once it rang, the reminder goes away by itself. */
+    var drop by mutableStateOf(drop)
     /** Shared by both modes: once it rings, it stays in the shade until removed by hand. */
     var sticky by mutableStateOf(sticky)
     var askingPlace by mutableStateOf(false)
@@ -750,5 +764,67 @@ internal fun StickyRow(on: Boolean, onChange: (Boolean) -> Unit) {
             Text("אחרי שהיא מצלצלת — נשארת עד שמסירים", style = t.label, color = c.ink3)
         }
         NotedSwitch(on)
+    }
+}
+
+/**
+ * "Delete it after it rings" — a check box under the switch. A series (or "every time") can't go
+ * away after one ring: the box then rests dimmed and says why, instead of vanishing.
+ */
+@Composable
+internal fun DropRow(on: Boolean, available: Boolean, unavailable: String, onChange: (Boolean) -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val checked = on && available
+    val fill by animateFloatAsState(if (checked) 1f else 0f, Motion.glide(), label = "dropFill")
+    val pop by animateFloatAsState(if (checked) 1f else 0f, Motion.touch(), label = "dropPop")
+    val dim by animateFloatAsState(if (available) 1f else .45f, Motion.glide(), label = "dropDim")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 18.dp)
+            .graphicsLayer { alpha = dim }
+            .clip(Shapes.md)
+            .background(c.bg)
+            .press(scale = .98f, haptic = false) {
+                if (!available) { haptics.reject(); return@press }
+                haptics.toggle(!on); onChange(!on)
+            }
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Ph.Trash, null, Modifier.size(22.dp), tint = if (checked) c.accent else c.ink2)
+        Column(Modifier.weight(1f)) {
+            Text("למחוק אחרי ההתראה", style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink)
+            Text(if (available) "צלצלה — והתזכורת יורדת מהפתק ומהלוח" else unavailable, style = t.label, color = c.ink3)
+        }
+        // the box: ink fills from the centre, the tick draws itself on the touch spring
+        Box(
+            Modifier
+                .size(26.dp)
+                .clip(Squircle(8.dp))
+                .drawBehind {
+                    val w = 2.dp.toPx()
+                    drawRoundRect(c.ink3, cornerRadius = androidx.compose.ui.geometry.CornerRadius(8.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+                    if (fill > 0f) {
+                        val r = size.minDimension / 2 * 1.5f * fill
+                        drawCircle(c.accent, r)
+                    }
+                    // presence on the glide (never toggled by the touch spring's overshoot), length on touch
+                    if (fill > .01f) {
+                        val p = androidx.compose.ui.graphics.Path().apply {
+                            moveTo(size.width * .26f, size.height * .52f)
+                            lineTo(size.width * .44f, size.height * .70f)
+                            lineTo(size.width * .76f, size.height * .33f)
+                        }
+                        val m = androidx.compose.ui.graphics.PathMeasure().apply { setPath(p, false) }
+                        val seg = androidx.compose.ui.graphics.Path()
+                        m.getSegment(0f, m.length * pop.coerceIn(0f, 1f), seg, true)
+                        drawPath(seg, c.accentInk, style = androidx.compose.ui.graphics.drawscope.Stroke(2.4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                    }
+                },
+        )
     }
 }

@@ -560,7 +560,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 anchor = f["anchor"] as? String ?: return, occ = f["occ"] as? String ?: return,
                 zone = f["zone"] as? String ?: java.time.ZoneId.systemDefault().id, rule = f["rule"] as? String ?: "",
                 until = f["until"] as? String, fired = f["fired"] == true, snoozeAt = (f["snoozeAt"] as? Number)?.toLong(),
-                sticky = f["sticky"] == true, at = at,
+                sticky = f["sticky"] == true, dropAfter = f["dropAfter"] == true, at = at,
             )
             rd.upsert(r)
             if (r.blockId.isEmpty()) rd.mirror(r.noteId, r.occAt)
@@ -585,7 +585,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
                 mapOf(
                     "noteId" to r.noteId, "blockId" to r.blockId, "anchor" to r.anchor, "occ" to r.occ, "zone" to r.zone,
                     "rule" to r.rule, "until" to r.until, "fired" to r.fired, "snoozeAt" to r.snoozeAt, "sticky" to r.sticky,
-                    "at" to at, "deleted" to false, "by" to "android",
+                    "dropAfter" to r.dropAfter, "at" to at, "deleted" to false, "by" to "android",
                 ),
             )
             remShadows[r.id] = at
@@ -614,15 +614,16 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
     }
 
     /** What syncs of a place: everything but the arming, which is this device's own geofence state. */
+    // new fields only when set: an unchanged old row keeps the hash its shadow was written with
     private fun PlaceEntity.fields(): Map<String, Any?> = mapOf(
         "name" to name, "kind" to kind, "lat" to lat, "lng" to lng, "radius" to radius, "address" to address,
         "position" to position, "createdAt" to createdAt,
-    )
+    ) + (if (device.isNotEmpty()) mapOf("device" to device) else emptyMap())
 
     private fun PlaceReminderEntity.fields(): Map<String, Any?> = mapOf(
         "noteId" to noteId, "blockId" to blockId, "placeId" to placeId, "leave" to leave, "always" to always, "days" to days,
         "fromMin" to fromMin, "toMin" to toMin, "fired" to fired, "createdAt" to createdAt, "sticky" to sticky,
-    )
+    ) + (if (dropAfter) mapOf("dropAfter" to true) else emptyMap())
 
     private fun hashOf(f: Map<String, Any?>) = f.entries.sortedBy { it.key }.joinToString("\u0001") { "${it.key}=${it.value}" }.hashCode()
 
@@ -690,6 +691,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             lat = (f["lat"] as? Number)?.toDouble() ?: return false, lng = (f["lng"] as? Number)?.toDouble() ?: return false,
             radius = (f["radius"] as? Number)?.toInt() ?: 150, address = f["address"] as? String ?: "",
             position = (f["position"] as? Number)?.toDouble() ?: 0.0, createdAt = (f["createdAt"] as? Number)?.toLong() ?: at,
+            device = f["device"] as? String ?: "",
         )
         // the arming is this device's: kept unless the point or radius moved
         val moved = local == null || local.lat != p.lat || local.lng != p.lng || local.radius != p.radius
@@ -722,6 +724,7 @@ class Sync(private val ctx: Context, private val db: NotedDatabase, private val 
             placeId = f["placeId"] as? String ?: return false, leave = f["leave"] == true, always = f["always"] == true,
             days = f["days"] as? String ?: "", fromMin = (f["fromMin"] as? Number)?.toInt(), toMin = (f["toMin"] as? Number)?.toInt(),
             fired = f["fired"] == true, createdAt = (f["createdAt"] as? Number)?.toLong() ?: at, sticky = f["sticky"] == true,
+            dropAfter = f["dropAfter"] == true,
         )
         pd.upsertReminder(r)
         putPlShadow(key, PlShadow(at, hashOf(r.fields())))

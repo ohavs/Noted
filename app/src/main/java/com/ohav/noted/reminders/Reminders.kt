@@ -43,7 +43,7 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
     suspend fun get(noteId: String, blockId: String = ""): ReminderEntity? = dao.get(ReminderEntity.idFor(noteId, blockId))
 
     /** Sets (or replaces) the reminder of a note / of one line, starting at [at] local time. */
-    suspend fun set(noteId: String, blockId: String, at: LocalDateTime, repeat: Repeat, sticky: Boolean? = null): ReminderEntity {
+    suspend fun set(noteId: String, blockId: String, at: LocalDateTime, repeat: Repeat, sticky: Boolean? = null, dropAfter: Boolean? = null): ReminderEntity {
         // "on Sun/Tue" starting on a Monday: the first ring is the first chosen day
         val first = if (repeat.kind == Repeat.Kind.Days && at.dayOfWeek.value !in repeat.days) repeat.next(at, at.minusSeconds(1)) ?: at else at
         val r = ReminderEntity(
@@ -51,6 +51,8 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
             anchor = at.toString(), occ = first.toString(), zone = ZoneId.systemDefault().id,
             rule = repeat.rule(), until = repeat.until?.toString(),
             sticky = sticky ?: dao.get(ReminderEntity.idFor(noteId, blockId))?.sticky ?: false,
+            // a series never "goes away after it rings"
+            dropAfter = !repeat.repeats && (dropAfter ?: dao.get(ReminderEntity.idFor(noteId, blockId))?.dropAfter ?: false),
             at = System.currentTimeMillis(),
         )
         put(r)
@@ -76,26 +78,44 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
     }
 
     suspend fun snooze(id: String, at: Long) {
-        val r = dao.get(id) ?: return
+        val r = dao.get(id)
+        if (r == null) {
+            // it went away after ringing ("delete after"): snoozing brings it back as a one-off, gone again after
+            val (noteId, blockId) = split(id)
+            if (notes.get(noteId)?.trashedAt != null) return
+            val t = LocalDateTime.ofInstant(Instant.ofEpochMilli(at), ZoneId.systemDefault()).withNano(0)
+            set(noteId, blockId, t, Repeat.None, dropAfter = true)
+            return
+        }
         put(r.copy(snoozeAt = at))
         clear(id)
     }
 
+    /** A reminder id back into its note and line ([ReminderEntity.idFor]). */
+    private fun split(id: String): Pair<String, String> = id.substringBefore(":") to id.substringAfter(":", "")
+
     /** "Done" from the notification: a one-shot goes away (its line gets checked); a series just quiets. */
     suspend fun done(id: String) {
-        val r = dao.get(id) ?: return
+        val r = dao.get(id) ?: split(id).let { (noteId, blockId) ->
+            // already gone after ringing: "done" still checks its line
+            clear(id)
+            if (blockId.isNotEmpty()) checkLine(noteId, blockId)
+            return
+        }
         clear(id)
         if (r.repeat.repeats) {
             put(r.copy(snoozeAt = null))
             return
         }
-        if (r.blockId.isNotEmpty()) {
-            notes.get(r.noteId)?.let { n ->
-                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }.sinkChecked(r.blockId)
-                notes.setBlocks(n.id, Blocks.serialize(blocks), System.currentTimeMillis())
-            }
-        }
+        if (r.blockId.isNotEmpty()) checkLine(r.noteId, r.blockId)
         remove(r.noteId, r.blockId)
+    }
+
+    private suspend fun checkLine(noteId: String, blockId: String) {
+        notes.get(noteId)?.let { n ->
+            val blocks = Blocks.parse(n.blocks).map { if (it.id == blockId) it.copy(done = true) else it }.sinkChecked(blockId)
+            notes.setBlocks(n.id, Blocks.serialize(blocks), System.currentTimeMillis())
+        }
     }
 
     /**
@@ -158,6 +178,12 @@ class Reminders(private val ctx: Context, private val db: NotedDatabase) {
                 val nowLocal = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), r.zoneId)
                 val next = r.repeat.next(r.anchorTime, maxOf(r.occTime, nowLocal))
                 nr = if (next != null) nr.copy(occ = next.toString()) else nr.copy(fired = true)
+            }
+            // "delete after it rings": nothing left pending → it goes; the notification stays up
+            if (nr.dropAfter && nr.dueAt == null) {
+                dao.delete(nr.id)
+                if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, null)
+                continue
             }
             put(nr)
             if (nr.blockId.isEmpty()) dao.mirror(nr.noteId, nr.occAt)

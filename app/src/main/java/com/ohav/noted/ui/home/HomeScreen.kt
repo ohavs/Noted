@@ -480,6 +480,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         leaving.cancel()
         stack.hideAll()
         stack.enterArmed = true
+        // a new category starts at its top, not at the old one's scroll (hidden now: no visible jump)
+        stack.value = 0f
         shownCat = cat
         stack.enterGen++
         stack.exit.snapTo(0f)
@@ -561,6 +563,13 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             if (!busy && (stack.value > stack.maxValue + 1f || stack.value < 0f)) stack.animateTo(stack.value)
         }
     }
+    // the content shrank under a resting scroll (another category, a lone note, a note gone): the
+    // cards were left above the viewport until the next touch — bring them back now, as a drift
+    LaunchedEffect(stack) {
+        snapshotFlow { !stack.scrollable.isScrollInProgress && stack.value > stack.maxValue + 1f }.collect { out ->
+            if (out) stack.jumpTo(stack.maxValue)
+        }
+    }
 
     var fabRect by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     // new note: opens right away where you can see it. An untouched new note blocks the next one —
@@ -586,7 +595,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             focusNew = draft.id
             haptics.light()
             toasts.show("הפתק החדש עוד מחכה לך", Ph.NotePencil)
-            chrome.editor.open(draft, cardRect(draft.id) ?: fabRect, fresh = true)
+            chrome.editor.open(draft, cardRect(draft.id) ?: fabRect, fresh = true, askCat = cat == "all")
             return
         }
         val here = dbCats.firstOrNull { it.id == (tree.parentOf[cat] ?: cat) }
@@ -600,7 +609,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             val n = newNote(app, if (cat == "all") (tree.tops.firstOrNull { !it.foreign } ?: tree.tops.firstOrNull())?.id ?: "home" else cat, notes.size)
             focusNew = n.id
             haptics.confirm()
-            chrome.editor.open(n, fabRect, fresh = true)
+            chrome.editor.open(n, fabRect, fresh = true, askCat = cat == "all")
         }
     }
     /** Long press on + : a note from a template, in the template's category when it still has one. */
@@ -619,7 +628,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             if (shownCat != "all" && target !in tree.family(shownCat)) cat = "all"
             focusNew = n.id
             haptics.confirm()
-            chrome.editor.open(n, fabRect, fresh = true, start = com.ohav.noted.ui.editor.Start.TEMPLATE)
+            chrome.editor.open(n, fabRect, fresh = true, start = com.ohav.noted.ui.editor.Start.TEMPLATE, askCat = cat == "all")
         }
     }
     DisposableEffect(chrome.editor) {

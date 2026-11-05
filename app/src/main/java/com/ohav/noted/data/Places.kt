@@ -29,7 +29,14 @@ data class PlaceEntity(
     val createdAt: Long,
     val armIn: Boolean = false,
     val armOut: Boolean = false,
-)
+    /**
+     * Not a point on the map but a Bluetooth device (its hardware address) — the car, headphones.
+     * Arriving = it connected, leaving = it disconnected; no geofence, lat/lng unused.
+     */
+    val device: String = "",
+) {
+    val isDevice: Boolean get() = device.isNotEmpty()
+}
 
 /**
  * "When I get to / leave [placeId]" on a note ([blockId] empty) or on one line. Same id scheme as
@@ -54,6 +61,8 @@ data class PlaceReminderEntity(
     val createdAt: Long,
     /** Once it rings it stays in the notification shade until removed by hand. */
     val sticky: Boolean = false,
+    /** A one-shot that goes away once it rang, instead of waiting as "fired". */
+    val dropAfter: Boolean = false,
 ) {
     val daySet: Set<Int> get() = days.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
     val hasWindow: Boolean get() = daySet.isNotEmpty() || fromMin != null

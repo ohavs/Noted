@@ -71,6 +71,24 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         return p
     }
 
+    /** A Bluetooth device as a place: no point, no fence — its links are the crossings. */
+    suspend fun createDevice(name: String, kind: String, address: String): PlaceEntity {
+        val p = PlaceEntity(
+            id = UUID.randomUUID().toString(), name = name.trim(), kind = kind, lat = 0.0, lng = 0.0, radius = 0,
+            address = "", position = dao.maxPosition() + 1.0, createdAt = System.currentTimeMillis(), device = address,
+        )
+        dao.upsertPlace(p)
+        return p
+    }
+
+    /** The device at [address] linked ([up]) or dropped: its "connect" / "disconnect" reminders ring. */
+    suspend fun device(address: String, up: Boolean) = lock.withLock {
+        for (p in dao.places()) {
+            if (p.device != address) continue
+            status.recordCross(p.name, if (up) "התחבר" else "התנתק", ring(p, leave = !up))
+        }
+    }
+
     /** Edits; a moved point or radius starts the arming over. */
     suspend fun update(p: PlaceEntity) {
         val old = dao.place(p.id)
@@ -98,13 +116,13 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
 
     suspend fun set(
         noteId: String, blockId: String, placeId: String, leave: Boolean, always: Boolean,
-        days: Set<Int>, fromMin: Int?, toMin: Int?, sticky: Boolean = false,
+        days: Set<Int>, fromMin: Int?, toMin: Int?, sticky: Boolean = false, dropAfter: Boolean = false,
     ): PlaceReminderEntity {
         val r = PlaceReminderEntity(
             id = ReminderEntity.idFor(noteId, blockId), noteId = noteId, blockId = blockId, placeId = placeId,
             leave = leave, always = always, days = days.sorted().joinToString(","),
             fromMin = fromMin, toMin = if (fromMin == null) null else toMin, createdAt = System.currentTimeMillis(),
-            sticky = sticky,
+            sticky = sticky, dropAfter = dropAfter && !always,
         )
         dao.upsertReminder(r)
         clear(r.id)
@@ -131,15 +149,18 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
 
     /** "Done" from the notification: its line gets checked and the reminder goes away. */
     suspend fun done(id: String) {
-        val r = dao.reminder(id) ?: return
+        val r = dao.reminder(id)
         clear(id)
-        if (r.blockId.isNotEmpty()) {
-            notes.get(r.noteId)?.let { n ->
-                val blocks = Blocks.parse(n.blocks).map { if (it.id == r.blockId) it.copy(done = true) else it }.sinkChecked(r.blockId)
+        // gone already ("delete after it rings"): the id still names the note and the line
+        val noteId = r?.noteId ?: id.substringBefore(":")
+        val blockId = r?.blockId ?: id.substringAfter(":", "")
+        if (blockId.isNotEmpty()) {
+            notes.get(noteId)?.let { n ->
+                val blocks = Blocks.parse(n.blocks).map { if (it.id == blockId) it.copy(done = true) else it }.sinkChecked(blockId)
                 notes.setBlocks(n.id, Blocks.serialize(blocks), System.currentTimeMillis())
             }
         }
-        dao.deleteReminder(id)
+        if (r != null) dao.deleteReminder(id)
     }
 
     fun observeTick(): Flow<String> = dao.observeTick()
@@ -158,6 +179,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         val byPlace = live.groupBy { it.placeId }
         val out = mutableListOf<Fence>()
         for (p in dao.places()) {
+            if (p.isDevice) continue
             val rs = byPlace[p.id] ?: continue
             val r = p.radius.toFloat().coerceAtLeast(MIN_RADIUS_M)
             if (rs.any { !it.leave }) {
@@ -342,7 +364,9 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
             if (line?.done == true && !r.always) { dao.upsertReminder(r.copy(fired = true)); continue }
             PlaceNotifier.show(ctx, r, p, note.title, line, blocks)
             rang++
-            if (!r.always) dao.upsertReminder(r.copy(fired = true))
+            if (!r.always) {
+                if (r.dropAfter) dao.deleteReminder(r.id) else dao.upsertReminder(r.copy(fired = true))
+            }
         }
         return when {
             rang > 0 -> "צלצל ($rang)"
@@ -407,7 +431,13 @@ object PlaceNotifier {
         val m = com.ohav.noted.data.Privacy.mask((ctx.applicationContext as? com.ohav.noted.NotedApp)?.privacy?.of(r.noteId) ?: 0, noteTitle, line?.text)
         val title = m.head
         // the reminder is the notification; the place is only the small header line
-        val where = if (r.leave) "ביציאה מ${p.name}" else p.name
+        val where = when {
+            // "הרכב" can't take a ל/מ prefix cleanly ("להרכב"): the trigger, a dot, the name
+            p.isDevice && com.ohav.noted.data.PlaceKind.of(p.kind) == com.ohav.noted.data.PlaceKind.Car -> (if (r.leave) "ביציאה · " else "בכניסה · ") + p.name
+            p.isDevice -> (if (r.leave) "בניתוק · " else "בחיבור · ") + p.name
+            r.leave -> "ביציאה מ${p.name}"
+            else -> p.name
+        }
         val body = when {
             m.locked -> "יש לך תזכורת — פותחים עם הקוד"
             line != null -> m.note
@@ -440,7 +470,7 @@ object PlaceNotifier {
             .setSilent(silent)
             .setContentIntent(open)
             .addAction(0, "סמן כבוצע", action(GeofenceReceiver.DONE))
-            .apply { if (!r.always) addAction(0, "בפעם הבאה", action(GeofenceReceiver.AGAIN)) }
+            .apply { if (!r.always && !r.dropAfter) addAction(0, "בפעם הבאה", action(GeofenceReceiver.AGAIN)) }
             .also { Shade.decorate(it, ctx, Shade.place(r.id), r.sticky, code) }
             .build()
         try {

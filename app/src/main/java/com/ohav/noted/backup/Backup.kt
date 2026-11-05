@@ -318,7 +318,7 @@ class Backup(private val app: NotedApp) {
     private fun reminder(r: ReminderEntity) = JSONObject()
         .put("id", r.id).put("noteId", r.noteId).put("blockId", r.blockId).put("anchor", r.anchor).put("occ", r.occ)
         .put("zone", r.zone).put("rule", r.rule).put("until", r.until ?: JSONObject.NULL).put("fired", r.fired)
-        .put("snoozeAt", r.snoozeAt ?: JSONObject.NULL)
+        .put("snoozeAt", r.snoozeAt ?: JSONObject.NULL).put("sticky", r.sticky).put("dropAfter", r.dropAfter)
 
     private fun reminderOf(o: JSONObject): ReminderEntity? = runCatching {
         ReminderEntity(
@@ -326,30 +326,33 @@ class Backup(private val app: NotedApp) {
             anchor = o.getString("anchor").also { LocalDateTime.parse(it) }, occ = o.getString("occ").also { LocalDateTime.parse(it) },
             zone = o.optString("zone"), rule = o.optString("rule"), until = o.optStringOrNull("until"),
             fired = o.optBoolean("fired"), snoozeAt = o.optLongOrNull("snoozeAt"),
+            sticky = o.optBoolean("sticky"), dropAfter = o.optBoolean("dropAfter"),
         )
     }.getOrNull()
 
     private fun place(p: PlaceEntity) = JSONObject()
         .put("id", p.id).put("name", p.name).put("kind", p.kind).put("lat", p.lat).put("lng", p.lng).put("radius", p.radius)
-        .put("address", p.address).put("position", p.position).put("createdAt", p.createdAt)
+        .put("address", p.address).put("position", p.position).put("createdAt", p.createdAt).put("device", p.device)
 
     private fun placeOf(o: JSONObject): PlaceEntity? = runCatching {
         PlaceEntity(
             id = o.getString("id"), name = o.optString("name"), kind = o.optString("kind"), lat = o.getDouble("lat"), lng = o.getDouble("lng"),
             radius = o.optInt("radius", 150), address = o.optString("address"), position = o.optDouble("position", 0.0), createdAt = o.optLong("createdAt"),
+            device = o.optString("device"),
         )
     }.getOrNull()
 
     private fun placeReminder(r: PlaceReminderEntity) = JSONObject()
         .put("id", r.id).put("noteId", r.noteId).put("blockId", r.blockId).put("placeId", r.placeId).put("leave", r.leave)
         .put("always", r.always).put("days", r.days).put("fromMin", r.fromMin ?: JSONObject.NULL).put("toMin", r.toMin ?: JSONObject.NULL)
-        .put("fired", r.fired).put("createdAt", r.createdAt)
+        .put("fired", r.fired).put("createdAt", r.createdAt).put("sticky", r.sticky).put("dropAfter", r.dropAfter)
 
     private fun placeReminderOf(o: JSONObject): PlaceReminderEntity? = runCatching {
         PlaceReminderEntity(
             id = o.getString("id"), noteId = o.getString("noteId"), blockId = o.optString("blockId"), placeId = o.getString("placeId"),
             leave = o.optBoolean("leave"), always = o.optBoolean("always"), days = o.optString("days"),
             fromMin = o.optIntOrNull("fromMin"), toMin = o.optIntOrNull("toMin"), fired = o.optBoolean("fired"), createdAt = o.optLong("createdAt"),
+            sticky = o.optBoolean("sticky"), dropAfter = o.optBoolean("dropAfter"),
         )
     }.getOrNull()
 

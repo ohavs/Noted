@@ -156,7 +156,8 @@ fun pickPlace(app: NotedApp, overlays: Overlays, toasts: ToastState, onPick: (Pl
             onPick(same?.info() ?: PlaceInfo(f.name, f.address, f.lat, f.lng, guessKind(f.name, all, f.types).key))
             haptics.confirm()
         }
-        if (all.isNotEmpty()) SavedPlaces(all) { p ->
+        val spots = remember(all) { all.filterNot { it.isDevice } }
+        if (spots.isNotEmpty()) SavedPlaces(spots) { p ->
             overlays.sheet.close()
             onPick(p.info())
             haptics.confirm()
