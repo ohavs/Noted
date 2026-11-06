@@ -10,6 +10,7 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -70,6 +71,28 @@ object Geo {
         }.getOrNull()
         if (fresh == null) cts.cancel()
         return fresh ?: runCatching { client.lastLocation.await() }.getOrNull()
+    }
+
+    /**
+     * A second opinion for a geofence crossing, from the background: a fresh precise fix if the
+     * system gives one within [ms], else a last known one under a minute old. Null = no evidence.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun fix(ctx: Context, ms: Long = 15_000): Location? {
+        if (!hasFine(ctx)) return null
+        val client = LocationServices.getFusedLocationProviderClient(ctx)
+        val req = CurrentLocationRequest.Builder()
+            .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+            .setMaxUpdateAgeMillis(20_000)
+            .setDurationMillis(ms)
+            .build()
+        val cts = CancellationTokenSource()
+        val fresh = runCatching {
+            withTimeoutOrNull(ms + 1_000) { client.getCurrentLocation(req, cts.token).await() }
+        }.getOrNull()
+        if (fresh == null) cts.cancel()
+        return fresh ?: runCatching { client.lastLocation.await() }.getOrNull()
+            ?.takeIf { System.currentTimeMillis() - it.time < 60_000 }
     }
 
     /** Last known location without waiting — for biasing search and the radar. */

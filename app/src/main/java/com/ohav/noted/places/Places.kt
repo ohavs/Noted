@@ -42,12 +42,14 @@ import java.util.UUID
  * (they fire with the app dead); [GeofenceReceiver] decides whether a crossing counts.
  *
  * Per place, only the fences some open reminder needs:
- *  - `in:<id>`  ENTER at the radius — an arrival, but only when armed ([PlaceEntity.armIn]).
- *  - `far:<id>` EXIT at radius + [ARM_MARGIN_M], initial EXIT — being well away arms the arrival,
- *    so "when I get home" set from home doesn't ring on the first GPS jitter at the door.
+ *  - `in:<id>`  ENTER (+ DWELL after [LOITER_MS], a second chance) at the radius — an arrival,
+ *    but only when armed ([PlaceEntity.armIn]) and the fix really is here.
+ *  - `far:<id>` EXIT at radius + [ARM_MARGIN_M], initial EXIT — being well away (proven by a fix
+ *    whose whole uncertainty is clear of the place) arms the arrival, so neither "when I get home"
+ *    set from home nor a location jump while sitting at home rings at the door.
  *  - `out:<id>` ENTER/EXIT at radius + [LEAVE_MARGIN_M], initial ENTER — being here arms the
  *    departure; leaving the wider ring is the departure.
- * A crossing whose fix is coarser than the radius (and at least 200 m) is not a crossing.
+ * A doubtful crossing asks for a fresh fix ([Geo.fix]) before it's judged.
  */
 class Places(private val ctx: Context, private val db: NotedDatabase) {
     private val dao = db.places()
@@ -183,7 +185,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
             val rs = byPlace[p.id] ?: continue
             val r = p.radius.toFloat().coerceAtLeast(MIN_RADIUS_M)
             if (rs.any { !it.leave }) {
-                out += Fence("in:${p.id}", p.lat, p.lng, r, Geofence.GEOFENCE_TRANSITION_ENTER, 0)
+                out += Fence("in:${p.id}", p.lat, p.lng, r, Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_DWELL, 0)
                 out += Fence("far:${p.id}", p.lat, p.lng, r + ARM_MARGIN_M, Geofence.GEOFENCE_TRANSITION_EXIT, GeofencingRequest.INITIAL_TRIGGER_EXIT)
             }
             if (rs.any { it.leave }) {
@@ -206,7 +208,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
     suspend fun sync(force: Boolean = false) = lock.withLock {
         val list = fences()
         val ready = Geo.ready(ctx)
-        val hash = (list.joinToString("|") { "${it.id}@${it.lat},${it.lng},${it.radius}" } + "#" + ready).hashCode()
+        val hash = (list.joinToString("|") { "${it.id}@${it.lat},${it.lng},${it.radius}/${it.transitions}" } + "#" + ready + "#" + FENCES_V).hashCode()
         val now = System.currentTimeMillis()
         if (!force && hash == status.hash && now - status.syncedAt < 30 * 60_000L) return@withLock
         val client = LocationServices.getGeofencingClient(ctx)
@@ -232,6 +234,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
                                 .setExpirationDuration(Geofence.NEVER_EXPIRE)
                                 .setTransitionTypes(f.transitions)
                                 .setNotificationResponsiveness(60_000)
+                                .setLoiteringDelay(LOITER_MS)
                                 .build(),
                         )
                     }
@@ -251,47 +254,97 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         )
     }
 
-    /** One geofence event. */
+    /**
+     * One geofence event. The fix the system hands over is often a Wi-Fi / cell guess, and the OS
+     * never repeats a crossing it already reported — so a doubtful one gets a second opinion
+     * ([Geo.fix]) instead of being dropped (a lost arrival), and arming needs real evidence of
+     * being away (a guess that jumped out of the house and back used to ring "arrived" at home).
+     */
     suspend fun crossing(ids: List<String>, transition: Int, loc: Location?) = lock.withLock {
-        val acc = loc?.accuracy ?: Float.MAX_VALUE
+        // one fresh fix per event, only if some crossing needs it
+        var second: Location? = null
+        var asked = false
+        suspend fun fresh(): Location? {
+            if (!asked) { asked = true; second = Geo.fix(ctx) }
+            return second
+        }
         for (fid in ids) {
             val kind = fid.substringBefore(":")
             val p = dao.place(fid.substringAfter(":")) ?: continue
-            val precise = acc <= maxOf(p.radius.toFloat(), 200f)
+            val r = p.radius.toFloat().coerceAtLeast(MIN_RADIUS_M)
+            fun dist(l: Location) = Geo.distance(l.latitude, l.longitude, p.lat, p.lng)
+            // the whole uncertainty circle is clear of the place
+            fun away(l: Location?) = l != null && dist(l) - l.accuracy >= r + AWAY_M
+            fun here(l: Location?) = l != null && l.accuracy <= maxOf(r, 200f) && dist(l) <= r + HERE_SLACK_M
+            fun gone(l: Location?) = l != null && dist(l) - l.accuracy >= r + LEAVE_MARGIN_M
+            val enter = transition == Geofence.GEOFENCE_TRANSITION_ENTER
+            val dwell = transition == Geofence.GEOFENCE_TRANSITION_DWELL
             when {
                 kind == "far" && transition == Geofence.GEOFENCE_TRANSITION_EXIT -> {
-                    // a vague fix far out still means away; only a fix that could be at the door doesn't
-                    if (acc <= p.radius + ARM_MARGIN_M) { dao.setArmIn(p.id, true); late.drop(p.id); armLate() }
-                    status.recordCross(p.name, "רחוק", if (acc <= p.radius + ARM_MARGIN_M) "נדרך להגעה" else "לא מדויק")
-                }
-                kind == "in" && transition == Geofence.GEOFENCE_TRANSITION_ENTER -> when {
-                    !precise -> status.recordCross(p.name, "הגעה", "לא מדויק (${acc.toInt()} מ׳)")
-                    !p.armIn -> status.recordCross(p.name, "הגעה", "לא נדרך — עוד לא התרחקת")
-                    else -> {
-                        dao.setArmIn(p.id, false)
-                        dao.setArmOut(p.id, true)
-                        status.recordCross(p.name, "הגעה", ring(p, leave = false))
-                        // came before the hours: ring when they open, if still here then
-                        val at = nextOpening(p.id)
-                        if (at != null) { late.put(p.id, at); armLate() }
+                    val f = if (away(loc)) loc else fresh()?.takeIf { away(it) }
+                    if (f != null) {
+                        dao.setArmIn(p.id, true)
+                        // re-registration while away repeats the initial exit: keep the first time
+                        if (!p.armIn) armed.put(p.id, minOf(f.time.takeIf { it > 0 } ?: Long.MAX_VALUE, System.currentTimeMillis()))
+                        late.drop(p.id); armLate()
                     }
+                    status.recordCross(
+                        p.name, "רחוק",
+                        when {
+                            f != null -> "נדרך להגעה"
+                            here(second) -> "לא נדרך — המיקום העדכני כאן"
+                            else -> "לא נדרך — מיקום לא מדויק"
+                        },
+                    )
                 }
-                kind == "out" && transition == Geofence.GEOFENCE_TRANSITION_ENTER -> {
-                    if (precise) dao.setArmOut(p.id, true)
-                    status.recordCross(p.name, "כאן", if (precise) "נדרך ליציאה" else "לא מדויק")
+                kind == "in" && (enter || dwell) -> {
+                    if (!p.armIn) {
+                        // a dwell after an arrival that already rang is the normal case — nothing to say
+                        if (enter) status.recordCross(p.name, "הגעה", "לא נדרך — עוד לא התרחקת")
+                        continue
+                    }
+                    // the system's own dwell (minutes inside) is good evidence even with a vague fix
+                    val ok = here(loc) || here(fresh()) ||
+                        (dwell && loc != null && loc.accuracy <= 500f && dist(loc) <= r + loc.accuracy)
+                    if (!ok) {
+                        status.recordCross(p.name, "הגעה", "לא מדויק — מחכה לאישור (${(loc?.accuracy ?: 0f).toInt()} מ׳)")
+                        continue // stays armed: the dwell, a few minutes in, gets another look
+                    }
+                    dao.setArmIn(p.id, false)
+                    dao.setArmOut(p.id, true)
+                    val since = System.currentTimeMillis() - armed.at(p.id)
+                    armed.drop(p.id)
+                    if (since < MIN_AWAY_MS) {
+                        // out past the far ring and back within minutes: a location jump, not a trip
+                        status.recordCross(p.name, "הגעה", "לא נחשב — קפיצת מיקום")
+                        continue
+                    }
+                    status.recordCross(p.name, "הגעה", ring(p, leave = false))
+                    // came before the hours: ring when they open, if still here then
+                    val at = nextOpening(p.id)
+                    if (at != null) { late.put(p.id, at); armLate() }
+                }
+                kind == "out" && enter -> {
+                    val ok = loc != null && loc.accuracy <= maxOf(r + LEAVE_MARGIN_M, 200f) ||
+                        fresh().let { it != null && it.accuracy <= 200f && dist(it) <= r + LEAVE_MARGIN_M }
+                    if (ok) dao.setArmOut(p.id, true)
+                    status.recordCross(p.name, "כאן", if (ok) "נדרך ליציאה" else "לא מדויק")
                 }
                 kind == "out" && transition == Geofence.GEOFENCE_TRANSITION_EXIT -> when {
-                    acc > maxOf(p.radius + LEAVE_MARGIN_M, 200f) -> status.recordCross(p.name, "יציאה", "לא מדויק (${acc.toInt()} מ׳)")
                     !p.armOut -> status.recordCross(p.name, "יציאה", "לא נדרך — לא נראית כאן")
+                    !(loc != null && loc.accuracy <= maxOf(r + LEAVE_MARGIN_M, 200f)) && !gone(fresh()) ->
+                        status.recordCross(p.name, "יציאה", "לא מדויק (${(loc?.accuracy ?: 0f).toInt()} מ׳)")
                     else -> {
+                        // the arrival is armed by the far ring only, not by the nearer departure ring
                         dao.setArmOut(p.id, false)
-                        dao.setArmIn(p.id, true)
                         status.recordCross(p.name, "יציאה", ring(p, leave = true))
                     }
                 }
             }
         }
     }
+
+    private val armed = ArmedAt(ctx)
 
     // ------------------------------------------------------------------ arrived before the hours
 
@@ -390,6 +443,15 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         const val LEAVE_MARGIN_M = 150f
         const val MIN_RADIUS_M = 80f
         const val MAX_FENCES = 99
+        /** Clear of the radius by this much, beyond the fix's accuracy, to count as away. */
+        const val AWAY_M = 150f
+        /** A precise fix this far past the radius still counts as here (the parking, the yard). */
+        const val HERE_SLACK_M = 50f
+        /** Back inside sooner than this after being armed = a location jump. */
+        const val MIN_AWAY_MS = 3 * 60_000L
+        const val LOITER_MS = 3 * 60_000
+        /** Bumped when the fence specs change, so the new ones get registered right away. */
+        const val FENCES_V = 2
     }
 }
 
@@ -397,6 +459,14 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
 private class LatePlaces(ctx: Context) {
     private val prefs: SharedPreferences = ctx.getSharedPreferences("places_late", Context.MODE_PRIVATE)
     fun all(): Map<String, Long> = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+    fun put(id: String, at: Long) = prefs.edit().putLong(id, at).apply()
+    fun drop(id: String) = prefs.edit().remove(id).apply()
+}
+
+/** When each place's arrival got armed (epoch ms of the fix that showed us away). */
+private class ArmedAt(ctx: Context) {
+    private val prefs: SharedPreferences = ctx.getSharedPreferences("places_armed", Context.MODE_PRIVATE)
+    fun at(id: String) = prefs.getLong(id, 0L)
     fun put(id: String, at: Long) = prefs.edit().putLong(id, at).apply()
     fun drop(id: String) = prefs.edit().remove(id).apply()
 }
