@@ -692,7 +692,7 @@ fun TileScreen(a: Actions) {
         items(cats, key = { "c:" + it.id }) { c ->
             PickRow(c.name, null, view.tile == "cat:" + c.id, accent, onAccent) { pick("cat:" + c.id) }
         }
-        if (notes.isNotEmpty()) item { Section("פתק אחד") }
+        if (notes.isNotEmpty()) item { Section("פתק אחד — לסמן מה-Tile") }
         items(notes, key = { "n:" + it.id }) { n ->
             val (done, total) = n.progress
             PickRow(

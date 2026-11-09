@@ -19,15 +19,22 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.ohav.noted.wear.ui.whenText
 
 /**
- * The tile, as the wearer chose in settings ([WView.tile]) — for looking, not for writing: all the
- * notes (pinned first), the newest, one category, one note (its lines), or the coming reminders,
- * as paper strips with their checklist progress. Tiles can't scroll, so the list pages: "עוד N ↓"
- * under it turns to the next ones, the heading (with ↑) back. A strip opens the note in the app;
- * the tile only reads the stored state, so it draws at once.
+ * The tile, as the wearer chose in settings ([WView.tile]): all the notes (pinned first), the
+ * newest, one category, one note (its lines), or the coming reminders, as paper strips with their
+ * checklist progress. Checklist rows tick right here: in the lists, the open rows of the first note
+ * that has any sit under its strip; in one-note mode every row toggles (the tile reloads, the
+ * change goes to the phone). Tiles can't scroll, so the list pages: "עוד N ↓" under it turns to
+ * the next ones, the heading (with ↑) back. A strip opens the note in the app; the tile only reads
+ * the stored state, so it draws at once.
  */
 class NotedTile : TileService() {
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> =
         CallbackToFutureAdapter.getFuture { c ->
+            // a row ticked on the tile: "t:<note>|<line>" ticks it, "u:…" unticks (here at once, sent to the phone)
+            val id = requestParams.currentState.lastClickableId
+            if (id.startsWith("t:") || id.startsWith("u:")) {
+                id.substring(2).split('|', limit = 2).takeIf { it.size == 2 }?.let { (n, l) -> store.toggle(n, l, id[0] == 't') }
+            }
             // the pager: "p:<list>|<first item>"
             requestParams.currentState.lastClickableId.takeIf { it.startsWith("p:") }?.removePrefix("p:")?.split('|', limit = 2)
                 ?.takeIf { it.size == 2 }?.let { (k, i) -> page = k to (i.toIntOrNull() ?: 0) }
@@ -66,7 +73,10 @@ class NotedTile : TileService() {
                 val lines = if (readable) one.lines.filter { it.text.isNotBlank() && (it.isCheck || it.kind in TEXTY) } else emptyList()
                 head(s.cat(one.cat)?.name ?: "פתק", null, col)
                 col.addContent(strip(one, width))
-                paged(col, null, v.tile, lines, if (wide) 4 else 3, if (readable) null else "") { l, _ -> line(one, l, width) }
+                val tickable = readable && !one.readOnly
+                paged(col, null, v.tile, lines, if (wide) 4 else 3, if (readable) null else "") { l, _ ->
+                    if (l.isCheck && tickable) checkRow(one, l, width) else line(one, l, width)
+                }
             }
             else -> {
                 val (title, list) = when {
@@ -74,7 +84,13 @@ class NotedTile : TileService() {
                     v.tile == WView.TILE_RECENT -> "אחרונים" to v.notes(s).sortedByDescending { it.at }
                     else -> "פתקים" to v.notes(s).sortedWith(compareByDescending<Note> { it.pinned }.thenByDescending { it.at })
                 }
-                paged(col, title, v.tile, list, per, "אין פתקים עדיין") { n, _ -> strip(n, width) }
+                // the first note with something left to tick: its open rows right under its strip
+                val focus = list.firstOrNull { n -> !n.locked && !n.blurBody && !n.readOnly && n.checks.any { !it.done && it.text.isNotBlank() } }
+                val items = list.flatMap { n ->
+                    if (n.id == focus?.id) listOf<Pair<Note, Line?>>(n to null) + n.checks.filter { !it.done && it.text.isNotBlank() }.map { n to it }
+                    else listOf(n to null)
+                }
+                paged(col, title, v.tile, items, per, "אין פתקים עדיין") { (n, l), _ -> if (l == null) strip(n, width) else checkRow(n, l, width) }
             }
         }
         val root = LayoutElementBuilders.Box.Builder()
@@ -202,6 +218,48 @@ class NotedTile : TileService() {
                     .build(),
             )
             .addContent(row.build())
+            .build()
+    }
+
+    /** A checklist row to tick (or untick) right on the tile: its box in the note's colour, filled when ticked. */
+    private fun checkRow(n: Note, l: Line, width: Float): LayoutElement {
+        val ink = Palette.note(n.color)
+        val box = LayoutElementBuilders.Box.Builder()
+            .setWidth(dp(16f)).setHeight(dp(16f))
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBorder(ModifiersBuilders.Border.Builder().setWidth(dp(2f)).setColor(argb(ink)).build())
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder().setColor(argb(if (l.done) ink else 0))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(5f)).build()).build(),
+                    )
+                    .build(),
+            )
+            .build()
+        return LayoutElementBuilders.Box.Builder()
+            .setWidth(dp(width * .72f)).setHeight(dp(30f))
+            .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+            .setModifiers(
+                ModifiersBuilders.Modifiers.Builder()
+                    .setBackground(
+                        ModifiersBuilders.Background.Builder().setColor(argb(Palette.SURFACE))
+                            .setCorner(ModifiersBuilders.Corner.Builder().setRadius(dp(12f)).build()).build(),
+                    )
+                    .setPadding(ModifiersBuilders.Padding.Builder().setStart(dp(10f)).setEnd(dp(10f)).setRtlAware(true).build())
+                    .setClickable(
+                        ModifiersBuilders.Clickable.Builder().setId((if (l.done) "u:" else "t:") + "${n.id}|${l.id}")
+                            .setOnClick(ActionBuilders.LoadAction.Builder().build()).build(),
+                    )
+                    .build(),
+            )
+            .addContent(
+                LayoutElementBuilders.Row.Builder()
+                    .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
+                    .addContent(box)
+                    .addContent(LayoutElementBuilders.Spacer.Builder().setWidth(dp(8f)).build())
+                    .addContent(text(l.text.trim(), 13f, if (l.done) Palette.INK2 else Palette.INK))
+                    .build(),
+            )
             .build()
     }
 
