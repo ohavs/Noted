@@ -553,27 +553,48 @@ private fun Modifier.pullUp(pull: CardPull?, onOpen: () -> Unit, onHold: (Boolea
 }
 
 /**
- * The small "×" that slides in at the end of a ticked line: one tap removes the line (undo in the toast).
- * Hidden while the line is open, so it never sits in the way of writing.
+ * The slot at the end of a checklist line: while the line is open it offers a quiet copy (the line's text
+ * to the clipboard, the icon answers with a tick); once ticked the same slot turns into the "×" — one tap
+ * removes the line (undo in the toast). An empty open line has nothing to copy, so the slot folds away.
  */
 @Composable
-fun DoneDelete(shown: Boolean, modifier: Modifier = Modifier, onDelete: () -> Unit) {
+fun DoneDelete(shown: Boolean, modifier: Modifier = Modifier, copy: String? = null, onDelete: () -> Unit) {
     val c = Noted.colors
     val haptics = Noted.haptics
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val line = copy?.replace("\u200B", "")?.trim().orEmpty()
+    val x by animateFloatAsState(if (shown) 1f else 0f, Motion.glide(), label = "slot")
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1200); copied = false } }
+    val ok by animateFloatAsState(if (copied) 1f else 0f, Motion.glide(), label = "copied")
     AnimatedVisibility(
-        shown, modifier,
+        shown || line.isNotEmpty(), modifier,
         enter = fadeIn(Motion.glide()) + expandHorizontally(Motion.glide(), expandFrom = Alignment.Start) + scaleIn(Motion.glide(), initialScale = .6f),
         exit = fadeOut(Motion.glide()) + shrinkHorizontally(Motion.glide(), shrinkTowards = Alignment.Start) + scaleOut(Motion.glide(), targetScale = .6f),
     ) {
         Box(
             Modifier
                 .size(30.dp)
-                .press(scale = .8f, haptic = false) { haptics.medium(); onDelete() }
-                .semantics { contentDescription = "מחיקת השורה" },
+                .press(scale = .8f, haptic = false) {
+                    if (shown) { haptics.medium(); onDelete() }
+                    else if (line.isNotEmpty()) {
+                        haptics.light()
+                        ctx.getSystemService(android.content.ClipboardManager::class.java)
+                            ?.setPrimaryClip(android.content.ClipData.newPlainText("noted", line))
+                        copied = true
+                    }
+                }
+                .semantics { contentDescription = if (shown) "מחיקת השורה" else "העתקת השורה" },
             contentAlignment = Alignment.Center,
         ) {
+            // copy: bare and faint, it sits on every open line
+            Box(Modifier.size(22.dp).graphicsLayer { alpha = 1f - x; scaleX = 1f - .4f * x; scaleY = scaleX }, contentAlignment = Alignment.Center) {
+                Icon(Ph.Copy, null, Modifier.size(14.dp).graphicsLayer { alpha = .55f * (1f - ok); scaleX = 1f - .3f * ok; scaleY = scaleX }, tint = c.noteInk2)
+                Icon(Ph.Check, null, Modifier.size(14.dp).graphicsLayer { alpha = ok; scaleX = .7f + .3f * ok; scaleY = scaleX }, tint = c.noteInk)
+            }
+            // ×: a soft disc, only on a ticked line
             Box(
-                Modifier.size(22.dp).clip(CircleShape).background(c.noteInk.copy(alpha = .09f)),
+                Modifier.size(22.dp).graphicsLayer { alpha = x; scaleX = .6f + .4f * x; scaleY = scaleX }.clip(CircleShape).background(c.noteInk.copy(alpha = .09f)),
                 contentAlignment = Alignment.Center,
             ) { Icon(Ph.X, null, Modifier.size(12.dp), tint = c.noteInk2) }
         }
@@ -675,8 +696,8 @@ fun CheckRow(text: String, done: Boolean, tick: Color, remind: String? = null, p
                 }
             }
         }
-        // always in the row (zero-wide when hidden) so the row's spacing never jumps as the × slides in
-        if (onDelete != null) Box { DoneDelete(done, onDelete = onDelete) }
+        // always in the row (zero-wide when hidden) so the row's spacing never jumps as copy / × slide in
+        if (onDelete != null) Box { DoneDelete(done, copy = text, onDelete = onDelete) }
     }
 }
 

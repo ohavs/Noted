@@ -1216,8 +1216,8 @@ private fun BlockRow(
                 }
             }
         }
-        // a ticked line offers its own × (long press on the box still works too)
-        if (b.type == BlockType.Check && !state.readOnly) com.ohav.noted.ui.home.DoneDelete(b.done, Modifier.padding(top = 4.dp)) {
+        // an open line offers copy; a ticked one its own × in the same place (long press on the box still works too)
+        if (b.type == BlockType.Check && !state.readOnly) com.ohav.noted.ui.home.DoneDelete(b.done, Modifier.padding(top = 4.dp), copy = b.text) {
             // never hands the caret to a neighbour: the keyboard stays down (it may only have been
             // swiped away while this line kept focus)
             if (focused) { focusManager.clearFocus(force = true); keyboard?.hide() }
