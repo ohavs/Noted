@@ -393,6 +393,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
     }
     DisposableEffect(state) {
         onDispose {
+            if (!state.discarded && !nav.closing) state.prune()
             if (!state.discarded) state.flushSink()
             if (state.version > 0 && !state.discarded) {
                 val (title, blocks) = state.content()
@@ -407,6 +408,8 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
         nav.closing = true
         keyboard?.hide()
         focus.clearFocus(force = true)
+        // rows added and left empty don't outlive the editor
+        state.prune()
         // a new note left empty isn't kept: it shrinks away instead of landing on a card
         val sh = live?.shareInfo
         val discard = nav.fresh && (state.isEmpty || nav.template && !state.changedSinceOpen) && (sh == null || sh.isOwner && (!sh.shared || sh.folder.isNotEmpty()))
@@ -503,6 +506,11 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
             SheetRow(if (inShade) Ph.NotificationFill else Ph.Notification, if (inShade) "הסרה מחלון ההתראות" else "הצמדה לחלון ההתראות") {
                 overlays.sheet.close()
                 com.ohav.noted.ui.home.toggleShade(app, toasts, live ?: n)
+            }
+            SheetRow(Ph.Copy, "העתקת הטקסט") {
+                overlays.sheet.close()
+                val (title, blocks) = state.content()
+                com.ohav.noted.ui.home.copyNote(app, toasts, title, blocks)
             }
             SheetRow(Ph.Export, "ייצוא") {
                 overlays.sheet.close()
@@ -1088,6 +1096,8 @@ private fun BlockRow(
     val t = Noted.type
     val haptics = Noted.haptics
     val focused = state.focused == b.id
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val handle by animateFloatAsState(if (focused) 1f else 0f, Motion.glide(), label = "handle")
     // the field only scrolls itself into view on focus; a line that wraps on its own while typing
     // would slide under the smart bar, so keep the caret's line (plus a little air) on screen
@@ -1208,7 +1218,10 @@ private fun BlockRow(
         }
         // a ticked line offers its own × (long press on the box still works too)
         if (b.type == BlockType.Check && !state.readOnly) com.ohav.noted.ui.home.DoneDelete(b.done, Modifier.padding(top = 4.dp)) {
-            state.delete(b.id, focusNear = focused)
+            // never hands the caret to a neighbour: the keyboard stays down (it may only have been
+            // swiped away while this line kept focus)
+            if (focused) { focusManager.clearFocus(force = true); keyboard?.hide() }
+            state.delete(b.id, focusNear = false)
             toasts.show("השורה נמחקה", Ph.Trash, "ביטול") { state.undo() }
         }
         // someone else wrote or ticked this line: their face beside it

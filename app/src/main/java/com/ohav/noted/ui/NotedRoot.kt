@@ -105,6 +105,9 @@ class Chrome {
     /** Nav replaced by something else (selection bar). */
     var navHidden by mutableStateOf(false)
 
+    /** A card is unfolded on the home stack: nav + FAB step aside so it gets the room. */
+    var cardOpen by mutableStateOf(false)
+
     /** Bumped when the active Home tab is tapped again → scroll to top. */
     var scrollTopTick by mutableIntStateOf(0)
 
@@ -295,7 +298,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         }
         BottomNav(
             tab = tab,
-            away = chrome.navAway || chrome.navHidden,
+            away = chrome.navAway || chrome.navHidden || chrome.cardOpen && tab == Tab.Home,
             badge = if (sharedSeen) null else Tab.Shared,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) { picked ->

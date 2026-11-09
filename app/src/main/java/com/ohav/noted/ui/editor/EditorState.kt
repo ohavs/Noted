@@ -28,6 +28,7 @@ const val SENTINEL = "​"
 
 val TEXT_TYPES = setOf(BlockType.P, BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote, BlockType.Bullet, BlockType.Num, BlockType.Check)
 val LIST_TYPES = setOf(BlockType.Bullet, BlockType.Num, BlockType.Check)
+private val PRUNED = LIST_TYPES + setOf(BlockType.H1, BlockType.H2, BlockType.H3, BlockType.Quote)
 val MEDIA_TYPES = setOf(BlockType.Images, BlockType.Voice, BlockType.Draw, BlockType.Link, BlockType.Place)
 
 @Stable
@@ -472,6 +473,21 @@ class EditorState(val noteId: String, title: String, blocks: List<Block>) {
         record(true)
         blocks.add(i + 1, EdBlock.new(b.type, b.text, b.spans, b.indent, b.extra).also { it.done = b.done })
         changed()
+    }
+
+    /**
+     * Leaving the note: list rows, headings and quotes that were added and left empty go (a plain
+     * empty line stays — it's spacing). Recorded, so undo still brings them back while open.
+     */
+    fun prune(): Boolean {
+        if (readOnly) return false
+        val gone = blocks.filter { it.type in PRUNED && it.text.isBlank() }
+        if (gone.isEmpty()) return false
+        record(true)
+        blocks.removeAll(gone)
+        if (blocks.none { it.type in TEXT_TYPES }) blocks.add(EdBlock.new())
+        changed()
+        return true
     }
 
     /** [focusNear]: move the caret to the neighbour (off for the ×, so the keyboard doesn't pop up). */

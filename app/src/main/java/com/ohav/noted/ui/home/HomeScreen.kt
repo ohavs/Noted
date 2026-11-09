@@ -34,6 +34,9 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -201,6 +204,9 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
     if (expanded != null && visible.none { it.id == expanded }) expanded = null
     // a lone (unlocked) note has nothing to fold behind: show it open, in full
     val shown = expanded ?: visible.singleOrNull()?.id?.takeIf { !privacy.locked(it) }
+    // what an open card leaves free under it: the nav's height, or — when the nav stepped aside
+    // for it — just the system bar and a little air
+    val openRoom = if (expanded != null) 26.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() else 120.dp
 
     /** Stack swipe: the next / previous stop along categories and their subcategories. */
     fun goFlat(i: Int) {
@@ -399,6 +405,10 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             "share" -> settleLift { com.ohav.noted.ui.share.openShareSheet(app, overlays, toasts, scope, n.id) }
             "lock" -> settleLift { com.ohav.noted.ui.lock.openPrivacySheet(app, overlays, lock, toasts, n) }
             "shade" -> settleLift { toggleShade(app, toasts, n) }
+            "copy" -> settleLift {
+                if (privacy.locked(n.id)) { haptics.reject(); toasts.show("הפתק נעול · פתחו אותו כדי להעתיק", Ph.LockFill); return@settleLift }
+                copyNote(app, toasts, n.title, blocksOf[n.id].orEmpty())
+            }
         }
     }
 
@@ -506,7 +516,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
         with(density) {
             val top = stack.tops[i]
             val bottom = top + stack.heights[i]
-            val viewB = stack.value + stack.viewport - 120.dp.toPx()
+            val viewB = stack.value + stack.viewport - openRoom.toPx()
             var target = stack.value
             if (bottom > viewB) target += bottom - viewB
             val room = StackDims.PilePad.toPx() + minOf(StackDims.PEEK_N, i) * StackDims.Peek.toPx()
@@ -514,6 +524,12 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
             if (top < stack.value + room) target = top - room
             if (abs(target - stack.value) > 2f) stack.jumpTo(target)
         }
+    }
+
+    // an unfolded card takes the nav's place (it steps aside while the card is open)
+    androidx.compose.runtime.DisposableEffect(expanded != null) {
+        chrome.cardOpen = expanded != null
+        onDispose { chrome.cardOpen = false }
     }
 
     // nav + FAB step aside while scrolling down, return on the way up
@@ -718,6 +734,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                     notes = visible,
                     expanded = shown,
                     state = stack,
+                    room = openRoom,
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) { detectTapGestures { expanded = null } }
@@ -807,6 +824,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
 
         // new note — squircle FAB above the nav, at the end side (left in RTL)
         val low by animateFloatAsState(if (chrome.navAway) 1f else 0f, Motion.glide(), label = "fabLow")
+        val gone by animateFloatAsState(if (chrome.cardOpen) 1f else 0f, Motion.glide(), label = "fabGone")
         val fabShadow = SoftShadow(c.accent.copy(alpha = .55f).compositeOverBlack(.3f), 30.dp, 14.dp, (-10).dp)
         Box(
             Modifier
@@ -814,8 +832,8 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 .navigationBarsPadding()
                 .padding(end = 30.dp, bottom = 18.dp + 90.dp)
                 .graphicsLayer {
-                    translationY = low * 92.dp.toPx()
-                    alpha = if (searching || selecting) 0f else 1f
+                    translationY = maxOf(low, gone) * 92.dp.toPx() + gone * 60.dp.toPx()
+                    alpha = if (searching || selecting) 0f else 1f - gone
                 }
                 .size(66.dp)
                 .onGloballyPositioned { fabRect = it.boundsInRoot() }
@@ -1191,4 +1209,16 @@ fun toggleShade(app: com.ohav.noted.NotedApp, toasts: com.ohav.noted.design.Toas
     if (!com.ohav.noted.reminders.Notifier.permitted(app)) { toasts.show("צריך לאשר התראות בהגדרות המכשיר", Ph.BellSlash); return }
     val on = com.ohav.noted.reminders.NoteShade.toggle(app, n)
     toasts.show(if (on) "מוצמד לחלון ההתראות" else "הוסר מחלון ההתראות", if (on) Ph.NotificationFill else Ph.Notification)
+}
+
+/** The note's text (title, lines, ☐ / ☑) to the clipboard — the same copy from every menu. */
+fun copyNote(ctx: android.content.Context, toasts: com.ohav.noted.design.ToastState, title: String, blocks: List<com.ohav.noted.data.Block>) {
+    val text = com.ohav.noted.backup.NoteExport.text(
+        com.ohav.noted.backup.NoteExport.Doc(title, blocks, com.ohav.noted.design.NoteColor.Butter, "", 0L),
+    )
+    if (text.isBlank()) { toasts.show("אין טקסט להעתקה", Ph.Info); return }
+    val cm = ctx.getSystemService(android.content.ClipboardManager::class.java) ?: return
+    cm.setPrimaryClip(android.content.ClipData.newPlainText(title.ifBlank { "noted" }, text))
+    // Android 13+ shows its own "copied" card
+    if (android.os.Build.VERSION.SDK_INT < 33) toasts.show("הטקסט הועתק", Ph.Copy)
 }

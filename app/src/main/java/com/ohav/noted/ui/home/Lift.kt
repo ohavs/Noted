@@ -328,6 +328,7 @@ private fun ActionMenu(
             Act("move", Ph.FolderSimple, Ph.FolderSimple, "קטגוריה"),
             Act("remind", Ph.Bell, Ph.Bell, "תזכורת"),
             Act("share", Ph.ShareNetwork, Ph.ShareNetwork, "שיתוף"),
+            Act("copy", Ph.Copy, Ph.Copy, "העתקה"),
             Act("pin", Ph.PushPin, Ph.PushPinFill, if (n.pinned) "שחרור" else "נעיצה", n.pinned),
             Act("fav", Ph.Star, Ph.StarFill, "מועדף", n.favorite),
             Act("shade", Ph.Notification, Ph.NotificationFill, "בהתראות", com.ohav.noted.reminders.Shade.note(n.id) in shadeHeld),

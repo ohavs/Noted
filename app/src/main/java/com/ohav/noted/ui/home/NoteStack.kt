@@ -247,6 +247,7 @@ fun NoteStack(
     expanded: String?,
     state: StackState,
     modifier: Modifier = Modifier,
+    room: androidx.compose.ui.unit.Dp = 120.dp,
     card: @Composable (NoteEntity, Int, Boolean) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -266,7 +267,7 @@ fun NoteStack(
     val pn = StackDims.PEEK_N
 
     val ei = notes.indexOfFirst { it.id == expanded }
-    val navRoom = with(density) { 120.dp.toPx() }
+    val navRoom = with(density) { room.toPx() }
     val cap = if (state.viewport > 0 && ei >= 0) max(hc, state.viewport - pad - min(pn, ei) * peek - navRoom) else Float.POSITIVE_INFINITY
     val full = if (ei >= 0) max(hc, (state.fullHeights[notes[ei].id] ?: 0).toFloat()) else 0f
     val clipped = full > cap + 1f

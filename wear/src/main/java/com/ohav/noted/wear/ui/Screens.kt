@@ -638,9 +638,9 @@ private fun SettingRow(
 private fun tileLabel(t: String, s: WState): String = when {
     t == WView.TILE_RECENT -> "אחרונים"
     t == WView.TILE_REMS -> "תזכורות קרובות"
-    t.startsWith("cat:") -> s.cat(t.removePrefix("cat:"))?.name ?: "נעוצים"
-    t.startsWith("note:") -> s.note(t.removePrefix("note:"))?.let { if (it.locked || it.blurTitle) "פתק נעול" else it.title.ifBlank { "פתק בלי כותרת" } } ?: "נעוצים"
-    else -> "נעוצים"
+    t.startsWith("cat:") -> s.cat(t.removePrefix("cat:"))?.name ?: "כל הפתקים"
+    t.startsWith("note:") -> s.note(t.removePrefix("note:"))?.let { if (it.locked || it.blurTitle) "פתק נעול" else it.title.ifBlank { "פתק בלי כותרת" } } ?: "כל הפתקים"
+    else -> "כל הפתקים"
 }
 
 /** Which categories reach the watch: none ticked = all of them. */
@@ -684,7 +684,7 @@ fun TileScreen(a: Actions) {
     val notes = view.notes(st).sortedWith(compareByDescending<Note> { it.pinned }.thenByDescending { it.at }).take(30)
     ListScreen {
         item { BasicText("ב-Tile", style = display(26.sp)) }
-        item { PickRow("נעוצים", "או האחרונים, כשאין נעוצים", view.tile == WView.TILE_PINNED, accent, onAccent) { pick(WView.TILE_PINNED) } }
+        item { PickRow("כל הפתקים", "הנעוצים ראשונים", view.tile == WView.TILE_PINNED, accent, onAccent) { pick(WView.TILE_PINNED) } }
         item { PickRow("אחרונים", "מה שהשתנה לאחרונה", view.tile == WView.TILE_RECENT, accent, onAccent) { pick(WView.TILE_RECENT) } }
         item { PickRow("תזכורות קרובות", "מה ומתי", view.tile == WView.TILE_REMS, accent, onAccent) { pick(WView.TILE_REMS) } }
         val cats = view.live(st).let { l -> if (l.isEmpty()) st.tops else st.tops.filter { it.id in l } }
@@ -692,7 +692,7 @@ fun TileScreen(a: Actions) {
         items(cats, key = { "c:" + it.id }) { c ->
             PickRow(c.name, null, view.tile == "cat:" + c.id, accent, onAccent) { pick("cat:" + c.id) }
         }
-        if (notes.isNotEmpty()) item { Section("פתק אחד — לסמן מה-Tile") }
+        if (notes.isNotEmpty()) item { Section("פתק אחד") }
         items(notes, key = { "n:" + it.id }) { n ->
             val (done, total) = n.progress
             PickRow(
