@@ -245,7 +245,7 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
                     listOf(com.ohav.noted.data.Block(java.util.UUID.randomUUID().toString(), com.ohav.noted.data.BlockType.Check)) else emptyList()
                 val n = app.notes.create(cat, com.ohav.noted.design.NoteColor.entries[((System.currentTimeMillis() / 1000) % 8).toInt()], blocks = first)
                 freeEditor()
-                chrome.editor.open(n, midRect(), fresh = true, start = mode)
+                chrome.editor.open(n, midRect(), fresh = true, start = mode, askCat = !known)
                 return@collect
             }
             val n = app.notes.get(id)?.takeIf { it.trashedAt == null } ?: run { toasts.show("הפתק כבר לא קיים", Ph.Info); return@collect }
