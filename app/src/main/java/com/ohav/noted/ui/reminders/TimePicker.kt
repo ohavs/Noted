@@ -280,6 +280,7 @@ fun openReminderPicker(
                                 onMain = pickTime,
                                 onOther = { ui.section = if (ui.section == Section.Time) Section.None else Section.Time },
                             )
+                            Unfold(ui.section == Section.Time) { PickerBody(m, onRemove = remove, extra = {}) }
                             Spacer(Modifier.height(8.dp))
                             var asking by remember { mutableStateOf(false) }
                             val p = bestPlace?.place
@@ -316,41 +317,14 @@ fun openReminderPicker(
                                     onOther = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                 )
                             }
-                            // the two toggles stay put under the blocks, whatever unfolds below
+                            Unfold(ui.section == Section.Place) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace) }
+                            // the two toggles stay under the blocks
                             Spacer(Modifier.height(16.dp))
                             StickyRow(ui.sticky) { ui.sticky = it }
                             when (ui.section) {
                                 Section.Time -> DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
                                 Section.Place -> DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
                                 Section.None -> DropRow(ui.drop, available = true, unavailable = "") { ui.drop = it }
-                            }
-                            // whatever unfolds is brought fully into view as it grows (no half-open date)
-                            val reveal = remember { BringIntoViewRequester() }
-                            var grown by remember { mutableIntStateOf(0) }
-                            LaunchedEffect(Unit) {
-                                var last = 0
-                                snapshotFlow { grown }.collectLatest { h ->
-                                    if (h > last) runCatching { reveal.bringIntoView() }
-                                    last = h
-                                }
-                            }
-                            AnimatedContent(
-                                targetState = ui.section,
-                                transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
-                                modifier = Modifier.bringIntoViewRequester(reveal).onSizeChanged { grown = it.height },
-                                label = "details",
-                            ) { section ->
-                                when (section) {
-                                    Section.Time -> Column(Modifier.padding(top = 4.dp, bottom = 10.dp)) {
-                                        DetailsRule("יום ושעה")
-                                        PickerBody(m, onRemove = remove, extra = {})
-                                    }
-                                    Section.Place -> Column(Modifier.padding(top = 4.dp, bottom = 10.dp)) {
-                                        DetailsRule("מקום")
-                                        PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace)
-                                    }
-                                    Section.None -> Spacer(Modifier.fillMaxWidth())
-                                }
                             }
                         }
                     }
@@ -388,14 +362,28 @@ private fun LineRow(line: String) {
     }
 }
 
-/** A heading over the unfolded details, so it's clear which block they belong to. */
+/**
+ * A block's details, unfolding right under it; brought fully into view as they grow (no half-open
+ * date), and folded away again by the block's side button.
+ */
 @Composable
-private fun DetailsRule(label: String) {
-    val c = Noted.colors
-    val t = Noted.type
-    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(label, style = t.label, color = c.ink2)
-        Box(Modifier.weight(1f).height(1.dp).background(c.line))
+private fun Unfold(open: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    val reveal = remember { BringIntoViewRequester() }
+    var grown by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        var last = 0
+        snapshotFlow { grown }.collectLatest { h ->
+            if (h > last) runCatching { reveal.bringIntoView() }
+            last = h
+        }
+    }
+    AnimatedVisibility(
+        open,
+        modifier = Modifier.bringIntoViewRequester(reveal).onSizeChanged { grown = it.height },
+        enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
+        exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
+    ) {
+        Column(Modifier.padding(top = 16.dp, bottom = 8.dp), content = content)
     }
 }
 
