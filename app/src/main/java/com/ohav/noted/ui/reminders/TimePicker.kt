@@ -151,11 +151,8 @@ fun openReminderPicker(
         val answers = Answers.best(prefs, allPlaces, use)
         val ui = PickerUi(
             // a set reminder opens on its own details; a fresh one on the ready answers
-            section = when {
-                existing != null -> Section.Time
-                existingPlace != null || startPlace -> Section.Place
-                else -> Section.None
-            },
+            // what's set shows on top with its own remove; the details stay folded
+            section = if (startPlace && existingPlace == null) Section.Place else Section.None,
             // the two toggles keep the last choice
             sticky = existing?.sticky ?: existingPlace?.sticky ?: prefs.getBoolean("sticky", false),
             drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: prefs.getBoolean("drop", false),
@@ -260,6 +257,20 @@ fun openReminderPicker(
                         else -> {
                             val haptics = Noted.haptics
                             if (!line.isNullOrBlank()) LineRow(line)
+                            // the reminders already set, each with a plain way to take it off
+                            if (existing != null && remove != null) {
+                                val rep = When.repeat(existing.repeat)
+                                CurrentRow(Ph.BellRinging, fmtRel(existing.occAt) + if (rep.isEmpty()) "" else " · $rep", remove)
+                            }
+                            if (existingPlace != null && removePlace != null) {
+                                val ep = allPlaces.find { it.id == existingPlace.placeId }
+                                CurrentRow(
+                                    if (ep?.isDevice == true) Ph.Bluetooth else Ph.MapPin,
+                                    PlaceWords.trigger(existingPlace.leave, ep) + " · " + (ep?.name ?: "מקום") + if (existingPlace.always) " · בכל פעם" else "",
+                                    removePlace,
+                                )
+                            }
+                            if (existing != null || existingPlace != null) Spacer(Modifier.height(10.dp))
                             // two blocks: a tap on the main part is the whole answer (sets, closes, the
                             // toast can take it back); the side button unfolds the details below
                             val (bestTime, bestPlace) = answers
@@ -279,7 +290,7 @@ fun openReminderPicker(
                                 "זמן אחר", Ph.CalendarDots, open = ui.section == Section.Time, done = picked && ui.section != Section.Place,
                                 onMain = pickTime,
                                 onOther = { ui.section = if (ui.section == Section.Time) Section.None else Section.Time },
-                            ) }) { PickerBody(m, onRemove = remove, extra = {}) }
+                            ) }) { PickerBody(m, onRemove = null, extra = {}) }
                             Spacer(Modifier.height(8.dp))
                             var asking by remember { mutableStateOf(false) }
                             val p = bestPlace?.place
@@ -315,7 +326,7 @@ fun openReminderPicker(
                                     onMain = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                     onOther = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                 )
-                            } }) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace) }
+                            } }) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = null) }
                             // the two toggles stay under the blocks
                             Spacer(Modifier.height(16.dp))
                             StickyRow(ui.sticky) { ui.sticky = it }
@@ -357,6 +368,42 @@ private fun LineRow(line: String) {
     ) {
         Icon(Ph.CheckSquare, null, Modifier.size(20.dp), tint = c.ink2)
         Text(line, style = t.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A reminder that's already set: what and when, and a remove button right on it. */
+@Composable
+private fun CurrentRow(icon: ImageVector, label: String, onRemove: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(Shapes.md)
+            .border(1.5.dp, c.line, Shapes.md)
+            .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = c.accent)
+        Column(Modifier.weight(1f)) {
+            Text("נקבעה", style = t.caption, color = c.ink3)
+            Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Row(
+            Modifier
+                .press(scale = .94f, haptic = false) { haptics.confirm(); onRemove() }
+                .clip(Shapes.sm)
+                .background(c.dangerSoft)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(Ph.BellSlash, null, Modifier.size(18.dp), tint = c.danger)
+            Text("הסרה", style = t.label.copy(fontWeight = FontWeight.SemiBold), color = c.danger)
+        }
     }
 }
 
