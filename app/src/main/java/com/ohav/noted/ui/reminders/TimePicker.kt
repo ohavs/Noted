@@ -25,6 +25,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -141,7 +148,7 @@ fun openReminderPicker(
         val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces, use = use) { id ->
             if (prefs.contains("dir_$id")) prefs.getBoolean("dir_$id", false) to prefs.getBoolean("alw_$id", false) else null
         }
-        val answers = Answers.list(prefs, allPlaces, use)
+        val answers = Answers.best(prefs, allPlaces, use)
         val ui = PickerUi(
             // a set reminder opens on its own details; a fresh one on the ready answers
             section = when {
@@ -251,65 +258,98 @@ fun openReminderPicker(
                         1 -> PermissionCard(onDone = { sheet.close() })
                         2 -> PlacePermissionCard(saved = true, onDone = { sheet.close() })
                         else -> {
+                            val haptics = Noted.haptics
                             if (!line.isNullOrBlank()) LineRow(line)
-                            // one tap is the whole answer: it sets, closes, and the toast can take it back
-                            AnswerGrid(answers) { a ->
-                                val s = a.time
-                                if (s != null) {
-                                    Answers.used(prefs, a.key)
-                                    m.at = s.at
+                            // two blocks: a tap on the main part is the whole answer (sets, closes, the
+                            // toast can take it back); the side button unfolds the details below
+                            val (bestTime, bestPlace) = answers
+                            var picked by remember { mutableStateOf(false) }
+                            val pickTime = {
+                                if (!picked) {
+                                    picked = true
+                                    haptics.confirm()
+                                    Answers.used(prefs, bestTime.key)
+                                    m.at = bestTime.time!!.at
                                     m.repeat = Repeat.None
                                     setTime()
-                                } else {
-                                    pm.placeId = a.place?.id
-                                    pm.leave = a.leave
-                                    pm.always = a.always
-                                    pm.windowOn = false
-                                    setPlace()
                                 }
                             }
-                            Spacer(Modifier.height(14.dp))
-                            SectionRow(
-                                Ph.CalendarDots, "יום ושעה אחרים",
-                                if (existing != null) When.short(m.at) else "תאריך, שעה וחזרה",
-                                open = ui.section == Section.Time,
-                            ) { ui.section = if (ui.section == Section.Time) Section.None else Section.Time }
-                            AnimatedVisibility(
-                                ui.section == Section.Time,
-                                enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
-                                exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
-                            ) {
-                                Column(Modifier.padding(top = 14.dp, bottom = 10.dp)) {
-                                    PickerBody(
-                                        m,
-                                        onRemove = remove,
-                                        extra = {
-                                            StickyRow(ui.sticky) { ui.sticky = it }
-                                            DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
-                                        },
-                                    )
+                            AnswerBlock(
+                                bestTime.icon, false, bestTime.name, bestTime.sub,
+                                "זמן אחר", Ph.CalendarDots, open = ui.section == Section.Time, done = picked && ui.section != Section.Place,
+                                onMain = pickTime,
+                                onOther = { ui.section = if (ui.section == Section.Time) Section.None else Section.Time },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            var asking by remember { mutableStateOf(false) }
+                            val p = bestPlace?.place
+                            if (p != null) {
+                                val pickPlace = { leave: Boolean ->
+                                    if (!picked) {
+                                        picked = true
+                                        haptics.confirm()
+                                        pm.placeId = p.id
+                                        pm.leave = leave
+                                        pm.always = bestPlace.always
+                                        pm.windowOn = false
+                                        setPlace()
+                                    }
+                                }
+                                AnswerBlock(
+                                    bestPlace.icon, bestPlace.flip, p.name,
+                                    Answers.trigger(p, false) + " או " + Answers.trigger(p, true) + if (bestPlace.always) " · בכל פעם" else "",
+                                    "מקום אחר", Ph.MapPinPlus, open = ui.section == Section.Place, done = false,
+                                    onMain = { haptics.light(); asking = true },
+                                    onOther = { asking = false; ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
+                                    ask = if (asking && ui.section != Section.Place) {
+                                        {
+                                            DirectionHalf(Ph.SignIn, Answers.trigger(p, false), p.name, remembered = !bestPlace.leave, on = picked && !pm.leave) { pickPlace(false) }
+                                            DirectionHalf(Ph.SignOut, Answers.trigger(p, true), p.name, remembered = bestPlace.leave, on = picked && pm.leave) { pickPlace(true) }
+                                        }
+                                    } else null,
+                                )
+                            } else {
+                                AnswerBlock(
+                                    Ph.MapPin, false, "מקום", "כשאגיע או כשאצא",
+                                    "מקום חדש", Ph.MapPinPlus, open = ui.section == Section.Place, done = false,
+                                    onMain = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
+                                    onOther = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
+                                )
+                            }
+                            // the two toggles stay put under the blocks, whatever unfolds below
+                            Spacer(Modifier.height(16.dp))
+                            StickyRow(ui.sticky) { ui.sticky = it }
+                            when (ui.section) {
+                                Section.Time -> DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
+                                Section.Place -> DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
+                                Section.None -> DropRow(ui.drop, available = true, unavailable = "") { ui.drop = it }
+                            }
+                            // whatever unfolds is brought fully into view as it grows (no half-open date)
+                            val reveal = remember { BringIntoViewRequester() }
+                            var grown by remember { mutableIntStateOf(0) }
+                            LaunchedEffect(Unit) {
+                                var last = 0
+                                snapshotFlow { grown }.collectLatest { h ->
+                                    if (h > last) runCatching { reveal.bringIntoView() }
+                                    last = h
                                 }
                             }
-                            SectionRow(
-                                Ph.MapPin, "מקום אחר",
-                                "הגעה או יציאה, מקום שמור או חדש",
-                                open = ui.section == Section.Place,
-                            ) { ui.section = if (ui.section == Section.Place) Section.None else Section.Place }
-                            AnimatedVisibility(
-                                ui.section == Section.Place,
-                                enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
-                                exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
-                            ) {
-                                Column(Modifier.padding(top = 14.dp, bottom = 10.dp)) {
-                                    PlacePickBody(
-                                        app, pm, null,
-                                        onSet = setPlace,
-                                        onRemove = removePlace,
-                                        extra = {
-                                            StickyRow(ui.sticky) { ui.sticky = it }
-                                            DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
-                                        },
-                                    )
+                            AnimatedContent(
+                                targetState = ui.section,
+                                transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
+                                modifier = Modifier.bringIntoViewRequester(reveal).onSizeChanged { grown = it.height },
+                                label = "details",
+                            ) { section ->
+                                when (section) {
+                                    Section.Time -> Column(Modifier.padding(top = 4.dp, bottom = 10.dp)) {
+                                        DetailsRule("יום ושעה")
+                                        PickerBody(m, onRemove = remove, extra = {})
+                                    }
+                                    Section.Place -> Column(Modifier.padding(top = 4.dp, bottom = 10.dp)) {
+                                        DetailsRule("מקום")
+                                        PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace)
+                                    }
+                                    Section.None -> Spacer(Modifier.fillMaxWidth())
                                 }
                             }
                         }
@@ -348,52 +388,100 @@ private fun LineRow(line: String) {
     }
 }
 
-/** Ready answers, two to a row: times and places mixed, the most used first. */
+/** A heading over the unfolded details, so it's clear which block they belong to. */
 @Composable
-private fun AnswerGrid(list: List<Answer>, onPick: (Answer) -> Unit) {
+private fun DetailsRule(label: String) {
+    val c = Noted.colors
+    val t = Noted.type
+    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, style = t.label, color = c.ink2)
+        Box(Modifier.weight(1f).height(1.dp).background(c.line))
+    }
+}
+
+private val BLOCK_H = 76.dp
+
+/**
+ * One long block: the main part answers in a tap; the side button unfolds the details. [ask], when
+ * set, takes the main part's place (a place asks: arriving or leaving?).
+ */
+@Composable
+private fun AnswerBlock(
+    icon: ImageVector, flip: Boolean, name: String, sub: String,
+    other: String, otherIcon: ImageVector, open: Boolean, done: Boolean,
+    onMain: () -> Unit, onOther: () -> Unit,
+    ask: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val c = Noted.colors
+    val t = Noted.type
     val haptics = Noted.haptics
-    var picked by remember { mutableStateOf<String?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        list.chunked(2).forEach { pair ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { a ->
-                    AnswerTile(a, on = picked == a.key, Modifier.weight(1f)) {
-                        if (picked != null) return@AnswerTile
-                        picked = a.key
-                        haptics.confirm()
-                        onPick(a)
+    val bg by animateColorAsState(if (done) c.inverse else c.bg, Motion.glide(), label = "blockBg")
+    val fg by animateColorAsState(if (done) c.inverseInk else c.ink, Motion.glide(), label = "blockFg")
+    val fg2 by animateColorAsState(if (done) c.inverseInk2 else c.ink2, Motion.glide(), label = "blockFg2")
+    val sideBg by animateColorAsState(if (open) c.inverse else c.bg, Motion.glide(), label = "sideBg")
+    val sideFg by animateColorAsState(if (open) c.inverseInk else c.ink2, Motion.glide(), label = "sideFg")
+    Row(Modifier.fillMaxWidth().height(BLOCK_H), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        AnimatedContent(
+            targetState = ask,
+            transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) },
+            contentKey = { it != null },
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            label = "blockAsk",
+        ) { a ->
+            if (a != null) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { a() }
+            } else {
+                Row(
+                    Modifier.fillMaxSize().press(scale = .97f, haptic = false, onClick = onMain).clip(Shapes.md).background(bg).padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(icon, null, Modifier.size(26.dp).graphicsLayer { if (flip) scaleX = -1f }, tint = fg)
+                    Column(Modifier.weight(1f)) {
+                        Text(name, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(sub, style = t.label, color = fg2, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
+        }
+        Column(
+            Modifier
+                .width(84.dp)
+                .fillMaxHeight()
+                .press(scale = .95f, haptic = false) { haptics.light(); onOther() }
+                .clip(Shapes.md)
+                .background(sideBg),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(otherIcon, null, Modifier.size(22.dp), tint = sideFg)
+            Spacer(Modifier.height(4.dp))
+            Text(other, style = t.caption, color = sideFg, maxLines = 1)
         }
     }
 }
 
-/** "יום ושעה אחרים" / "מקום אחר" — unfolds its details in place. */
+/** Arriving / leaving: half of a place block once it's tapped. The usual one carries a dot. */
 @Composable
-private fun SectionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, sub: String, open: Boolean, onClick: () -> Unit) {
+private fun RowScope.DirectionHalf(icon: ImageVector, label: String, place: String, remembered: Boolean, on: Boolean, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
-    val haptics = Noted.haptics
-    val caret by animateFloatAsState(if (open) 180f else 0f, Motion.glide(), label = "sectionCaret")
+    val bg by animateColorAsState(if (on) c.inverse else c.bg, Motion.glide(), label = "dirBg")
+    val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "dirFg")
+    val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "dirFg2")
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp)
-            .press(scale = .98f, haptic = false) { haptics.light(); onClick() }
-            .clip(Shapes.md)
-            .border(1.5.dp, c.line, Shapes.md)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.weight(1f).fillMaxHeight().press(scale = .95f, haptic = false, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(icon, null, Modifier.size(22.dp), tint = if (open) c.ink else c.ink2)
+        Icon(icon, null, Modifier.size(22.dp), tint = fg)
         Column(Modifier.weight(1f)) {
-            Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink)
-            Text(sub, style = t.label, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = fg, maxLines = 1)
+                if (remembered) Box(Modifier.size(6.dp).clip(CircleShape).background(c.accent))
+            }
+            Text(place, style = t.label, color = fg2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Icon(Ph.CaretDown, null, Modifier.size(18.dp).graphicsLayer { rotationZ = caret }, tint = c.ink2)
     }
 }
 
@@ -508,26 +596,6 @@ private fun Modifier.bleed(x: Dp) = layout { measurable, constraints ->
     val px = x.roundToPx()
     val p = measurable.measure(constraints.copy(minWidth = constraints.maxWidth + 2 * px, maxWidth = constraints.maxWidth + 2 * px))
     layout(constraints.maxWidth, p.height) { p.place(-px, 0) }
-}
-
-@Composable
-private fun AnswerTile(a: Answer, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val c = Noted.colors
-    val t = Noted.type
-    val bg by animateColorAsState(if (on) c.inverse else c.bg, Motion.glide(), label = "ansBg")
-    val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "ansFg")
-    val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "ansFg2")
-    Row(
-        modifier.press(scale = .95f, haptic = false, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(a.icon, null, Modifier.size(24.dp).graphicsLayer { if (a.flip) scaleX = -1f }, tint = fg)
-        Column {
-            Text(a.name, style = t.label, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(a.sub, style = t.caption, color = fg2, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
 }
 
 @Composable

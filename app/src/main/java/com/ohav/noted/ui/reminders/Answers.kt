@@ -24,10 +24,15 @@ internal class Answer(
  * answer, `dir_<place>` / `alw_<place>` keep a place's last direction and "every time".
  */
 internal object Answers {
-    private const val MAX = 6
     private val TIME_BASE = mapOf("eve" to 50, "morn" to 40, "hour" to 30, "week" to 10)
 
-    fun list(prefs: SharedPreferences, places: List<PlaceEntity>, use: Map<String, Int>): List<Answer> {
+    /** The sheet's two blocks: the most likely time, and the most likely place (if any is saved). */
+    fun best(prefs: SharedPreferences, places: List<PlaceEntity>, use: Map<String, Int>): Pair<Answer, Answer?> {
+        val all = list(prefs, places, use)
+        return all.first { it.time != null } to all.firstOrNull { it.place != null }
+    }
+
+    private fun list(prefs: SharedPreferences, places: List<PlaceEntity>, use: Map<String, Int>): List<Answer> {
         val scored = ArrayList<Pair<Answer, Int>>()
         When.shortcuts().forEach { s ->
             val key = "t:${s.key}"
@@ -54,7 +59,7 @@ internal object Answers {
                 ) to score(prefs, key, base)
             }
         }
-        return scored.sortedByDescending { it.second }.take(MAX).map { it.first }
+        return scored.sortedByDescending { it.second }.map { it.first }
     }
 
     fun used(prefs: SharedPreferences, key: String) {
@@ -71,6 +76,8 @@ internal object Answers {
 
     /** Use outweighs any default order; ties keep the default. */
     private fun score(prefs: SharedPreferences, key: String, base: Int) = prefs.getInt("ans_$key", 0) * 100 + base
+
+    fun trigger(p: PlaceEntity, leave: Boolean) = trigger(p, PlaceKind.of(p.kind), leave)
 
     private fun trigger(p: PlaceEntity, kind: PlaceKind, leave: Boolean) = when {
         kind == PlaceKind.Car -> if (leave) "כשאצא" else "כשאכנס"
