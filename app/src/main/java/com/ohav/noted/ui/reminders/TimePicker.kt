@@ -129,18 +129,52 @@ fun openReminderPicker(
         val existing = app.reminders.get(noteId, blockId)
         val existingPlace = app.places.reminder(noteId, blockId)
         val hasPlaces = app.places.all().isNotEmpty()
+        val use = app.places.usage()
+        val prefs = app.getSharedPreferences("reminder_ui", android.content.Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         val start = existing?.takeIf { it.occAt > now }?.let {
             Instant.ofEpochMilli(it.occAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
         } ?: When.default()
         val m = PickerModel(start, existing?.repeat ?: Repeat.None, existing)
-        val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces)
+        val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces, use = use)
         val ui = PickerUi(
-            place = startPlace || existingPlace != null && existing == null,
+            // a fresh reminder opens on the kind set last time
+            place = startPlace || existingPlace != null && existing == null ||
+                existing == null && existingPlace == null && hasPlaces && prefs.getBoolean("place", false),
             sticky = existing?.sticky ?: existingPlace?.sticky ?: false,
             drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: false,
         )
         val sheet = overlays.sheet
+        val setPlace: () -> Unit = {
+            val pid = pm.placeId
+            if (pid != null) app.scope.launch(Dispatchers.Main) {
+                app.places.set(
+                    noteId, blockId, pid, pm.leave, pm.always,
+                    if (pm.windowOn) pm.days else emptySet(),
+                    if (pm.windowOn) pm.from else null, if (pm.windowOn) pm.to else null,
+                    sticky = ui.sticky, dropAfter = ui.drop && !pm.always,
+                )
+                pm.saved = true
+                prefs.edit().putBoolean("place", true).apply()
+                val p = app.places.place(pid)
+                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave, p)} · ${p?.name.orEmpty()}", if (p?.isDevice == true) Ph.Bluetooth else Ph.MapPin)
+                // a device needs no location: the picker already asked for "nearby devices"
+                if (p?.isDevice == true || placesReady(app)) sheet.close()
+                else { sheet.setTitle(""); ui.askingPlace = true }
+            }
+        }
+        val setTime: () -> Unit = {
+            app.scope.launch(Dispatchers.Main) {
+                val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky, dropAfter = ui.drop && !m.repeat.repeats)
+                m.saved = true
+                prefs.edit().putBoolean("place", false).apply()
+                toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging, action = "ביטול") {
+                    app.scope.launch { if (existing != null) app.reminders.restore(existing) else app.reminders.remove(noteId, blockId) }
+                }
+                if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
+                else { sheet.setTitle(""); m.asking = true }
+            }
+        }
         val remove: (() -> Unit)? = existing?.let { old ->
             fun() {
                 app.scope.launch(Dispatchers.Main) {
@@ -174,6 +208,26 @@ fun openReminderPicker(
                     confirm = "צא בלי לשמור", cancel = "המשך לבחור",
                 )
             },
+            footer = {
+                val bar = when {
+                    m.asking || ui.askingPlace -> 0
+                    !ui.place -> 1
+                    pm.step == PlacePickModel.Step.Choose -> 2
+                    else -> 0
+                }
+                AnimatedContent(
+                    targetState = bar,
+                    transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
+                    label = "setBar",
+                ) { b ->
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                        when (b) {
+                            1 -> TimeSetBar(m, setTime)
+                            2 -> PlaceSetBar(app, pm, setPlace)
+                        }
+                    }
+                }
+            },
         ) {
             AnimatedContent(
                 targetState = if (m.asking) 1 else if (ui.askingPlace) 2 else 0,
@@ -195,23 +249,7 @@ fun openReminderPicker(
                                 Column {
                                     if (place) PlacePickBody(
                                         app, pm, line,
-                                        onSet = {
-                                            val pid = pm.placeId
-                                            if (pid != null) app.scope.launch(Dispatchers.Main) {
-                                                app.places.set(
-                                                    noteId, blockId, pid, pm.leave, pm.always,
-                                                    if (pm.windowOn) pm.days else emptySet(),
-                                                    if (pm.windowOn) pm.from else null, if (pm.windowOn) pm.to else null,
-                                                    sticky = ui.sticky, dropAfter = ui.drop && !pm.always,
-                                                )
-                                                pm.saved = true
-                                                val p = app.places.place(pid)
-                                                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave, p)} · ${p?.name.orEmpty()}", if (p?.isDevice == true) Ph.Bluetooth else Ph.MapPin)
-                                                // a device needs no location: the picker already asked for "nearby devices"
-                                                if (p?.isDevice == true || placesReady(app)) sheet.close()
-                                                else { sheet.setTitle(""); ui.askingPlace = true }
-                                            }
-                                        },
+                                        onSet = setPlace,
                                         onRemove = removePlace,
                                         extra = {
                                             StickyRow(ui.sticky) { ui.sticky = it }
@@ -219,15 +257,7 @@ fun openReminderPicker(
                                         },
                                     ) else PickerBody(
                                         m, line,
-                                        onSet = {
-                                            app.scope.launch(Dispatchers.Main) {
-                                                val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky, dropAfter = ui.drop && !m.repeat.repeats)
-                                                m.saved = true
-                                                toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging)
-                                                if (Notifier.permitted(app) && Alarm.canExact(app)) sheet.close()
-                                                else { sheet.setTitle(""); m.asking = true }
-                                            }
-                                        },
+                                        onSet = setTime,
                                         onRemove = remove,
                                         extra = {
                                             StickyRow(ui.sticky) { ui.sticky = it }
@@ -297,7 +327,6 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
-    val scope = rememberCoroutineScope()
     val today = LocalDate.now()
     val strip = rememberLazyListState(
         initialFirstVisibleItemIndex = (ChronoUnit.DAYS.between(today, m.at.toLocalDate()).toInt() - 2).coerceIn(0, DAYS_AHEAD - 1),
@@ -320,10 +349,12 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
         shortcuts.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 pair.forEach { s ->
+                    // a shortcut is the whole answer: one tap sets it (the toast can take it back)
                     ShortcutTile(s, on = m.at == s.at, Modifier.weight(1f)) {
                         m.at = s.at
                         m.calMonth = YearMonth.from(s.at)
-                        haptics.light()
+                        haptics.confirm()
+                        onSet()
                     }
                 }
             }
@@ -391,10 +422,22 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
     RepeatPicker(m)
     Spacer(Modifier.height(24.dp))
 
-    // ---- summary + set
+    extra()
+    if (onRemove != null) {
+        Spacer(Modifier.height(6.dp))
+        Btn("הסרת התזכורת", Modifier.fillMaxWidth(), icon = Ph.BellSlash, kind = BtnKind.Quiet, onClick = onRemove)
+    }
+}
+
+/** The summary and the set button, pinned under the sheet's scroll so they're always a tap away. */
+@Composable
+private fun TimeSetBar(m: PickerModel, onSet: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val scope = rememberCoroutineScope()
     val now = LocalDateTime.now()
     val past = m.at <= now
-    extra()
     val sub = When.until(m.at, now) + When.repeat(m.repeat).let { if (it.isEmpty()) "" else " · $it" }
     Text(sub, style = t.label, color = if (past) c.danger else c.ink2, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp), textAlign = TextAlign.Center)
     val shake = remember { Animatable(0f) }
@@ -414,10 +457,6 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
             onSet()
         }
     }
-    if (onRemove != null) {
-        Spacer(Modifier.height(6.dp))
-        Btn("הסרת התזכורת", Modifier.fillMaxWidth(), icon = Ph.BellSlash, kind = BtnKind.Quiet, onClick = onRemove)
-    }
 }
 
 private fun Modifier.bleed(x: Dp) = layout { measurable, constraints ->
@@ -434,7 +473,7 @@ private fun ShortcutTile(s: When.Shortcut, on: Boolean, modifier: Modifier, onCl
     val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "shortFg")
     val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "shortFg2")
     Row(
-        modifier.press(scale = .95f, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp, vertical = 13.dp),
+        modifier.press(scale = .95f, haptic = false, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

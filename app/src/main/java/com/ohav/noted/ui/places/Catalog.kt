@@ -71,6 +71,21 @@ enum class Shelf(val key: String, val label: String, val kinds: List<PlaceKind>)
         fun sort(places: List<PlaceEntity>): List<Pair<Shelf, List<PlaceEntity>>> =
             places.groupBy { of(PlaceKind.of(it.kind)) }.toSortedMap(compareBy { it.ordinal })
                 .map { (s, ps) -> s to ps.sortedBy { s.kinds.indexOf(PlaceKind.of(it.kind)) } }
+
+        /** Before any use: the fixed places, then the car, then the rest in catalog order. */
+        private val PICK = listOf(Fixed, Devices, Errands, Out, Cities, Other)
+
+        /**
+         * For picking a place: the most used shelf first and the most used place first on it;
+         * untouched ones keep [PICK] order. [extra] = an empty shelf to slot in too (the car's).
+         */
+        fun byUse(places: List<PlaceEntity>, use: Map<String, Int>, extra: Shelf? = null): List<Pair<Shelf, List<PlaceEntity>>> {
+            val score = { p: PlaceEntity -> use[p.id] ?: 0 }
+            val groups = places.groupBy { of(PlaceKind.of(it.kind)) }
+                .map { (s, ps) -> s to ps.sortedWith(compareByDescending(score).thenBy { s.kinds.indexOf(PlaceKind.of(it.kind)) }) }
+                .let { g -> if (extra != null && g.none { it.first == extra }) g + (extra to emptyList()) else g }
+            return groups.sortedWith(compareByDescending<Pair<Shelf, List<PlaceEntity>>> { (_, ps) -> ps.sumOf(score) }.thenBy { PICK.indexOf(it.first) })
+        }
     }
 }
 

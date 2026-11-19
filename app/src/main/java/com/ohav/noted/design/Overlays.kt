@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -81,15 +82,23 @@ val LocalOverlays = staticCompositionLocalOf<Overlays> { error("Overlays not pro
 class SheetState {
     internal var title by mutableStateOf("")
     internal var content by mutableStateOf<(@Composable ColumnScope.() -> Unit)?>(null)
+    /** Pinned under the scroll — the sheet's main action stays a tap away however long it gets. */
+    internal var footer by mutableStateOf<(@Composable ColumnScope.() -> Unit)?>(null)
     internal var open by mutableStateOf(false)
     internal var gen by mutableIntStateOf(0)
 
     /** Asked before a dismiss the user didn't confirm (scrim, back, drag); false keeps the sheet. */
     internal var guard: (suspend () -> Boolean)? = null
 
-    fun show(title: String, guard: (suspend () -> Boolean)? = null, content: @Composable ColumnScope.() -> Unit) {
+    fun show(
+        title: String,
+        guard: (suspend () -> Boolean)? = null,
+        footer: (@Composable ColumnScope.() -> Unit)? = null,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
         this.title = title
         this.content = content
+        this.footer = footer
         this.guard = guard
         open = true
         gen++
@@ -128,7 +137,7 @@ fun SheetHost(state: SheetState) {
     LaunchedEffect(state.open, state.gen) {
         if (state.open) haptics.light()
         p.animateTo(if (state.open) 1f else 0f, Motion.glide())
-        if (!state.open) state.content = null
+        if (!state.open) { state.content = null; state.footer = null }
     }
     BackHandler(enabled = state.open) { scope.launch { state.dismiss() } }
     val content = state.content ?: return
@@ -175,7 +184,15 @@ fun SheetHost(state: SheetState) {
                 }
                 Text(state.title, style = t.title, color = c.ink, modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp))
             }
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) { content() }
+            val footer = state.footer
+            val scroll = rememberScrollState()
+            Column(Modifier.weight(1f, fill = false).verticalScroll(scroll).padding(horizontal = 20.dp)) { content() }
+            if (footer != null) {
+                // a hairline only while there's more to scroll above it
+                val edge by animateFloatAsState(if (scroll.canScrollForward) 1f else 0f, Motion.glide(), label = "sheetEdge")
+                Box(Modifier.fillMaxWidth().height(1.dp).graphicsLayer { alpha = edge }.background(c.line))
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp)) { footer() }
+            }
         }
     }
 }

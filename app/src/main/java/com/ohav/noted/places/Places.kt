@@ -58,6 +58,16 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
     val places: Flow<List<PlaceEntity>> = dao.observePlaces()
     val reminders: Flow<List<PlaceReminderEntity>> = dao.observeReminders()
     val status = PlaceStatus(ctx)
+    /** How many reminders each place was ever set for — this phone's own order, so plain prefs. */
+    private val use = ctx.getSharedPreferences("places_use", Context.MODE_PRIVATE)
+
+    /** Place id → how much it's used: reminders ever set here plus the ones waiting now. */
+    suspend fun usage(): Map<String, Int> {
+        val m = HashMap<String, Int>()
+        use.all.forEach { (k, v) -> (v as? Int)?.let { m[k] = it } }
+        dao.allReminders().forEach { m.merge(it.placeId, 1, Int::plus) }
+        return m
+    }
 
     suspend fun all() = dao.places()
     suspend fun place(id: String) = dao.place(id)
@@ -128,6 +138,7 @@ class Places(private val ctx: Context, private val db: NotedDatabase) {
         )
         dao.upsertReminder(r)
         clear(r.id)
+        use.edit().putInt(placeId, use.getInt(placeId, 0) + 1).apply()
         return r
     }
 

@@ -103,7 +103,7 @@ object PlaceWords {
 }
 
 @Stable
-internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinder: Boolean) {
+internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinder: Boolean, val use: Map<String, Int> = emptyMap()) {
     enum class Step { Choose, Find, Form, Device, DeviceForm }
 
     var placeId by mutableStateOf(existing?.placeId)
@@ -205,7 +205,7 @@ internal fun PlacePickBody(app: NotedApp, m: PlacePickModel, line: String?, onSe
                         }
                     }
                 }
-                PlacePickModel.Step.Choose -> ChooseBody(m, list, line, onSet, onRemove, extra)
+                PlacePickModel.Step.Choose -> ChooseBody(m, list, line, onRemove, extra)
             }
         }
     }
@@ -225,11 +225,10 @@ private fun BackRow(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
+private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
-    val scope = rememberCoroutineScope()
     val chosen = list.firstOrNull { it.id == m.placeId }
 
     if (!line.isNullOrBlank()) {
@@ -246,11 +245,9 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     // ---- where
     Text("איפה", style = t.section, color = c.ink2, modifier = Modifier.padding(bottom = 10.dp))
     // grouped by the catalog's shelves: a quiet label and rule over each group, no extra rows;
-    // devices right after "new place" (saved ones too), so the car never hides at the end
-    val shelves = remember(list) {
-        val sorted = com.ohav.noted.ui.places.Shelf.sort(list)
-        sorted.filter { it.first == com.ohav.noted.ui.places.Shelf.Devices } + sorted.filterNot { it.first == com.ohav.noted.ui.places.Shelf.Devices }
-    }
+    // the most used up front — before any use, the fixed places and then the car (an empty
+    // car shelf still offers to add it)
+    val shelves = remember(list) { com.ohav.noted.ui.places.Shelf.byUse(list, m.use, extra = com.ohav.noted.ui.places.Shelf.Devices) }
     val row = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(Unit) {
         // reopening a set reminder: its place is in view, not three groups away
@@ -267,13 +264,9 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
         item(key = "+") {
             PlaceTile(Ph.MapPinPlus, "מקום חדש", on = false) { haptics.light(); m.step = PlacePickModel.Step.Find }
         }
-        if (shelves.none { it.first == com.ohav.noted.ui.places.Shelf.Devices }) item(key = "car+") {
-            ShelfGroup(com.ohav.noted.ui.places.Shelf.Devices.label) {
-                PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
-            }
-        }
         items(shelves, key = { it.first.key }) { (shelf, ps) ->
             ShelfGroup(shelf.label) {
+                if (ps.isEmpty()) PlaceTile(Ph.CarProfile, "הרכב", on = false) { haptics.light(); m.step = PlacePickModel.Step.Device }
                 ps.forEach { p ->
                     PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
                         haptics.tick()
@@ -336,8 +329,22 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
     ) { WindowPicker(m) }
     Spacer(Modifier.height(24.dp))
 
-    // ---- summary + set
     extra()
+    if (onRemove != null) {
+        Spacer(Modifier.height(6.dp))
+        Btn("הסרת התזכורת", Modifier.fillMaxWidth(), icon = Ph.BellSlash, kind = BtnKind.Quiet, onClick = onRemove)
+    }
+}
+
+/** The summary and the set button, pinned under the sheet's scroll so they're always a tap away. */
+@Composable
+internal fun PlaceSetBar(app: NotedApp, m: PlacePickModel, onSet: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val scope = rememberCoroutineScope()
+    val places by app.places.places.collectAsStateWithLifecycle(initialValue = null)
+    val chosen = (places ?: return).firstOrNull { it.id == m.placeId }
     val sub = chosen?.let {
         (if (it.isDevice) PlaceWords.trigger(m.leave, it) + " · " else if (m.leave) "כשתצא · " else "כשתגיע · ") + it.name + " · " + (if (m.always) "בכל פעם" else "פעם אחת") +
             (if (m.windowOn) " · " + PlaceWords.window(m.days, m.from, m.to) else "")
@@ -359,10 +366,6 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
             haptics.confirm()
             onSet()
         }
-    }
-    if (onRemove != null) {
-        Spacer(Modifier.height(6.dp))
-        Btn("הסרת התזכורת", Modifier.fillMaxWidth(), icon = Ph.BellSlash, kind = BtnKind.Quiet, onClick = onRemove)
     }
 }
 
