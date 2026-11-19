@@ -60,6 +60,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -655,6 +656,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                         onRelease = { open, v -> nav.letGo(open, v) },
                         toasts = toasts,
                         catLine = { if (nav.askCat && live?.shareInfo?.readOnly != true) CategoryLine(tree, live?.categoryId ?: n.categoryId, ::moveTo) },
+                        createdAt = n.createdAt,
                     )
                 }
             }
@@ -724,6 +726,7 @@ private fun EditorPage(
     onRelease: (open: Boolean, velocity: Float) -> Unit,
     toasts: ToastState,
     catLine: @Composable () -> Unit = {},
+    createdAt: Long = 0L,
 ) {
     val c = Noted.colors
     val haptics = Noted.haptics
@@ -819,6 +822,7 @@ private fun EditorPage(
                         .verticalScroll(scroll)
                         .padding(start = 22.dp, end = 22.dp, top = 6.dp),
                 ) {
+                    if (createdAt > 0L) CreatedLine(createdAt)
                     TitleField(state)
                     if (state.readOnly) {
                         val owner = state.share.ownerMember
@@ -931,6 +935,44 @@ private fun NoteReminderChip(icon: androidx.compose.ui.graphics.vector.ImageVect
         Icon(icon, null, Modifier.size(17.dp), tint = paper)
         Text(text, style = Noted.type.label, color = paper, maxLines = 1)
     }
+}
+
+/** When the note was written — "נוצר היום · 14:32", quiet above the title. */
+@Composable
+private fun CreatedLine(at: Long) {
+    val c = Noted.colors
+    val day by produceState(java.time.LocalDate.now()) {
+        while (true) {
+            val now = java.time.ZonedDateTime.now()
+            kotlinx.coroutines.delay(java.time.Duration.between(now, now.toLocalDate().plusDays(1).atStartOfDay(now.zone)).toMillis() + 500)
+            value = java.time.LocalDate.now()
+        }
+    }
+    val text = remember(at, day) { "נוצר " + createdLabel(at, day) }
+    Text(
+        text,
+        style = Noted.type.label,
+        color = c.noteInk2.copy(alpha = .7f),
+        maxLines = 1,
+        modifier = Modifier.padding(bottom = 4.dp),
+    )
+}
+
+internal fun createdLabel(at: Long, today: java.time.LocalDate = java.time.LocalDate.now()): String {
+    val he = java.util.Locale.forLanguageTag("he")
+    val t = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault())
+    val d = t.toLocalDate()
+    val time = java.time.format.DateTimeFormatter.ofPattern("HH:mm").format(t)
+    val days = java.time.temporal.ChronoUnit.DAYS.between(d, today)
+    val day = when {
+        days == 0L -> "היום"
+        days == 1L -> "אתמול"
+        days == 2L -> "שלשום"
+        days in 3..6 -> "ביום " + listOf("שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון")[d.dayOfWeek.value - 1]
+        d.year == today.year -> java.time.format.DateTimeFormatter.ofPattern("d 'ב'MMMM", he).format(d)
+        else -> java.time.format.DateTimeFormatter.ofPattern("d 'ב'MMMM yyyy", he).format(d)
+    }
+    return "$day · $time"
 }
 
 @Composable
