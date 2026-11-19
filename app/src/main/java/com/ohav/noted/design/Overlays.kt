@@ -79,6 +79,9 @@ val LocalOverlays = staticCompositionLocalOf<Overlays> { error("Overlays not pro
 // ------------------------------------------------------------------ sheet
 
 @Stable
+/** The sheet's visible scroll height (px), for content that brings itself into view. */
+val LocalSheetViewport = staticCompositionLocalOf<androidx.compose.runtime.IntState> { mutableIntStateOf(0) }
+
 class SheetState {
     internal var title by mutableStateOf("")
     internal var content by mutableStateOf<(@Composable ColumnScope.() -> Unit)?>(null)
@@ -186,7 +189,10 @@ fun SheetHost(state: SheetState) {
             }
             val footer = state.footer
             val scroll = rememberScrollState()
-            Column(Modifier.weight(1f, fill = false).verticalScroll(scroll).padding(horizontal = 20.dp)) { content() }
+            val viewport = remember { mutableIntStateOf(0) }
+            Column(Modifier.weight(1f, fill = false).onSizeChanged { viewport.intValue = it.height }.verticalScroll(scroll).padding(horizontal = 20.dp)) {
+                androidx.compose.runtime.CompositionLocalProvider(LocalSheetViewport provides viewport) { content() }
+            }
             if (footer != null) {
                 // a hairline only while there's more to scroll above it
                 val edge by animateFloatAsState(if (scroll.canScrollForward) 1f else 0f, Motion.glide(), label = "sheetEdge")

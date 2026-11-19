@@ -274,17 +274,16 @@ fun openReminderPicker(
                                     setTime()
                                 }
                             }
-                            AnswerBlock(
+                            Unfold(ui.section == Section.Time, block = { AnswerBlock(
                                 bestTime.icon, false, bestTime.name, bestTime.sub,
                                 "זמן אחר", Ph.CalendarDots, open = ui.section == Section.Time, done = picked && ui.section != Section.Place,
                                 onMain = pickTime,
                                 onOther = { ui.section = if (ui.section == Section.Time) Section.None else Section.Time },
-                            )
-                            Unfold(ui.section == Section.Time) { PickerBody(m, onRemove = remove, extra = {}) }
+                            ) }) { PickerBody(m, onRemove = remove, extra = {}) }
                             Spacer(Modifier.height(8.dp))
                             var asking by remember { mutableStateOf(false) }
                             val p = bestPlace?.place
-                            if (p != null) {
+                            Unfold(ui.section == Section.Place, block = { if (p != null) {
                                 val pickPlace = { leave: Boolean ->
                                     if (!picked) {
                                         picked = true
@@ -304,8 +303,8 @@ fun openReminderPicker(
                                     onOther = { asking = false; ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                     ask = if (asking && ui.section != Section.Place) {
                                         {
-                                            DirectionHalf(Ph.SignIn, Answers.trigger(p, false), p.name, remembered = !bestPlace.leave, on = picked && !pm.leave) { pickPlace(false) }
-                                            DirectionHalf(Ph.SignOut, Answers.trigger(p, true), p.name, remembered = bestPlace.leave, on = picked && pm.leave) { pickPlace(true) }
+                                            DirectionHalf(Ph.SignIn, Answers.trigger(p, false), p.name, arrive = true, remembered = !bestPlace.leave, on = picked && !pm.leave) { pickPlace(false) }
+                                            DirectionHalf(Ph.SignOut, Answers.trigger(p, true), p.name, arrive = false, remembered = bestPlace.leave, on = picked && pm.leave) { pickPlace(true) }
                                         }
                                     } else null,
                                 )
@@ -316,8 +315,7 @@ fun openReminderPicker(
                                     onMain = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                     onOther = { ui.section = if (ui.section == Section.Place) Section.None else Section.Place },
                                 )
-                            }
-                            Unfold(ui.section == Section.Place) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace) }
+                            } }) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = removePlace) }
                             // the two toggles stay under the blocks
                             Spacer(Modifier.height(16.dp))
                             StickyRow(ui.sticky) { ui.sticky = it }
@@ -363,27 +361,35 @@ private fun LineRow(line: String) {
 }
 
 /**
- * A block's details, unfolding right under it; brought fully into view as they grow (no half-open
- * date), and folded away again by the block's side button.
+ * A block and its details, unfolding right under it. As they grow, the block and as much of the
+ * details as fits are brought into view — the block itself never scrolls off the top.
  */
 @Composable
-private fun Unfold(open: Boolean, content: @Composable ColumnScope.() -> Unit) {
+private fun Unfold(open: Boolean, block: @Composable () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val reveal = remember { BringIntoViewRequester() }
-    var grown by remember { mutableIntStateOf(0) }
+    val viewport = com.ohav.noted.design.LocalSheetViewport.current
+    val air = with(LocalDensity.current) { 12.dp.toPx() }
+    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    val isOpen by rememberUpdatedState(open)
     LaunchedEffect(Unit) {
         var last = 0
-        snapshotFlow { grown }.collectLatest { h ->
-            if (h > last) runCatching { reveal.bringIntoView() }
-            last = h
+        snapshotFlow { size }.collectLatest { s ->
+            if (isOpen && s.height > last) {
+                val room = (viewport.intValue - air).takeIf { it > 0 } ?: s.height.toFloat()
+                runCatching { reveal.bringIntoView(androidx.compose.ui.geometry.Rect(0f, -air, s.width.toFloat(), minOf(s.height.toFloat(), room))) }
+            }
+            last = s.height
         }
     }
-    AnimatedVisibility(
-        open,
-        modifier = Modifier.bringIntoViewRequester(reveal).onSizeChanged { grown = it.height },
-        enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
-        exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
-    ) {
-        Column(Modifier.padding(top = 16.dp, bottom = 8.dp), content = content)
+    Column(Modifier.bringIntoViewRequester(reveal).onSizeChanged { size = it }) {
+        block()
+        AnimatedVisibility(
+            open,
+            enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
+            exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
+        ) {
+            Column(Modifier.padding(top = 16.dp, bottom = 8.dp), content = content)
+        }
     }
 }
 
@@ -449,24 +455,37 @@ private fun AnswerBlock(
     }
 }
 
-/** Arriving / leaving: half of a place block once it's tapped. The usual one carries a dot. */
+/**
+ * Arriving / leaving: half of a place block once it's tapped. Arriving is tinted with its arrow
+ * turned in toward the door; leaving stays plain, outlined, its arrow heading away. The usual one
+ * carries a dot.
+ */
 @Composable
-private fun RowScope.DirectionHalf(icon: ImageVector, label: String, place: String, remembered: Boolean, on: Boolean, onClick: () -> Unit) {
+private fun RowScope.DirectionHalf(icon: ImageVector, label: String, place: String, arrive: Boolean, remembered: Boolean, on: Boolean, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
-    val bg by animateColorAsState(if (on) c.inverse else c.bg, Motion.glide(), label = "dirBg")
+    val bg by animateColorAsState(if (on) c.inverse else if (arrive) c.accentSoft else c.surface, Motion.glide(), label = "dirBg")
     val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "dirFg")
+    val tint by animateColorAsState(if (on) c.inverseInk else if (arrive) c.accent else c.ink2, Motion.glide(), label = "dirTint")
     val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "dirFg2")
     Row(
-        Modifier.weight(1f).fillMaxHeight().press(scale = .95f, haptic = false, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp),
+        Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .press(scale = .95f, haptic = false, onClick = onClick)
+            .clip(Shapes.md)
+            .background(bg)
+            .then(if (arrive) Modifier else Modifier.border(1.5.dp, c.line, Shapes.md))
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(icon, null, Modifier.size(22.dp), tint = fg)
+        // SignIn / SignOut both point the same way: arriving's is mirrored, so the two face apart
+        Icon(icon, null, Modifier.size(22.dp).graphicsLayer { if (arrive) scaleX = -1f }, tint = tint)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = fg, maxLines = 1)
-                if (remembered) Box(Modifier.size(6.dp).clip(CircleShape).background(c.accent))
+                if (remembered) Box(Modifier.size(6.dp).clip(CircleShape).background(tint))
             }
             Text(place, style = t.label, color = fg2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
