@@ -103,7 +103,13 @@ object PlaceWords {
 }
 
 @Stable
-internal class PlacePickModel(val existing: PlaceReminderEntity?, startWithFinder: Boolean, val use: Map<String, Int> = emptyMap()) {
+internal class PlacePickModel(
+    val existing: PlaceReminderEntity?,
+    startWithFinder: Boolean,
+    val use: Map<String, Int> = emptyMap(),
+    /** A place's usual (leave, always), so choosing it needs no more taps. */
+    val habit: (String) -> Pair<Boolean, Boolean>? = { null },
+) {
     enum class Step { Choose, Find, Form, Device, DeviceForm }
 
     var placeId by mutableStateOf(existing?.placeId)
@@ -271,6 +277,7 @@ private fun ChooseBody(m: PlacePickModel, list: List<PlaceEntity>, line: String?
                     PlaceTile(null, p.name, on = p.id == m.placeId, kind = PlaceKind.of(p.kind)) {
                         haptics.tick()
                         m.placeId = p.id
+                        if (m.existing == null) m.habit(p.id)?.let { (leave, always) -> m.leave = leave; m.always = always }
                     }
                 }
             }

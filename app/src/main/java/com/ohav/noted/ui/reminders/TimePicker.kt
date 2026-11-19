@@ -15,6 +15,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.AbsoluteAlignment
@@ -128,7 +129,8 @@ fun openReminderPicker(
     scope.launch {
         val existing = app.reminders.get(noteId, blockId)
         val existingPlace = app.places.reminder(noteId, blockId)
-        val hasPlaces = app.places.all().isNotEmpty()
+        val allPlaces = app.places.all()
+        val hasPlaces = allPlaces.isNotEmpty()
         val use = app.places.usage()
         val prefs = app.getSharedPreferences("reminder_ui", android.content.Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -136,13 +138,20 @@ fun openReminderPicker(
             Instant.ofEpochMilli(it.occAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
         } ?: When.default()
         val m = PickerModel(start, existing?.repeat ?: Repeat.None, existing)
-        val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces, use = use)
+        val pm = PlacePickModel(existingPlace, startWithFinder = !hasPlaces, use = use) { id ->
+            if (prefs.contains("dir_$id")) prefs.getBoolean("dir_$id", false) to prefs.getBoolean("alw_$id", false) else null
+        }
+        val answers = Answers.list(prefs, allPlaces, use)
         val ui = PickerUi(
-            // a fresh reminder opens on the kind set last time
-            place = startPlace || existingPlace != null && existing == null ||
-                existing == null && existingPlace == null && hasPlaces && prefs.getBoolean("place", false),
-            sticky = existing?.sticky ?: existingPlace?.sticky ?: false,
-            drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: false,
+            // a set reminder opens on its own details; a fresh one on the ready answers
+            section = when {
+                existing != null -> Section.Time
+                existingPlace != null || startPlace -> Section.Place
+                else -> Section.None
+            },
+            // the two toggles keep the last choice
+            sticky = existing?.sticky ?: existingPlace?.sticky ?: prefs.getBoolean("sticky", false),
+            drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: prefs.getBoolean("drop", false),
         )
         val sheet = overlays.sheet
         val setPlace: () -> Unit = {
@@ -155,9 +164,12 @@ fun openReminderPicker(
                     sticky = ui.sticky, dropAfter = ui.drop && !pm.always,
                 )
                 pm.saved = true
-                prefs.edit().putBoolean("place", true).apply()
+                Answers.usedPlace(prefs, pid, pm.leave, pm.always)
+                prefs.edit().putBoolean("sticky", ui.sticky).putBoolean("drop", ui.drop).apply()
                 val p = app.places.place(pid)
-                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave, p)} · ${p?.name.orEmpty()}", if (p?.isDevice == true) Ph.Bluetooth else Ph.MapPin)
+                toasts.show("תזכורת נקבעה · ${PlaceWords.trigger(pm.leave, p)} · ${p?.name.orEmpty()}", if (p?.isDevice == true) Ph.Bluetooth else Ph.MapPin, action = "ביטול") {
+                    app.scope.launch { if (existingPlace != null) app.places.restoreReminder(existingPlace) else app.places.remove(noteId, blockId) }
+                }
                 // a device needs no location: the picker already asked for "nearby devices"
                 if (p?.isDevice == true || placesReady(app)) sheet.close()
                 else { sheet.setTitle(""); ui.askingPlace = true }
@@ -167,7 +179,7 @@ fun openReminderPicker(
             app.scope.launch(Dispatchers.Main) {
                 val r = app.reminders.set(noteId, blockId, m.at, m.repeat, sticky = ui.sticky, dropAfter = ui.drop && !m.repeat.repeats)
                 m.saved = true
-                prefs.edit().putBoolean("place", false).apply()
+                prefs.edit().putBoolean("sticky", ui.sticky).putBoolean("drop", ui.drop).apply()
                 toasts.show("תזכורת נקבעה · ${fmtRel(r.occAt)}", Ph.BellRinging, action = "ביטול") {
                     app.scope.launch { if (existing != null) app.reminders.restore(existing) else app.reminders.remove(noteId, blockId) }
                 }
@@ -211,8 +223,8 @@ fun openReminderPicker(
             footer = {
                 val bar = when {
                     m.asking || ui.askingPlace -> 0
-                    !ui.place -> 1
-                    pm.step == PlacePickModel.Step.Choose -> 2
+                    ui.section == Section.Time -> 1
+                    ui.section == Section.Place && pm.step == PlacePickModel.Step.Choose -> 2
                     else -> 0
                 }
                 AnimatedContent(
@@ -239,29 +251,63 @@ fun openReminderPicker(
                         1 -> PermissionCard(onDone = { sheet.close() })
                         2 -> PlacePermissionCard(saved = true, onDone = { sheet.close() })
                         else -> {
-                            ModeSwitch(ui.place) { ui.place = it }
-                            Spacer(Modifier.height(20.dp))
-                            AnimatedContent(
-                                targetState = ui.place,
-                                transitionSpec = { (fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide())).using(SizeTransform { _, _ -> Motion.glide() }) },
-                                label = "pickerMode",
-                            ) { place ->
-                                Column {
-                                    if (place) PlacePickBody(
-                                        app, pm, line,
+                            if (!line.isNullOrBlank()) LineRow(line)
+                            // one tap is the whole answer: it sets, closes, and the toast can take it back
+                            AnswerGrid(answers) { a ->
+                                val s = a.time
+                                if (s != null) {
+                                    Answers.used(prefs, a.key)
+                                    m.at = s.at
+                                    m.repeat = Repeat.None
+                                    setTime()
+                                } else {
+                                    pm.placeId = a.place?.id
+                                    pm.leave = a.leave
+                                    pm.always = a.always
+                                    pm.windowOn = false
+                                    setPlace()
+                                }
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            SectionRow(
+                                Ph.CalendarDots, "יום ושעה אחרים",
+                                if (existing != null) When.short(m.at) else "תאריך, שעה וחזרה",
+                                open = ui.section == Section.Time,
+                            ) { ui.section = if (ui.section == Section.Time) Section.None else Section.Time }
+                            AnimatedVisibility(
+                                ui.section == Section.Time,
+                                enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
+                                exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
+                            ) {
+                                Column(Modifier.padding(top = 14.dp, bottom = 10.dp)) {
+                                    PickerBody(
+                                        m,
+                                        onRemove = remove,
+                                        extra = {
+                                            StickyRow(ui.sticky) { ui.sticky = it }
+                                            DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
+                                        },
+                                    )
+                                }
+                            }
+                            SectionRow(
+                                Ph.MapPin, "מקום אחר",
+                                "הגעה או יציאה, מקום שמור או חדש",
+                                open = ui.section == Section.Place,
+                            ) { ui.section = if (ui.section == Section.Place) Section.None else Section.Place }
+                            AnimatedVisibility(
+                                ui.section == Section.Place,
+                                enter = expandVertically(Motion.glide()) + fadeIn(Motion.glide()),
+                                exit = shrinkVertically(Motion.glide()) + fadeOut(Motion.glide()),
+                            ) {
+                                Column(Modifier.padding(top = 14.dp, bottom = 10.dp)) {
+                                    PlacePickBody(
+                                        app, pm, null,
                                         onSet = setPlace,
                                         onRemove = removePlace,
                                         extra = {
                                             StickyRow(ui.sticky) { ui.sticky = it }
                                             DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
-                                        },
-                                    ) else PickerBody(
-                                        m, line,
-                                        onSet = setTime,
-                                        onRemove = remove,
-                                        extra = {
-                                            StickyRow(ui.sticky) { ui.sticky = it }
-                                            DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
                                         },
                                     )
                                 }
@@ -274,56 +320,85 @@ fun openReminderPicker(
     }
 }
 
+private enum class Section { None, Time, Place }
+
 @Stable
-private class PickerUi(place: Boolean, sticky: Boolean, drop: Boolean) {
-    var place by mutableStateOf(place)
-    /** Shared by both modes: once it rang, the reminder goes away by itself. */
+private class PickerUi(section: Section, sticky: Boolean, drop: Boolean) {
+    /** Which detail is unfolded under the ready answers (at most one). */
+    var section by mutableStateOf(section)
+    /** Shared by both kinds: once it rang, the reminder goes away by itself. */
     var drop by mutableStateOf(drop)
-    /** Shared by both modes: once it rings, it stays in the shade until removed by hand. */
+    /** Shared by both kinds: once it rings, it stays in the shade until removed by hand. */
     var sticky by mutableStateOf(sticky)
     var askingPlace by mutableStateOf(false)
 }
 
-/** זמן | מקום — a dark thumb slides under the chosen half (offset follows RTL). */
+/** The note line the reminder is for, quiet above everything. */
 @Composable
-private fun ModeSwitch(place: Boolean, onPick: (Boolean) -> Unit) {
+private fun LineRow(line: String) {
     val c = Noted.colors
     val t = Noted.type
-    val haptics = Noted.haptics
-    val p by animateFloatAsState(if (place) 1f else 0f, Motion.glide(), label = "modeP")
-    androidx.compose.foundation.layout.BoxWithConstraints(
-        Modifier.fillMaxWidth().height(54.dp).clip(Shapes.md).background(c.bg).padding(4.dp),
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 16.dp).clip(Shapes.sm).background(c.bg).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        val half = maxWidth / 2
-        Box(
-            Modifier
-                .offset { androidx.compose.ui.unit.IntOffset((p * half.toPx()).toInt(), 0) }
-                .size(half, maxHeight)
-                .clip(Squircle(14.dp))
-                .background(c.inverse),
-        )
-        Row(Modifier.fillMaxSize()) {
-            listOf(false to (Ph.Clock to "זמן"), true to (Ph.MapPin to "מקום")).forEach { (isPlace, v) ->
-                val on = isPlace == place
-                val col by animateColorAsState(if (on) c.inverseInk else c.ink2, Motion.glide(), label = "modeCol")
-                Row(
-                    Modifier.weight(1f).fillMaxHeight().press(scale = .95f, haptic = false) {
-                        if (!on) { haptics.tick(); onPick(isPlace) }
-                    },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    Icon(v.first, null, Modifier.size(20.dp), tint = col)
-                    Spacer(Modifier.width(8.dp))
-                    Text(v.second, style = t.label, color = col)
+        Icon(Ph.CheckSquare, null, Modifier.size(20.dp), tint = c.ink2)
+        Text(line, style = t.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Ready answers, two to a row: times and places mixed, the most used first. */
+@Composable
+private fun AnswerGrid(list: List<Answer>, onPick: (Answer) -> Unit) {
+    val haptics = Noted.haptics
+    var picked by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        list.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                pair.forEach { a ->
+                    AnswerTile(a, on = picked == a.key, Modifier.weight(1f)) {
+                        if (picked != null) return@AnswerTile
+                        picked = a.key
+                        haptics.confirm()
+                        onPick(a)
+                    }
                 }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
 }
 
+/** "יום ושעה אחרים" / "מקום אחר" — unfolds its details in place. */
 @Composable
-private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> Unit, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
+private fun SectionRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, sub: String, open: Boolean, onClick: () -> Unit) {
+    val c = Noted.colors
+    val t = Noted.type
+    val haptics = Noted.haptics
+    val caret by animateFloatAsState(if (open) 180f else 0f, Motion.glide(), label = "sectionCaret")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .press(scale = .98f, haptic = false) { haptics.light(); onClick() }
+            .clip(Shapes.md)
+            .border(1.5.dp, c.line, Shapes.md)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = if (open) c.ink else c.ink2)
+        Column(Modifier.weight(1f)) {
+            Text(label, style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink)
+            Text(sub, style = t.label, color = c.ink3, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Ph.CaretDown, null, Modifier.size(18.dp).graphicsLayer { rotationZ = caret }, tint = c.ink2)
+    }
+}
+
+@Composable
+private fun ColumnScope.PickerBody(m: PickerModel, onRemove: (() -> Unit)?, extra: @Composable () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -331,36 +406,6 @@ private fun ColumnScope.PickerBody(m: PickerModel, line: String?, onSet: () -> U
     val strip = rememberLazyListState(
         initialFirstVisibleItemIndex = (ChronoUnit.DAYS.between(today, m.at.toLocalDate()).toInt() - 2).coerceIn(0, DAYS_AHEAD - 1),
     )
-
-    if (!line.isNullOrBlank()) {
-        Row(
-            Modifier.fillMaxWidth().padding(bottom = 16.dp).clip(Shapes.sm).background(c.bg).padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Icon(Ph.CheckSquare, null, Modifier.size(20.dp), tint = c.ink2)
-            Text(line, style = t.bodyStrong, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-
-    // ---- shortcuts
-    val shortcuts = remember { When.shortcuts() }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        shortcuts.chunked(2).forEach { pair ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { s ->
-                    // a shortcut is the whole answer: one tap sets it (the toast can take it back)
-                    ShortcutTile(s, on = m.at == s.at, Modifier.weight(1f)) {
-                        m.at = s.at
-                        m.calMonth = YearMonth.from(s.at)
-                        haptics.confirm()
-                        onSet()
-                    }
-                }
-            }
-        }
-    }
-    Spacer(Modifier.height(22.dp))
 
     // ---- month label: the strip's month, or the open calendar's
     val stripMonth by remember { derivedStateOf { YearMonth.from(today.plusDays(strip.firstVisibleItemIndex + 1L)) } }
@@ -466,21 +511,21 @@ private fun Modifier.bleed(x: Dp) = layout { measurable, constraints ->
 }
 
 @Composable
-private fun ShortcutTile(s: When.Shortcut, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun AnswerTile(a: Answer, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val c = Noted.colors
     val t = Noted.type
-    val bg by animateColorAsState(if (on) c.inverse else c.bg, Motion.glide(), label = "shortBg")
-    val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "shortFg")
-    val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "shortFg2")
+    val bg by animateColorAsState(if (on) c.inverse else c.bg, Motion.glide(), label = "ansBg")
+    val fg by animateColorAsState(if (on) c.inverseInk else c.ink, Motion.glide(), label = "ansFg")
+    val fg2 by animateColorAsState(if (on) c.inverseInk2 else c.ink2, Motion.glide(), label = "ansFg2")
     Row(
         modifier.press(scale = .95f, haptic = false, onClick = onClick).clip(Shapes.md).background(bg).padding(horizontal = 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(s.icon, null, Modifier.size(24.dp), tint = fg)
+        Icon(a.icon, null, Modifier.size(24.dp).graphicsLayer { if (a.flip) scaleX = -1f }, tint = fg)
         Column {
-            Text(s.name, style = t.label, color = fg, maxLines = 1)
-            Text(s.sub, style = t.caption, color = fg2, maxLines = 1)
+            Text(a.name, style = t.label, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(a.sub, style = t.caption, color = fg2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
