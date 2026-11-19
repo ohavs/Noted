@@ -714,9 +714,7 @@ fun HomeScreen(app: NotedApp, toasts: ToastState, chrome: Chrome, onSettings: ()
                 } else {
                     Spacer(Modifier.height(10.dp))
                 }
-                (update as? Updater.State.Available)?.let { a ->
-                    if (!searching) UpdateBanner(a.versionName, onSettings)
-                }
+                if (!searching) UpdateBanner(app, update, toasts)
             }
 
             // only the stack scrolls; the title and the page around it stay put
@@ -1178,21 +1176,81 @@ private fun CatSub(visible: List<NoteEntity>, blocksOf: Map<String, List<com.oha
 }
 
 @Composable
-private fun UpdateBanner(version: String, onClick: () -> Unit) {
+private fun UpdateBanner(app: NotedApp, st: Updater.State, toasts: ToastState) {
     val c = Noted.colors
     val t = Noted.type
-    Row(
-        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 18.dp).fillMaxWidth().press(scale = .97f, onClick = onClick)
-            .clip(Shapes.lg).background(c.inverse).padding(horizontal = 18.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val haptics = Noted.haptics
+    val scope = rememberCoroutineScope()
+    val dismissed by app.updater.dismissed.collectAsState()
+    val show = when (st) {
+        is Updater.State.Available -> st.versionCode != dismissed
+        is Updater.State.Downloading, is Updater.State.Ready, is Updater.State.NeedsPermission -> true
+        else -> false
+    }
+    // keep the last banner on screen while it folds away
+    var last by remember { mutableStateOf<Updater.State?>(null) }
+    if (show) last = st
+    androidx.compose.animation.AnimatedVisibility(
+        visible = show,
+        enter = fadeIn(Motion.glide()) + androidx.compose.animation.expandVertically(Motion.glide(), expandFrom = Alignment.Top),
+        exit = fadeOut(Motion.glide()) + androidx.compose.animation.shrinkVertically(Motion.glide(), shrinkTowards = Alignment.Top),
     ) {
-        Icon(Ph.Sparkle, null, Modifier.size(22.dp), tint = c.accent)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text("גרסה חדשה מוכנה", style = t.label, color = c.inverseInk)
-            Text("noted $version", style = t.caption, color = c.inverseInk2)
+        val s = last ?: return@AnimatedVisibility
+        val target = when (s) {
+            is Updater.State.Available -> s
+            is Updater.State.Downloading -> s.target
+            is Updater.State.Ready -> s.target
+            is Updater.State.NeedsPermission -> s.target
+            else -> return@AnimatedVisibility
         }
-        Icon(Ph.CaretEnd, null, Modifier.size(18.dp), tint = c.inverseInk2)
+        val progress by animateFloatAsState((s as? Updater.State.Downloading)?.progress ?: if (s is Updater.State.Available) 0f else 1f, Motion.glide(), label = "updProgress")
+        Box(
+            Modifier.padding(start = 16.dp, end = 16.dp, bottom = 18.dp).fillMaxWidth()
+                .press(scale = .97f, enabled = s !is Updater.State.Downloading) {
+                    when (s) {
+                        is Updater.State.Available -> scope.launch {
+                            app.updater.download(s)
+                            if (app.updater.state.value is Updater.State.Ready) { haptics.confirm(); app.updater.install() }
+                            else { haptics.reject(); toasts.show("ההורדה נכשלה", Ph.WarningCircle) }
+                        }
+                        is Updater.State.Ready, is Updater.State.NeedsPermission -> app.updater.install()
+                        else -> {}
+                    }
+                }
+                .clip(Shapes.lg).background(c.inverse),
+        ) {
+            Row(Modifier.padding(start = 18.dp, end = 6.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    when (s) { is Updater.State.Downloading -> Ph.DownloadSimple; is Updater.State.NeedsPermission -> Ph.Info; else -> Ph.Sparkle },
+                    null, Modifier.size(22.dp), tint = c.accent,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                    Text(
+                        when (s) {
+                            is Updater.State.Downloading -> "מוריד את הגרסה החדשה… ${(s.progress * 100).toInt()}%"
+                            is Updater.State.Ready -> "הורד — הקשה להתקנה"
+                            is Updater.State.NeedsPermission -> "צריך לאשר התקנת עדכונים"
+                            else -> "גרסה חדשה מוכנה"
+                        },
+                        style = t.label, color = c.inverseInk,
+                    )
+                    Text(
+                        if (s is Updater.State.Available) "noted ${target.versionName} · הקשה להורדה והתקנה" else "noted ${target.versionName}",
+                        style = t.caption, color = c.inverseInk2,
+                    )
+                }
+                if (s is Updater.State.Available) {
+                    Box(
+                        Modifier.size(40.dp).clip(CircleShape).press(scale = .86f) { app.updater.dismiss(target.versionCode) },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Ph.X, "אחר כך", Modifier.size(18.dp), tint = c.inverseInk2) }
+                } else Spacer(Modifier.width(12.dp))
+            }
+            if (s is Updater.State.Downloading) Box(
+                Modifier.align(Alignment.BottomStart).fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(c.accent),
+            )
+        }
     }
 }
 

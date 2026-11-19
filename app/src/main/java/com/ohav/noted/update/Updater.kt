@@ -36,10 +36,29 @@ class Updater(private val context: Context) {
 
     val installedVersion: String = BuildConfig.VERSION_NAME
 
+    private val prefs = context.getSharedPreferences("update_ui", Context.MODE_PRIVATE)
+    private val _dismissed = MutableStateFlow(prefs.getInt("dismissed", 0))
+    /** The version the home banner was waved off for ("later") — it comes back for the next one. */
+    val dismissed: StateFlow<Int> = _dismissed
+    private var lastCheck = 0L
+
+    fun dismiss(versionCode: Int) {
+        prefs.edit().putInt("dismissed", versionCode).apply()
+        _dismissed.value = versionCode
+    }
+
+    /** Back in the foreground: look again, at most every [gapMs] — the process can live for days. */
+    suspend fun checkIfStale(gapMs: Long = 30 * 60_000L) {
+        if (System.currentTimeMillis() - lastCheck < gapMs) return
+        check(quiet = true)
+    }
+
     suspend fun check(quiet: Boolean = false) {
         if (!com.ohav.noted.BuildConfig.SELF_UPDATE) return
         val s = _state.value
         if (s is State.Checking || s is State.Downloading) return
+        if (quiet && (s is State.Ready || s is State.NeedsPermission)) return
+        lastCheck = System.currentTimeMillis()
         if (!quiet) _state.value = State.Checking
         val result = withContext(Dispatchers.IO) {
             runCatching {
