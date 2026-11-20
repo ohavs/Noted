@@ -166,7 +166,7 @@ internal class WColors(s: AppSettings) {
 
 internal const val MAX_ROWS = 5
 
-/** The widget's own "every note" entry (same key home uses); + there files into my first category. */
+/** The widget's own "every note" entry (same key home uses); + there files into my "בית" category. */
 private const val ALL = "all"
 private const val ALL_NAME = "כל הפתקים"
 

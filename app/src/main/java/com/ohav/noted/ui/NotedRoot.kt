@@ -233,12 +233,12 @@ private fun MainScreen(app: NotedApp, toasts: ToastState, openNote: MutableState
         snapshotFlow { openNote.value }.filterNotNull().collect { id ->
             openNote.value = null
             if (id.startsWith(com.ohav.noted.MainActivity.NEW_PREFIX)) {
-                // the widget's + / quick create: a fresh note ("<mode>:<category>", "" = my first category)
+                // the widget's + / quick create: a fresh note ("<mode>:<category>", "" = my "בית", else my first category)
                 val spec = id.removePrefix(com.ohav.noted.MainActivity.NEW_PREFIX)
                 val mode = spec.substringBefore(':')
                 val want = spec.substringAfter(':', "")
                 val known = want.isNotEmpty() && app.notes.categoriesNow().any { it.id == want }
-                val cat = (if (known) want else app.notes.categoriesFirst()) ?: return@collect
+                val cat = (if (known) want else app.notes.categoriesDefault()) ?: return@collect
                 tab = Tab.Home
                 if (known) chrome.showCat = cat
                 val first = if (mode == com.ohav.noted.ui.editor.Start.LIST)

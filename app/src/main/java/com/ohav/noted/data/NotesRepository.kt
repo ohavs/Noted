@@ -43,6 +43,11 @@ class NotesRepository(private val db: NotedDatabase) {
 
     suspend fun categoriesFirst(): String? = CatTree(dao.categories()).tops.let { t -> t.firstOrNull { !it.foreign } ?: t.firstOrNull() }?.id
 
+    /** Where a note with no category asked for lands (the widget's + on "all notes"): my "בית", else my first. */
+    suspend fun categoriesDefault(): String? = CatTree(dao.categories()).tops.filter { !it.foreign }.let { t ->
+        t.firstOrNull { it.name.trim() == "בית" } ?: t.firstOrNull { it.id == "home" }
+    }?.id ?: categoriesFirst()
+
     /** Editor autosave: title + blocks in one write. */
     suspend fun save(id: String, title: String, blocks: List<Block>) = dao.setContent(id, title, Blocks.serialize(blocks), now())
 
