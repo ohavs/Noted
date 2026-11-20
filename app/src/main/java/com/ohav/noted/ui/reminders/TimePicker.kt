@@ -149,12 +149,14 @@ fun openReminderPicker(
             if (prefs.contains("dir_$id")) prefs.getBoolean("dir_$id", false) to prefs.getBoolean("alw_$id", false) else null
         }
         val answers = Answers.best(prefs, allPlaces, use)
+        // with nothing set, the switch alone pins the note to the shade (no time needed)
+        val pinned = com.ohav.noted.reminders.NoteShade.pinned(app, noteId)
         val ui = PickerUi(
             // a set reminder opens on its own details; a fresh one on the ready answers
             // what's set shows on top with its own remove; the details stay folded
             section = if (startPlace && existingPlace == null) Section.Place else Section.None,
             // the two toggles keep the last choice
-            sticky = existing?.sticky ?: existingPlace?.sticky ?: prefs.getBoolean("sticky", false),
+            sticky = existing?.sticky ?: existingPlace?.sticky ?: (pinned || prefs.getBoolean("sticky", false)),
             drop = existing?.dropAfter ?: existingPlace?.dropAfter ?: prefs.getBoolean("drop", false),
         )
         val sheet = overlays.sheet
@@ -215,14 +217,29 @@ fun openReminderPicker(
                 }
             }
         }
+        val bare = existing == null && existingPlace == null
+        // closing without a reminder: the switch the user flipped pins (or lets go of) the note itself
+        val pinOnClose: () -> Unit = {
+            if (bare && ui.stickyTouched && !m.saved && !pm.saved && ui.sticky != pinned) app.scope.launch(Dispatchers.Main) {
+                val n = app.notes.get(noteId) ?: return@launch
+                if (ui.sticky && !Notifier.permitted(app)) { toasts.show("צריך לאשר התראות בהגדרות המכשיר", Ph.BellSlash); return@launch }
+                com.ohav.noted.reminders.NoteShade.toggle(app, n)
+                toasts.show(
+                    if (ui.sticky) "מוצמד לחלון ההתראות" else "הוסר מחלון ההתראות",
+                    if (ui.sticky) Ph.NotificationFill else Ph.Notification, action = "ביטול",
+                ) { app.scope.launch { app.notes.get(noteId)?.let { com.ohav.noted.reminders.NoteShade.toggle(app, it) } } }
+            }
+        }
         sheet.show(
             if (blockId.isEmpty()) "תזכורת" else "תזכורת לשורה",
             guard = {
                 val dirty = (m.dirty && !m.saved) || (pm.dirty && !pm.saved)
-                !dirty || overlays.dialog.confirm(
+                val leave = !dirty || overlays.dialog.confirm(
                     "לצאת בלי לקבוע?", "מה שבחרת לא יישמר.", Ph.BellSlash,
                     confirm = "צא בלי לשמור", cancel = "המשך לבחור",
                 )
+                if (leave) pinOnClose()
+                leave
             },
             footer = {
                 val bar = when {
@@ -329,7 +346,16 @@ fun openReminderPicker(
                             } }) { PlacePickBody(app, pm, null, onSet = setPlace, onRemove = null) }
                             // the two toggles stay under the blocks
                             Spacer(Modifier.height(16.dp))
-                            StickyRow(ui.sticky) { ui.sticky = it }
+                            StickyRow(
+                                ui.sticky,
+                                sub = when {
+                                    !bare || picked -> null
+                                    ui.sticky && pinned && !ui.stickyTouched -> "הפתק מוצמד לחלון ההתראות"
+                                    ui.sticky && ui.stickyTouched && !pinned -> "גם בלי זמן — נצמד לחלון כשסוגרים"
+                                    !ui.sticky && ui.stickyTouched && pinned -> "יוסר מחלון ההתראות כשסוגרים"
+                                    else -> null
+                                },
+                            ) { ui.sticky = it; ui.stickyTouched = true }
                             when (ui.section) {
                                 Section.Time -> DropRow(ui.drop, available = !m.repeat.repeats, unavailable = "תזכורת חוזרת — נשארת לפעם הבאה") { ui.drop = it }
                                 Section.Place -> DropRow(ui.drop, available = !pm.always, unavailable = "בכל פעם — נשארת לפעם הבאה") { ui.drop = it }
@@ -353,6 +379,8 @@ private class PickerUi(section: Section, sticky: Boolean, drop: Boolean) {
     var drop by mutableStateOf(drop)
     /** Shared by both kinds: once it rings, it stays in the shade until removed by hand. */
     var sticky by mutableStateOf(sticky)
+    /** Flipped by hand in this sheet — only then does closing without a time pin the note. */
+    var stickyTouched by mutableStateOf(false)
     var askingPlace by mutableStateOf(false)
 }
 
@@ -949,7 +977,7 @@ private fun RepeatPicker(m: PickerModel) {
 
 /** "Keep it in the notifications" — one switch for both modes, above the set button. */
 @Composable
-internal fun StickyRow(on: Boolean, onChange: (Boolean) -> Unit) {
+internal fun StickyRow(on: Boolean, sub: String? = null, onChange: (Boolean) -> Unit) {
     val c = Noted.colors
     val t = Noted.type
     val haptics = Noted.haptics
@@ -967,7 +995,9 @@ internal fun StickyRow(on: Boolean, onChange: (Boolean) -> Unit) {
         Icon(if (on) Ph.NotificationFill else Ph.Notification, null, Modifier.size(22.dp), tint = if (on) c.accent else c.ink2)
         Column(Modifier.weight(1f)) {
             Text("להשאיר בהתראות", style = t.body.copy(fontWeight = FontWeight.SemiBold), color = c.ink)
-            Text("אחרי שהיא מצלצלת — נשארת עד שמסירים", style = t.label, color = c.ink3)
+            AnimatedContent(sub, transitionSpec = { fadeIn(Motion.glide()) togetherWith fadeOut(Motion.glide()) }, label = "stickySub") { s ->
+                Text(s ?: "אחרי שהיא מצלצלת — נשארת עד שמסירים", style = t.label, color = if (s != null && on) c.accent else c.ink3)
+            }
         }
         NotedSwitch(on)
     }
