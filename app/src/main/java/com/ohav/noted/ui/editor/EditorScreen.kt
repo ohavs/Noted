@@ -652,6 +652,7 @@ fun EditorHost(app: NotedApp, nav: EditorNav, toasts: ToastState) {
                     EditorPage(
                         state, nav,
                         onBack = { close() }, onMenu = ::menu, onShare = ::share,
+                        onPin = { com.ohav.noted.ui.home.toggleShade(app, toasts, live ?: n) },
                         onPull = { f -> if (!nav.held) { keyboard?.hide(); focus.clearFocus() }; nav.drag(scope, f) },
                         onRelease = { open, v -> nav.letGo(open, v) },
                         toasts = toasts,
@@ -722,6 +723,7 @@ private fun EditorPage(
     onBack: () -> Unit,
     onMenu: () -> Unit,
     onShare: () -> Unit,
+    onPin: () -> Unit,
     onPull: (Float) -> Unit,
     onRelease: (open: Boolean, velocity: Float) -> Unit,
     toasts: ToastState,
@@ -802,7 +804,14 @@ private fun EditorPage(
                         Box(Modifier.height(48.dp).press(scale = .9f, onClick = onShare).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
                             com.ohav.noted.ui.share.FacePile(others, 28.dp, ring = LocalPaper.current, max = 2)
                         }
-                    } else BarIcon(Ph.UserPlus, "שיתוף", c.noteInk, onClick = onShare)
+                    }
+                    // pin to the notification shade: one tap on, one tap off; lit while held
+                    val held by com.ohav.noted.reminders.Shade.held.collectAsState()
+                    val pinned = com.ohav.noted.reminders.Shade.note(state.noteId) in held
+                    BarIcon(
+                        if (pinned) Ph.NotificationFill else Ph.Notification,
+                        if (pinned) "הסרה מחלון ההתראות" else "הצמדה לחלון ההתראות", c.noteInk, on = pinned,
+                    ) { onPin() }
                     BarIcon(
                         if (LocalReminders.current[state.noteId] != null || LocalPlaceChips.current[state.noteId] != null) Ph.BellRingingFill else Ph.Bell, "תזכורת", c.noteInk,
                     ) { remindNow("", null) }
@@ -909,12 +918,18 @@ private class PullToDismiss(
 }
 
 @Composable
-private fun BarIcon(icon: ImageVector, desc: String, tint: Color, enabled: Boolean = true, onClick: () -> Unit) {
+private fun BarIcon(icon: ImageVector, desc: String, tint: Color, enabled: Boolean = true, on: Boolean = false, onClick: () -> Unit) {
+    val c = Noted.colors
     val a by animateFloatAsState(if (enabled) 1f else .3f, Motion.glide(), label = "barIcon")
+    val bg by animateColorAsState(if (on) c.accent else c.accent.copy(alpha = 0f), Motion.glide(), label = "barIconBg")
+    val fg by animateColorAsState(if (on) c.accentInk else tint, Motion.glide(), label = "barIconFg")
     Box(
         Modifier.size(46.dp).graphicsLayer { alpha = a }.clip(CircleShape).press(enabled = enabled, scale = .86f, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { Icon(icon, desc, Modifier.size(24.dp), tint = tint) }
+    ) {
+        Box(Modifier.size(38.dp).clip(CircleShape).background(bg))
+        Icon(icon, desc, Modifier.size(24.dp), tint = fg)
+    }
 }
 
 /** The note's reminder under its title — tap to change it. */
